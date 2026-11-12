@@ -19,7 +19,8 @@ case "$product_sanitizer" in
     address)
         unset RUSTFLAGS
         export CARGO_TARGET_DIR="$PWD/target"
-        cargo build --locked --offline -p echode-ffi
+        # The default members: the library the app ships (ADR 0328).
+        cargo build --locked --offline
         export ECHODE_RUST_LIBRARY_DIR="$PWD/target/debug"
         ;;
     thread)

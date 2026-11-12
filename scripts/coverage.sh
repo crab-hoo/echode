@@ -21,16 +21,16 @@ check() {
     fi
 }
 
-# check-base's build and `cargo test --workspace`, instrumented in their own
-# target directory so the normal debug build stays warm.
+# check-base's build and `cargo test` of the default members, instrumented in their
+# own target directory so the normal debug build stays warm.
 rust_coverage() (
     export CARGO_TARGET_DIR="$PWD/target/llvm-cov-target"
     eval "$(cargo llvm-cov show-env --sh 2>/dev/null)"
     cargo llvm-cov clean --workspace
     {
         bash scripts/build-bundled-plugins.sh &&
-            cargo build -q --locked --workspace &&
-            cargo test -q --locked --workspace
+            cargo build -q --locked &&
+            cargo test -q --locked
     } >"$OUT/rust.log" 2>&1 || {
         echo "coverage: Rust tests failed, see $OUT/rust.log" >&2
         exit 1

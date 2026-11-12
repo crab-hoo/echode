@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 import unittest
 import unittest.mock
 from contextlib import redirect_stderr, redirect_stdout
@@ -2786,7 +2787,8 @@ class PolicyTests(unittest.TestCase):
         self.assertIn("check_product_contracts.py", recipe)
         self.assertIn("contract-prerequisites", recipe)
         prerequisites = makefile.split("\ncontract-prerequisites:\n", 1)[1].split("\n\n", 1)[0]
-        self.assertIn("-p echode-ffi -p echode-plugin-host -p echode-test-plugin", prerequisites)
+        # The default members: the helper, test plugin and CLI the Swift tests launch (ADR 0328).
+        self.assertIn("cargo build -q --locked --offline\n", prerequisites + "\n")
 
     def test_journal_invariants_use_the_product_recovery_boundary(self):
         contracts = {c["id"]: c for c in self.policy["product_contracts"]}
@@ -3018,8 +3020,11 @@ class PolicyTests(unittest.TestCase):
                     ["make", "-n", target], cwd=ROOT, capture_output=True, text=True, check=True
                 ).stdout
                 builds = [line for line in recipe.splitlines() if line.startswith("cargo build")]
+                # ADR 0328: the default members, which hold what the Swift tests launch.
+                self.assertIn("cargo build -q --locked --offline", builds)
+                members = tomllib.loads((ROOT / "Cargo.toml").read_text())["workspace"]["default-members"]
                 for package in ("echode-cli", "echode-plugin-host", "echode-test-plugin"):
-                    self.assertTrue(any("-p " + package in line for line in builds), package)
+                    self.assertIn("crates/" + package, members)
                 self.assertIn("scripts/build-bundled-plugins.sh", recipe)
                 self.assertLess(recipe.index("cargo build"), recipe.index("scripts/check-bridge-sanitizer.sh"))
 

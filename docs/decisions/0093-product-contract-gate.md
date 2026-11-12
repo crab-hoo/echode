@@ -4,6 +4,7 @@
 - 状態: 採用
 - 対象: 自動検査と終了フック、CU-03〜CU-06
 - 後続: [ADR 0324](0324-no-agent-hooks.md) が終了フックをなくした。同じ検査は `make verify` と GitHub Actions から呼ぶ。
+- 後続: [ADR 0328](0328-one-cargo-selection-for-the-task-tier.md) で、作業の段階の Rust の契約は既定のメンバーのテストのビルドで、全体の段階は各パッケージの `cargo test -p` で証拠を作る。
 
 ## 背景
 

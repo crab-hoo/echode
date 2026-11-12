@@ -154,24 +154,113 @@ def batch_key(contract):
     return None
 
 
-def batch_command(contracts):
-    """One libtest run of every named test in one binary. Without --nocapture each result line stays whole."""
-    first = contracts[0]
-    names = list(dict.fromkeys(contract["test"] for contract in contracts))
+# Crate types of a package's library target; its unit tests are one binary.
+LIBRARY_KINDS = {"lib", "rlib", "staticlib", "dylib", "cdylib", "proc-macro"}
+# A fresh build after check-base is a no-op; a cold one compiles the default members.
+RUST_TEST_BUILD_TIMEOUT = 1200
+
+
+def rust_selection(contract):
+    """The cargo selection whose test build holds this contract's binary, and the binary's target.
+
+    Without features this is Cargo's default members, the build check-base tests and the app
+    ships (ADR 0328). A contract that names features builds its own package with them, as
+    check-base's spike runs do; a `-p` set without them would build one more copy of the crates.
+    """
+    target = list(contract["target"])
+    selection = ()
+    if "--features" in target:
+        index = target.index("--features")
+        selection = ("-p", contract["package"], *target[index : index + 2])
+        del target[index : index + 2]
+    if target != ["--lib"] and not (len(target) == 2 and target[0] == "--test"):
+        raise ValueError("a Rust contract names --lib or --test NAME: " + contract["id"])
+    return selection, tuple(target)
+
+
+def rust_test_build(selection, targets):
+    """`cargo test --no-run` of one selection, reporting each test binary as JSON."""
+    # The default members build every test target, exactly as check-base's `cargo test` does.
+    filters = [] if not selection else list(dict.fromkeys(item for target in targets for item in target))
     return [
         "cargo",
         "test",
         "--locked",
         "--offline",
-        "-p",
-        first["package"],
-        *first["target"],
-        "--",
-        *names,
-        "--exact",
-        "--color",
-        "never",
+        "--no-run",
+        "--message-format=json-render-diagnostics",
+        *selection,
+        *filters,
     ]
+
+
+def test_executables(output, members):
+    """(package, target) -> executable of every test binary cargo reported building."""
+    folders = {Path(folder).resolve(): name for name, folder in members.items()}
+    found = {}
+    for line in output.splitlines():
+        try:
+            message = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(message, dict) or message.get("reason") != "compiler-artifact":
+            continue
+        if not message.get("executable") or not message.get("profile", {}).get("test"):
+            continue
+        package = folders.get(Path(message["manifest_path"]).parent.resolve())
+        kinds = set(message["target"]["kind"])
+        if package is None:
+            continue
+        if kinds & LIBRARY_KINDS:
+            found[(package, ("--lib",))] = message["executable"]
+        elif kinds == {"test"}:
+            found[(package, ("--test", message["target"]["name"]))] = message["executable"]
+    return found
+
+
+def locate_rust_tests(root, contracts, invoke, evidence):
+    """Each Rust contract's test binary, built once per selection, or the build's failure.
+
+    Returns {id: (executable, package folder)} and {id: failure output}.
+    """
+    members = verify.workspace_members(root)
+    selections = {}
+    for contract in contracts:
+        selection, target = rust_selection(contract)
+        selections.setdefault(selection, []).append((contract, target))
+    located, failed = {}, {}
+    for index, (selection, entries) in enumerate(selections.items()):
+        args = rust_test_build(selection, [target for _contract, target in entries])
+        log = evidence / f"rust-test-build-{index}.log"
+        try:
+            built = invoke(args, cwd=root, capture_output=True, text=True, timeout=RUST_TEST_BUILD_TIMEOUT)
+            # Diagnostics go to stderr; stdout is one JSON message per artifact.
+            output, executables = built.stderr, test_executables(built.stdout, members)
+            ok = built.returncode == 0
+        except (OSError, subprocess.SubprocessError) as error:
+            output, executables, ok = str(error), {}, False
+        found = "".join(f"{package} {' '.join(target)}: {path}\n" for (package, target), path in executables.items())
+        log.write_text(" ".join(args) + "\n" + output + "\n" + found)
+        for contract, target in entries:
+            executable = executables.get((contract["package"], target))
+            if ok and executable:
+                located[contract["id"]] = (executable, members[contract["package"]])
+            elif ok:
+                failed[contract["id"]] = f"{' '.join(args)} built no {' '.join(target)} test of {contract['package']}\n"
+            else:
+                failed[contract["id"]] = f"{' '.join(args)} failed; see {log}\n" + output[-5000:]
+    return located, failed
+
+
+def rust_binary_invocation(contract, located, names, alone=False):
+    """Run a test binary as `cargo test` does: from its package folder. Returns (args, env, cwd).
+
+    Without --nocapture each result line of a batch stays whole.
+    """
+    executable, folder = located
+    args = [executable, *names, "--exact", *(["--nocapture"] if alone else []), "--color", "never"]
+    env = dict(os.environ, CARGO_MANIFEST_DIR=str(folder), CARGO_PKG_NAME=contract["package"])
+    return args, env, folder
 
 
 def proven_in_batch(contract, output):
@@ -749,11 +838,12 @@ def build_swift_package(root, contracts, contract, invoke):
         return False, str(error)
 
 
-def run_batches(root, contracts, invoke, fingerprints, evidence, record):
+def run_batches(root, contracts, invoke, fingerprints, evidence, record, rust_tests=None):
     """Prove a task's required tests with one process per test binary (ADR 0270). Returns the rest.
 
     The same tests already ran in check and check-swift; this keeps the evidence of each one
-    without one process per test. The full tier still runs each test alone.
+    without one process per test. The full tier still runs each test alone. Rust binaries come
+    from `rust_tests`, the located builds of `locate_rust_tests` (ADR 0328).
     """
     groups, alone = {}, []
     for contract in contracts:
@@ -768,7 +858,7 @@ def run_batches(root, contracts, invoke, fingerprints, evidence, record):
             continue
         started = time.monotonic()
         log = evidence / ("batch-" + re.sub(r"[^A-Za-z0-9_.-]+", "-", "-".join(key).strip("-")) + ".log")
-        args, env, code = None, None, None
+        args, env, cwd, code = None, None, root, None
         try:
             if key[0] == "swift":
                 built, output = build_swift_package(root, contracts, group[0], invoke)
@@ -778,10 +868,16 @@ def run_batches(root, contracts, invoke, fingerprints, evidence, record):
                     continue
                 args, env = swift_batch_invocation(root, group, SWIFT_SCRATCH)
             else:
-                args = batch_command(group)
+                located = rust_tests[0].get(group[0]["id"])
+                if located is None:
+                    # The build failed or lacks the binary; each contract then reports why.
+                    alone += group
+                    continue
+                names = list(dict.fromkeys(contract["test"] for contract in group))
+                args, env, cwd = rust_binary_invocation(group[0], located, names)
             completed = invoke(
                 args,
-                cwd=root,
+                cwd=cwd,
                 capture_output=True,
                 text=True,
                 timeout=sum(contract["timeout"] for contract in group),
@@ -806,6 +902,7 @@ def run_batches(root, contracts, invoke, fingerprints, evidence, record):
                         "fingerprint": fingerprints.get(contract["id"]),
                         "seconds": seconds,
                         "isolation": "batch",
+                        **evidence_build(contract, batched=True),
                     }
                 )
             else:
@@ -813,9 +910,38 @@ def run_batches(root, contracts, invoke, fingerprints, evidence, record):
     return alone
 
 
+def evidence_build(contract, batched):
+    """Which build a Rust test ran from: a task's default members or the full tier's own package.
+
+    Each tier reuses only its own kind (ADR 0328). Swift builds the same way in both tiers.
+    """
+    if contract["runner"] != "rust":
+        return {}
+    return {"build": "members" if batched else "package"}
+
+
 def run_tests(root, contracts, invoke, fingerprints, evidence, record, batched=False):
+    """Every Swift contract, then every Rust one. A task batches them by binary (ADR 0271).
+
+    Swift goes first: a Rust test build relinks target/debug's helper and CLI, and the Swift
+    tests must launch the ones contract-prerequisites built, as the app ships them (ADR 0328).
+    """
+    unknown = {contract["runner"] for contract in contracts} - {"swift", "rust"}
+    if unknown:
+        raise ValueError("unknown contract runner: " + ", ".join(sorted(unknown)))
+    for runner in ("swift", "rust"):
+        own = [contract for contract in contracts if contract["runner"] == runner]
+        if own:
+            run_runner_tests(root, own, invoke, fingerprints, evidence, record, batched)
+
+
+def run_runner_tests(root, contracts, invoke, fingerprints, evidence, record, batched):
+    # A task runs Rust tests from the build check-base tested; the full tier runs `cargo test -p`.
+    rust_tests = None
+    if batched and contracts[0]["runner"] == "rust":
+        rust_tests = locate_rust_tests(root, contracts, invoke, evidence)
     if batched:
-        contracts = run_batches(root, contracts, invoke, fingerprints, evidence, record)
+        contracts = run_batches(root, contracts, invoke, fingerprints, evidence, record, rust_tests)
     builds = {}
     for contract in contracts:
         name = contract["id"]
@@ -835,12 +961,18 @@ def run_tests(root, contracts, invoke, fingerprints, evidence, record, batched=F
             ok, code = False, None
             if not built and not first:
                 output = f"Swift test-product build failed for {package}; see the first Swift contract log\n"
+        elif rust_tests is not None:
+            located, failures = rust_tests
+            built, output, ok, code, args = name in located, failures.get(name, ""), False, None, None
         if built:
             try:
-                args, env = test_invocation(root, contract)
+                if rust_tests is not None:
+                    args, env, cwd = rust_binary_invocation(contract, located[name], [contract["test"]], alone=True)
+                else:
+                    (args, env), cwd = test_invocation(root, contract), root
                 completed = invoke(
                     args,
-                    cwd=root,
+                    cwd=cwd,
                     capture_output=True,
                     text=True,
                     timeout=contract["timeout"],
@@ -863,6 +995,7 @@ def run_tests(root, contracts, invoke, fingerprints, evidence, record, batched=F
                 "purpose": contract["purpose"],
                 "fingerprint": fingerprints.get(name),
                 "seconds": round(time.monotonic() - started, 3),
+                **evidence_build(contract, batched),
             }
         )
         if not ok:
@@ -883,8 +1016,9 @@ def run(
     """Every required test, then every counterexample, or with `tests_only` none of them.
 
     A task runs `tests_only`: the counterexamples build mutated copies of the tree, so
-    they run in the full tier on GitHub (ADR 0327). With `shard`, only that share of the
-    counterexamples runs; every required test still runs.
+    they run in the full tier on GitHub (ADR 0327). A task's Rust tests run from the build
+    check-base tests, the full tier's from `cargo test -p` of each package (ADR 0328).
+    With `shard`, only that share of the counterexamples runs; every required test still runs.
     """
     started = time.monotonic()
     execution = {}
@@ -907,9 +1041,17 @@ def run(
     if in_shard is not None:
         required &= in_shard
     tests = {} if fresh else reusable_phase(previous, "tests", test_stamps)
-    if not tests_only:
-        # The full tier proves each test in its own process; a task's batch is not that evidence.
-        tests = {name: item for name, item in tests.items() if item.get("isolation") != "batch"}
+    # Each tier reuses only its own evidence. The full tier proves each test in its own process
+    # and each Rust test in its own package's build; a task proves Rust tests in the build of
+    # the default members (ADR 0271, 0328).
+    if tests_only:
+        tests = {name: item for name, item in tests.items() if item.get("build") != "package"}
+    else:
+        tests = {
+            name: item
+            for name, item in tests.items()
+            if item.get("isolation") != "batch" and item.get("build") != "members"
+        }
     # Current passes stay on record, so a later full tier on this machine reuses them.
     controls = {} if fresh else reusable_phase(previous, "negative_controls", fingerprints)
     reused_controls = set(controls)

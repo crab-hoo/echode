@@ -144,7 +144,7 @@ class RealPolicyTests(unittest.TestCase):
         # A Swift-only change must not depend on what the Rust check built.
         swift = makefile.split("\ncheck-swift:\n", 1)[1].split("\n\n", 1)[0]
         self.assertIn("bundled-plugins", swift)
-        self.assertIn("-p echode-ffi -p echode-plugin-host -p echode-test-plugin -p echode-cli", swift)
+        self.assertIn("cargo build -q --locked --offline\n", swift)
 
     def test_swift_edits_keep_the_rust_evidence_and_rust_edits_expire_both(self):
         stamps = verify.check_fingerprints(ROOT, self.policy, {}, {})

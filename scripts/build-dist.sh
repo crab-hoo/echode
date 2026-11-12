@@ -9,7 +9,8 @@ if [[ -z "${ECHODE_KEYCHAIN:-}" ]] && ! python3 scripts/distribution.py identity
     exit 1
 fi
 
-cargo build --locked --offline --release -p echode-ffi -p echode-plugin-host -p echode-cli
+# The default members, so the release has the features the checks test (ADR 0328).
+cargo build --locked --offline --release
 bash scripts/build-bundled-plugins.sh release
 header="$(find target/release/build -path '*echode-ffi-*/out/echode.h' -print0 | xargs -0 ls -t | head -1)"
 test -n "$header"

@@ -5,6 +5,7 @@
 - 関連: [ADR 0148](0148-verification-pipeline-speed.md)、[ADR 0209](0209-real-hal-guard.md)、[ADR 0212](0212-verification-tiers.md)、[ADR 0269](0269-github-public-ci-scope.md)
 - 置き換え: ADR 0148 の「契約のテストを 1 プロセスにまとめない」を作業の段階について。ADR 0209 の毎回の直列の全体実行
 - 後続: [ADR 0327](0327-instrumented-builds-only-on-github.md) が、RTSan と変えた契約の反例を作業の段階から GitHub の `full` へ移した。
+- 後続: [ADR 0328](0328-one-cargo-selection-for-the-task-tier.md) が、まとめた実行の Rust のバイナリを `check` の `cargo test` と同じビルドから取るようにした。
 
 ## 背景
 

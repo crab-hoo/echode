@@ -139,13 +139,14 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
   既定の workspace の依存解決で両 crate のこの feature が有効でないことは `check-verification` で照合する。
 - `check-swift`: Swift のビルドと全テスト（Swift 6 の厳密な並行性）と、橋渡しスパイクの ABI 検証。
   Swift だけの変更では `check` を再利用する。リンク先の Rust が変われば両方を実行する。
-  テストが起動するヘルパー・検査用プラグイン・CLI は、このレシピ自身がビルドする。
+  テストが起動するヘルパー・検査用プラグイン・CLI とリンクする `libechode_ffi.a` は、このレシピ自身が `make app` と同じ選択でビルドする。
   `EchodeAppTests` の実行に HAL の代役の報告（`Real HAL reached:`）があれば、テストが合格していても失敗にする。
   全ての Swift のテストの実行（契約・サニタイザ・`check-input` を含む）は `swift_test_watchdog.py` を通る。
   イベント列の記録が 120 秒途絶えたら、走っているテストを名指しし、`sample` を残して止める（[ADR 0325](decisions/0325-swift-test-stall-watchdog.md)）。
 - `check-product-contracts`: [scripts/verification.json](../scripts/verification.json) の `product_contracts` に定義された全必須契約テストを実行する。
   指定した実テストが 1 件走った証拠を要求し、削除・無視・0 件を拒否する。
   作業の段階では、通常テストをテストのバイナリごとに 1 プロセスでまとめて実行する（[ADR 0271](decisions/0271-task-tier-duplicate-runs.md)）。
+  Rust のバイナリは `check` と同じビルドから起動する（[Cargo の選択](#cargo-の選択)）。
   各テストの合格の行が 1 回だけあることを証拠にし、示せなかったテストは単独で、各契約の期限のもとで実行し直す。
   まとめた実行のログは `product-contracts/batch-*.log` に残る。
   全反例が現在のソースへ適用できること（置換元が 1 回だけ現れること）を、ビルドせずに確認する。
@@ -155,7 +156,7 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
   コンパイル失敗は検出の証拠にしない。
   コピーは `target/product-contract-mutations/checkouts/` に残し、変わったファイルだけを新しい時刻で書き換える（[ADR 0148](decisions/0148-verification-pipeline-speed.md)）。
   Rust の反例は変えるクレートの依存の浅い順にまとめ、Swift の反例は 3 コピーで同時にビルドしてからテストを 1 件ずつ実行する。
-  全体の段階の通常の実行は 1 契約 1 プロセスを保ち、作業の段階のまとめた実行の記録を再利用しない。
+  全体の段階の通常の実行は 1 契約 1 プロセスの `cargo test -p` を保ち、作業の段階の記録を再利用しない。
   Swift はテスト製品のビルド後に同じ SwiftPM の Testing ヘルパーを直接起動する。
   パッケージ解析・テスト探索の反復を省くが、一件判定・個別期限・反例ビルド時間の減算は維持する。
   Rust の同じ置換はソース遷移を共用し、対象の Cargo コマンドとテストプロセスは一件ずつ維持する。
@@ -194,6 +195,21 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
 - `check-bridge-miri`（全体の段階）: Rust 側のポインタ・所有権。製品のスナップショット保持、UTF-8 の借用、可視列の容量・null を seed 1・17・42 で検査する。
   C ABI の共通の引数の規則（`abi_tests`: null と長さ、`isize::MAX` を超える大きさ、位置のずれ）も同じ seed で動かす（[ADR 0321](decisions/0321-unsafe-safety-comments-and-ffi-arguments.md)）。
   フォルダ開閉用の表示ハンドルの保持・再展開と可視行の容量境界も同じ経路で確認する。
+
+## Cargo の選択
+
+作業の段階の Rust のビルド・clippy・テストと `make app`・`make dist` は、`-p` を付けずに Cargo の既定のメンバー（`Cargo.toml` の `default-members`）を選ぶ（[ADR 0328](decisions/0328-one-cargo-selection-for-the-task-tier.md)）。
+Cargo は選んだパッケージだけで feature を解決するので、`-p` の組ごとにワークスペースの crate の別の写しを作り、Rust の編集のたびに写しの数だけコンパイルする。
+`-p` は feature を足す時（`spike`）と、既定のメンバーの外の橋渡しスパイクにだけ使う。`scripts/tests/test_cargo_selection.py` がほかの `-p` と `--workspace` を止める。
+橋渡しスパイクは uniffi を通して serde_json の `unbounded_depth` を有効にし、製品にない構成を作るので、既定のメンバーに入れない。
+
+写しは、出荷するビルド（`cargo build`）と、開発用依存の feature を足すテストのビルド（`cargo test`）の 2 つである。
+テストのビルドが足してよい feature は、同じテストの `TEST_ONLY_FEATURES` に理由付きで列挙し、それ以外を拒否する。
+作業の段階の Rust の契約は、`cargo test --no-run` の報告から `check` と同じテストのバイナリを探し、パッケージのフォルダから直接起動する。
+feature を名指す契約は、`check` の `spike` の実行と同じ `-p` と feature のビルドを使う。
+Swift の契約を先に実行する。`cargo test` は `target/debug` のヘルパーと CLI を自分のビルドで置き換えるが、Swift のテストは出荷するビルドのものを起動するためである。
+全体の段階は契約ごとの `cargo test -p` を保つ。記録の `build`（`members` / `package`）で、どちらの段階も相手の Rust の記録を再利用しない。
+どのメンバーの依存も共有のビルドの feature を変えるので、`check-swift`・`check-real-hal`・契約の入力は `crates/*/Cargo.toml` を含む。
 
 ## 実機・計測・ネットワークの検査
 

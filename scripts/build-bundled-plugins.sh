@@ -1,11 +1,12 @@
 #!/bin/bash
 # Build bundled CLAPs into the same catalog directory used by the app and CLI.
+# Cargo's default members, as the app and the checks build them: one build (ADR 0328).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 profile="${1:-debug}"
 case "$profile" in
-    debug) cargo build -q --locked --offline -p echode-sine-pad ;;
-    release) cargo build -q --locked --offline --release -p echode-sine-pad ;;
+    debug) cargo build -q --locked --offline ;;
+    release) cargo build -q --locked --offline --release ;;
     *)
         echo "unsupported profile: $profile" >&2
         exit 2

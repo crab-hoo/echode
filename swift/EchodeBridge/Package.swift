@@ -24,10 +24,18 @@ let package = Package(
             publicHeadersPath: "include",
             cSettings: [.unsafeFlags(["-mcpu=apple-m4"])],
             cxxSettings: [.unsafeFlags(["-mcpu=apple-m4"])],
+            // What `rustc --print native-static-libs` lists for libechode_ffi.a. The plugin
+            // host's windows use AppKit; a test bundle that pulls them in must link it (ADR 0328).
             linkerSettings: [
                 .linkedLibrary("echode_ffi"),
-                .linkedFramework("CoreAudio"),
                 .linkedFramework("AudioToolbox"),
+                .linkedFramework("CoreAudio"),
+                .linkedFramework("CoreServices"),
+                .linkedFramework("AppKit"),
+                .linkedFramework("Foundation"),
+                .linkedFramework("CoreFoundation"),
+                .linkedLibrary("iconv"),
+                .linkedLibrary("objc"),
                 .unsafeFlags(["-L", rustLibraryDir]),
             ]
         ),

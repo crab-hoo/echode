@@ -22,6 +22,31 @@ members = [
     "crates/echode-fuzz",
     "spikes/bridge",
 ]
+# Cargo resolves features over the packages a command selects, so every `-p` set
+# builds its own copy of the crates. Task-tier builds, tests and the shipped app all
+# select these members, sharing one build (ADR 0328). The bridge spike stays out:
+# through uniffi it turns on serde_json's unbounded_depth, which the product lacks.
+default-members = [
+    "crates/echode-sandbox",
+    "crates/echode-plugin-host",
+    "crates/echode-test-plugin",
+    "crates/echode-sine-pad",
+    "crates/echode-dsp",
+    "crates/echode-time",
+    "crates/echode-log",
+    "crates/echode-draw",
+    "crates/echode-engine",
+    "crates/echode-audio-io",
+    "crates/echode-realtime",
+    "crates/echode-history",
+    "crates/echode-model",
+    "crates/echode-actions",
+    "crates/echode-cli",
+    "crates/echode-api",
+    "crates/echode-document",
+    "crates/echode-ffi",
+    "crates/echode-fuzz",
+]
 
 [workspace.package]
 edition = "2024"

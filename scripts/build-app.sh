@@ -3,7 +3,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 build_source="$(python3 -B scripts/diagnose.py --source-stamp)"
-cargo build --locked --offline -p echode-ffi -p echode-plugin-host -p echode-cli
+# The default members: the same library and helpers the checks test (ADR 0328).
+cargo build --locked --offline
 bash scripts/build-bundled-plugins.sh
 header="$(find target/debug/build -path '*echode-ffi-*/out/echode.h' -print0 | xargs -0 ls -t | head -1)"
 test -n "$header"

@@ -119,7 +119,9 @@ ASan・TSan・Miri の `target/bridge`（2026-11-09 に 5.9 GB）、TSan のラ�
 2026-11-12 から作業の段階はこれらを使わない。GitHub の `full` がプッシュごとに作る（[ADR 0327](../decisions/0327-instrumented-builds-only-on-github.md)）。
 手元では `make verify-full` の時だけ作り直す（2026-11-09、冷えた状態から ASan 432 秒・TSan 328 秒・Miri 75 秒）。
 次の候補は `target/release` で、使うのは `spike-*` の release 計測だけである（Makefile の `--release`。2026-11-09 に 2.0 GB）。
-`target/debug/incremental` は、同じ日の作業ではほぼ全部が使われていて、古い分は残らなかった。
+`target/debug/incremental` の crate ごとの写しの数は `ls target/debug/incremental | sed -E 's/-[^-]+$//' | sort | uniq -c | sort -rn | head` で見る。
+2026-11-12 までは Cargo の `-p` の組ごとに別の写しができ、同じ日に `echode_engine` が 70 個あった。
+以後の作業の段階は既定のメンバーの 1 つの選択にそろえる（[Cargo の選択](../verification.md#cargo-の選択)）。写しが増えたら `-p` を足した呼出しを探す。
 2026-11-12 は、多くの crate が依存する `echode-sandbox` を変えた後の `make verify` が、`check-swift` の後で空きを使い切った。
 空きが尽きると Claude Code のシェルは出力の一時ファイルを作れず、どのコマンドも始まらない。エージェントは自分で消せないので、ユーザーに少し空けてもらう。
 検査の終了後に 647 MiB 戻り、`product-contract-mutations`（8.9 GB）・`target/release`（1.0 GB）・`.rcgu.o`（1.0 GB）・合格済みの ASan の `target/bridge/address`（3.8 GB）を消して 14 GiB にした。
@@ -149,7 +151,7 @@ ASan・TSan・Miri の `target/bridge`（2026-11-09 に 5.9 GB）、TSan のラ�
 ### 検査の後に `target/debug/echode` のプラグイン処理が `control socket closed: dyld[...]: Library not loaded: @rpath/libclang_rt.rtsan_osx_dynamic.dylib` で失敗する
 
 `make rtsan` が `target/debug/echode-plugin-host` を RTSan 版で上書きした状態である。製品の不具合ではない。
-2026-11-02 から `make rtsan` は最後に通常版を作り直す。途中で失敗した時は `cargo build -q -p echode-plugin-host` で戻すか、
+2026-11-02 から `make rtsan` は最後に通常版を作り直す。途中で失敗した時は `cargo build -q` で戻すか、
 `ECHODE_PLUGIN_HOST` で別のビルドを指す（[外部監査の精査](../reviews/2026-11-02-external-audit-review.md)）。
 
 ## ツール・ビルド・生成物
@@ -166,6 +168,15 @@ Xcode・CMake・Ninja の版と合わない。この時 TSan の検査はソー�
 Xcode 側のビルド診断が quiet 出力に出ない場合がある。大量のコンパイルコマンドは会話へ展開しない。
 `-Zbuild-std --offline` が `failed to download addr2line` 等で止まる場合は、製品の依存とは別の固定 nightly の標準ライブラリ用キャッシュが不足している。
 `make setup-bridge` の Miri sysroot 準備で取得してから検査を再実行する。ツールの存在確認だけでは、このキャッシュ不足は分からない。
+
+### Swift のテストのリンクで `_NSApplicationMain` などが未定義になる
+
+`libechode_ffi.a` は製品の Rust 全体を含み、そのシステムライブラリは `swift/EchodeBridge/Package.swift` の `CEchodeFfi` が宣言する。
+足りないと、テストのバンドルがその関数を含むオブジェクトを取り込んだ時だけリンクが失敗する。
+2026-11-12 は、新しい作業ツリーの冷えたビルドで `EchodeBridgeTests` が `objc2_app_kit` の `_NSApplicationMain` で失敗した。
+既存の作業ツリーでは通っていたので、どのオブジェクトを取り込むかはコードの配置で変わる。
+`rustc` の一覧は `CARGO_TARGET_DIR=target/native-libs cargo rustc -q -p echode-ffi --lib --crate-type staticlib -- --print native-static-libs` で見る。
+別のビルド先を使い、`target/debug` に写しを足さない。一覧の framework とライブラリを `linkerSettings` へ足す（[ADR 0328](../decisions/0328-one-cargo-selection-for-the-task-tier.md)）。
 
 ### `check-ffi` が外部シンボルを拒否する
 

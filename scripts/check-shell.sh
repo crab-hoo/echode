@@ -3,7 +3,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-cargo build -q --locked --offline -p echode-ffi
+# The default members, as scripts/build-app.sh builds the shipped library (ADR 0328).
+cargo build -q --locked --offline
 header="$(find target/debug/build -path '*echode-ffi-*/out/echode.h' -print0 | xargs -0 ls -t | head -1)"
 if [[ -z "$header" ]]; then
     echo "check-shell: cbindgen did not write echode.h" >&2

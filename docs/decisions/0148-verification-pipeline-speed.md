@@ -6,6 +6,8 @@
 - 後続: [ADR 0197](0197-verification-target-scopes.md) がプラグイン依存・Cargo の入力範囲・段階ごとの再利用・フック予算を改定した。
   本文の旧計測と当時の識別方式は、過去の判断の証拠として残す。
 - 後続: [ADR 0198](0198-verification-launch-and-cache-cost.md) が Swift の起動、Rust の同一反例、診断入力と TSan の共有先を改定した。
+- 後続: [ADR 0328](0328-one-cargo-selection-for-the-task-tier.md) が、作業の段階の Rust の契約を `check` と同じビルドのバイナリで実行するようにした。
+  「`check-base` の結果を流用しない」の理由（`--workspace` と `-p` の構成の違い）は、既定のメンバーの 1 つの選択にそろえて解いた。
 
 ## 背景
 

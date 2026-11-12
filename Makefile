@@ -27,7 +27,7 @@ spike-app:
 
 # Real-window checks run under AppKit; the normal suite never invokes them.
 spike-playhead:
-	cargo build -q --locked --offline -p echode-ffi
+	cargo build -q --locked --offline
 	set -eu; header="$$(find target/debug/build -path '*echode-ffi-*/out/echode.h' -print0 | xargs -0 ls -t | head -1)"; \
 	test -n "$$header"; \
 	mkdir -p swift/EchodeBridge/CEchodeFfi/include "$(CURDIR)/target"; \
@@ -43,16 +43,16 @@ spike-playhead:
 
 # Actual GPU pixels, without creating windows or controlling the computer UI.
 spike-arrange-frame:
-	cargo build -q -p echode-ffi
+	cargo build -q --locked --offline
 	swift run --package-path swift/EchodeApp --scratch-path target/echode-app EchodeAppProbe --offscreen "$(CURDIR)/target/spike-arrange-frame.json"
 
 spike-piano-frame:
-	cargo build -q -p echode-ffi
+	cargo build -q --locked --offline
 	swift run --package-path swift/EchodeApp --scratch-path target/echode-app EchodeAppProbe --offscreen-piano "$(CURDIR)/target/spike-piano-frame.json"
 
 # Main-thread time of position polls and divider drags, and arrange label work (E2).
 spike-main-thread:
-	cargo build -q -p echode-ffi
+	cargo build -q --locked --offline
 	swift run -q -c release --package-path swift/EchodeApp --scratch-path target/echode-app-release EchodeAppProbe --main-thread "$(CURDIR)/target/spike-main-thread.json"
 
 # Portable checks include required product regressions, once each.
@@ -66,10 +66,10 @@ check:
 
 .PHONY: swift-actions check-swift-actions
 swift-actions:
-	cargo run -q --locked --offline -p echode-actions --example swift_actions -- --write swift/EchodeBridge/Sources/EchodeBridge/EditAction.swift
+	cargo run -q --locked --offline --example swift_actions -- --write swift/EchodeBridge/Sources/EchodeBridge/EditAction.swift
 
 check-swift-actions:
-	cargo run -q --locked --offline -p echode-actions --example swift_actions -- --check swift/EchodeBridge/Sources/EchodeBridge/EditAction.swift
+	cargo run -q --locked --offline --example swift_actions -- --check swift/EchodeBridge/Sources/EchodeBridge/EditAction.swift
 
 check-format:
 	cargo fmt --all --check
@@ -79,13 +79,17 @@ check-lint:
 	python3 -B scripts/lint.py check
 
 # The verifier records the Rust part, the Swift part and product contracts as separate checks.
+# Without -p, cargo selects Cargo.toml's default members: one build for the product, its tests
+# and the contracts (ADR 0328). A -p call only adds features or reaches the bridge spike.
 check-base:
 	$(MAKE) bundled-plugins
 	python3 -B scripts/check_build_host.py
-	cargo build -q --workspace
-	cargo clippy -q --workspace --all-targets -- -D warnings
+	cargo build -q
+	cargo clippy -q --all-targets -- -D warnings
 	$(MAKE) check-swift-actions
-	cargo test -q --workspace
+	cargo test -q
+	cargo clippy -q -p echode-bridge-spike --all-targets -- -D warnings
+	cargo test -q -p echode-bridge-spike
 	cargo clippy -q -p echode-history --features spike --all-targets -- -D warnings
 	cargo test -q -p echode-history --features spike --lib --test roundtrip
 	cargo build -q -p echode-engine --features spike --bin echode-engine-spike
@@ -103,7 +107,7 @@ check-base:
 check-swift:
 	$(MAKE) bundled-plugins
 	python3 -B scripts/check_build_host.py
-	cargo build -q --locked --offline -p echode-ffi -p echode-plugin-host -p echode-test-plugin -p echode-cli
+	cargo build -q --locked --offline
 	$(MAKE) check-shell
 	$(MAKE) check-bridge
 
@@ -120,7 +124,7 @@ check-contract-controls:
 
 contract-prerequisites:
 	$(MAKE) bundled-plugins
-	cargo build -q --locked --offline -p echode-ffi -p echode-plugin-host -p echode-test-plugin -p echode-cli
+	cargo build -q --locked --offline
 	set -eu; header="$$(find target/debug/build -path '*echode-ffi-*/out/echode.h' -print0 | xargs -0 ls -t | head -1)"; \
 	test -n "$$header"; \
 	mkdir -p swift/EchodeBridge/CEchodeFfi/include; \
@@ -128,7 +132,7 @@ contract-prerequisites:
 
 # Names the EchodeApp test that reaches the real HAL. Opens no device: the test bundle has no HAL (ADR 0209).
 check-real-hal:
-	cargo build -q --locked --offline -p echode-ffi
+	cargo build -q --locked --offline
 	set -eu; header="$$(find target/debug/build -path '*echode-ffi-*/out/echode.h' -print0 | xargs -0 ls -t | head -1)"; \
 	test -n "$$header"; \
 	mkdir -p swift/EchodeBridge/CEchodeFfi/include; \
@@ -240,14 +244,14 @@ coverage:
 # to tests/fixtures/bless.log. Use this when a sound change is intentional.
 bless:
 	@test -n "$(REASON)" || { echo 'usage: make bless REASON="why the reference changed"'; exit 1; }
-	BLESS=1 cargo test -p echode-cli --test render -- --ignored bless_the_reference --exact
+	BLESS=1 cargo test --test render -- --ignored bless_the_reference --exact
 	mkdir -p crates/echode-cli/tests/fixtures
 	printf '%s %s\n' "$$(date +%Y-%m-%d)" "$(REASON)" >> crates/echode-cli/tests/fixtures/bless.log
 
 # Ignored audit_* tests reproduce open items in docs/reviews/.
 # Each one fails until its item is fixed; then remove its #[ignore].
 known-bugs:
-	cargo test --workspace --no-fail-fast -- --ignored audit_
+	cargo test --no-fail-fast -- --ignored audit_
 
 # Advisories need the network, so they are not part of `make check`.
 advisories:
@@ -313,7 +317,7 @@ check-bridge-features:
 .PHONY: sanitizer-prerequisites
 sanitizer-prerequisites:
 	$(MAKE) bundled-plugins
-	cargo build -q --locked --offline -p echode-plugin-host -p echode-test-plugin -p echode-cli
+	cargo build -q --locked --offline
 
 check-bridge-asan:
 	$(MAKE) sanitizer-prerequisites
@@ -351,7 +355,7 @@ rtsan:
 	RTSAN_ENABLE=1 cargo test -q -p echode-plugin-host --features rtsan under_rtsan
 	# The RTSan helper replaced target/debug/echode-plugin-host and cannot load without the
 	# sanitizer runtime; leave the normal helper for the CLI and later builds.
-	cargo build -q -p echode-plugin-host
+	cargo build -q
 
 # Device-free release measurement of the callback's own CPU time as plugin
 # and note-heavy tracks grow, including wraps and edits. See ADR 0236 / 0239.

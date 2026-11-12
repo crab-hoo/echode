@@ -149,14 +149,14 @@ def main():
         "--echode",
         type=Path,
         default=ROOT / "target/debug/echode",
-        help="a built CLI; build it with cargo build -p echode-cli",
+        help="a built CLI; build it with cargo build",
     )
     parser.add_argument(
         "--require-durable", action="store_true", help="exit 1 when a watched rename is not synced in time"
     )
     args = parser.parse_args()
     if not args.echode.is_file():
-        sys.exit(f"{args.echode} is missing; run cargo build -p echode-cli")
+        sys.exit(f"{args.echode} is missing; run cargo build")
     with tempfile.TemporaryDirectory(prefix="echode-durability-") as directory:
         text, package = trace(args.echode, directory)
         found = events(text, package)

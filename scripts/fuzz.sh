@@ -44,7 +44,8 @@ run_target() {
         return 2
     fi
     mkdir -p "$corpus" "$artifacts" "$scratch"
-    cargo run -q --locked -p echode-fuzz --example seeds -- "$target" "$corpus"
+    # The default members' test build already has this example (ADR 0328).
+    cargo run -q --locked --example seeds -- "$target" "$corpus"
     # The first directory collects new inputs; the saved findings are only read.
     ECHODE_FUZZ_SCRATCH="$scratch" fuzz run "$target" "$corpus" "$FUZZ_DIR/regressions/$target" -- \
         -max_total_time="$seconds" -timeout=10 -rss_limit_mb=2048 \

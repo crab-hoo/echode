@@ -41,6 +41,7 @@ make debug-report
   - `cargo test -p echode-plugin-host` を直接動かすと `hosted_playback` の多くが無音の断定で失敗する
 - ツール・ビルド・生成物
   - ツール不足・ビルド失敗
+  - Swift のテストのリンクで `_NSApplicationMain` などが未定義になる
   - `check-ffi` が外部シンボルを拒否する
   - `check-audio-lints` が宣言や解除を拒否する
   - clippy が `unsafe` の根拠を求める

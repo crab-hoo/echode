@@ -26,6 +26,17 @@ def git_repository(root):
     (root / ".gitignore").write_text("/target\n")
 
 
+def artifact(folder, kind, name, executable):
+    """One `cargo test --message-format=json` line for a test binary."""
+    return {
+        "reason": "compiler-artifact",
+        "manifest_path": str(folder / "Cargo.toml"),
+        "target": {"kind": kind, "name": name},
+        "profile": {"test": True},
+        "executable": executable,
+    }
+
+
 class ContractEvidenceTests(unittest.TestCase):
     def test_removal_retries_metadata_created_during_cleanup(self):
         remove = contracts.shutil.rmtree
@@ -381,7 +392,8 @@ class ContractEvidenceTests(unittest.TestCase):
 
             with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
                 contracts.run_tests(ROOT, cases, broken, {}, evidence, results.append)
-            self.assertEqual([result["status"] for result in results], ["passed", "failed", "failed"])
+            # Swift runs first (ADR 0328), so its failures come before the Rust pass.
+            self.assertEqual([result["status"] for result in results], ["failed", "failed", "passed"])
             self.assertFalse([args for args in invoked if args[:2] == ["swift", "test"]])
             self.assertIn("compile failure", (evidence / "swift-a.log").read_text())
 
@@ -492,11 +504,13 @@ class ContractEvidenceTests(unittest.TestCase):
                 self.assertFalse(contracts.proven_in_batch(swift, output))
 
     def test_a_task_runs_one_process_per_binary_and_retries_what_it_did_not_prove_alone(self):
+        # ADR 0328: the binaries come from one `cargo test --no-run` of the default members,
+        # the build check-base tests, and run from their package folder as `cargo test` runs them.
         cases = [
             {
                 "id": name,
                 "runner": "rust",
-                "package": "p",
+                "package": "echode-model",
                 "target": ["--test", "t"],
                 "test": name,
                 "timeout": 5,
@@ -508,22 +522,28 @@ class ContractEvidenceTests(unittest.TestCase):
             {
                 "id": "d",
                 "runner": "rust",
-                "package": "p",
+                "package": "echode-model",
                 "target": ["--lib"],
                 "test": "d",
                 "timeout": 5,
                 "purpose": "fixture",
             }
         )
+        folder = ROOT / "crates/echode-model"
+        built = [
+            artifact(folder, ["test"], "t", "/bin/t-1"),
+            artifact(folder, ["lib"], "echode_model", "/bin/lib-1"),
+            # The library itself and another package's tests are no binary of these contracts.
+            dict(artifact(folder, ["lib"], "echode_model", None), profile={"test": False}),
+            artifact(ROOT / "crates/echode-time", ["test"], "t", "/bin/other-t"),
+        ]
         invoked = []
 
-        def selected(args):
-            # A batch names its tests after "--"; a single test names itself before it.
-            return args[args.index("--") + 1 : args.index("--exact")] or [args[args.index("--") - 1]]
-
         def fake(args, **kwargs):
-            invoked.append(args)
-            names = selected(args)
+            invoked.append((args, kwargs))
+            if args[0] == "cargo":
+                return subprocess.CompletedProcess(args, 0, "\n".join(map(json.dumps, built)) + "\n", "")
+            names = args[1 : args.index("--exact")]
             lines = [f"test {name} ... {'FAILED' if name == 'b' and len(names) > 1 else 'ok'}" for name in names]
             return subprocess.CompletedProcess(
                 args, 0, "\n".join(lines) + "\ntest result: ok. 1 passed; 0 failed; 0 ignored;", ""
@@ -532,11 +552,139 @@ class ContractEvidenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             results = []
             contracts.run_tests(ROOT, cases, fake, {}, Path(directory), results.append, batched=True)
-        self.assertEqual([selected(args) for args in invoked], [["a", "b", "c"], ["b"], ["d"]])
         self.assertEqual(
-            {result["id"]: (result["status"], result.get("isolation")) for result in results},
-            {"a": ("passed", "batch"), "c": ("passed", "batch"), "d": ("passed", None), "b": ("passed", None)},
+            [args for args, _ in invoked if args[0] == "cargo"],
+            [["cargo", "test", "--locked", "--offline", "--no-run", "--message-format=json-render-diagnostics"]],
         )
+        runs = [(args, kwargs) for args, kwargs in invoked if args[0] != "cargo"]
+        self.assertEqual(
+            [(args[0], args[1 : args.index("--exact")], "--nocapture" in args) for args, _ in runs],
+            [("/bin/t-1", ["a", "b", "c"], False), ("/bin/t-1", ["b"], True), ("/bin/lib-1", ["d"], True)],
+        )
+        for _args, kwargs in runs:
+            self.assertEqual(kwargs["cwd"], folder)
+            self.assertEqual(kwargs["env"]["CARGO_MANIFEST_DIR"], str(folder))
+        self.assertEqual(
+            {result["id"]: (result["status"], result.get("isolation"), result["build"]) for result in results},
+            {
+                "a": ("passed", "batch", "members"),
+                "c": ("passed", "batch", "members"),
+                "d": ("passed", None, "members"),
+                "b": ("passed", None, "members"),
+            },
+        )
+
+    def test_a_contract_with_features_builds_them_as_check_base_does(self):
+        # ADR 0328: features need their own build; it is check-base's spike run, not one more copy.
+        engine = {"id": "e", "package": "echode-engine", "target": ["--lib", "--features", "spike"]}
+        selection, target = contracts.rust_selection(engine)
+        self.assertEqual((selection, target), (("-p", "echode-engine", "--features", "spike"), ("--lib",)))
+        self.assertEqual(
+            contracts.rust_test_build(selection, [target, target])[-5:],
+            ["-p", "echode-engine", "--features", "spike", "--lib"],
+        )
+        self.assertEqual(contracts.rust_selection({"id": "m", "package": "p", "target": ["--test", "t"]})[0], ())
+        self.assertNotIn("--lib", contracts.rust_test_build((), [("--lib",)]), "the default members build it all")
+        for target in (["--bin", "x"], ["--test"], ["--lib", "--test", "t"], ["--features", "spike"]):
+            with self.subTest(target=target), self.assertRaisesRegex(ValueError, "--lib or --test NAME"):
+                contracts.rust_selection({"id": "x", "package": "p", "target": target})
+        policy = json.loads((ROOT / "scripts/verification.json").read_text())
+        base = (ROOT / "Makefile").read_text().split("\ncheck-base:\n", 1)[1].split("\n\n", 1)[0]
+        for contract in policy["product_contracts"]:
+            if contract["runner"] == "rust" and "--features" in contract["target"]:
+                with self.subTest(contract=contract["id"]):
+                    selection, target = contracts.rust_selection(contract)
+                    self.assertIn(f"cargo test -q {' '.join(selection)} {' '.join(target)}\n", base)
+
+    def test_a_failed_or_incomplete_test_build_fails_each_contract_with_its_reason(self):
+        cases = [
+            {
+                "id": name,
+                "runner": "rust",
+                "package": "echode-model",
+                "target": target,
+                "test": name,
+                "timeout": 5,
+                "purpose": "fixture",
+            }
+            for name, target in (("a", ["--lib"]), ("b", ["--lib"]), ("c", ["--test", "missing"]))
+        ]
+        folder = ROOT / "crates/echode-model"
+        for code, expected in ((101, "error[E0425]"), (0, "built no --test missing test of echode-model")):
+            invoked = []
+
+            def fake(args, invoked=invoked, code=code, **kwargs):
+                invoked.append(args)
+                if args[0] != "cargo":
+                    names = args[1 : args.index("--exact")]
+                    lines = "".join(f"test {name} ... ok\n" for name in names)
+                    return subprocess.CompletedProcess(args, 0, lines + "test result: ok. 2 passed;", "")
+                lib = json.dumps(artifact(folder, ["lib"], "echode_model", "/bin/lib-1"))
+                return subprocess.CompletedProcess(args, code, lib + "\n", "error[E0425]: cannot find value")
+
+            with (
+                self.subTest(code=code),
+                tempfile.TemporaryDirectory() as directory,
+                redirect_stdout(io.StringIO()),
+                redirect_stderr(io.StringIO()),
+            ):
+                results = []
+                contracts.run_tests(ROOT, cases, fake, {}, Path(directory), results.append, batched=True)
+                statuses = {result["id"]: result["status"] for result in results}
+                if code:
+                    self.assertEqual(statuses, dict.fromkeys("abc", "failed"))
+                    self.assertEqual(len(invoked), 1, "nothing runs from a failed build")
+                else:
+                    self.assertEqual(statuses, {"a": "passed", "b": "passed", "c": "failed"})
+                self.assertIn(expected, (Path(directory) / "c.log").read_text())
+
+    def test_swift_contracts_run_before_a_rust_test_build_relinks_the_helper(self):
+        # ADR 0328: `cargo test` relinks target/debug/echode-plugin-host; Swift tests launch the shipped one.
+        cases = [
+            {
+                "id": "rust-case",
+                "runner": "rust",
+                "package": "echode-model",
+                "target": ["--lib"],
+                "test": "r",
+                "timeout": 5,
+                "purpose": "fixture",
+            },
+            {
+                "id": "swift-case",
+                "runner": "swift",
+                "package_path": "App",
+                "suite": "Suite",
+                "test": "s",
+                "timeout": 5,
+                "purpose": "fixture",
+            },
+        ]
+        folder = ROOT / "crates/echode-model"
+        for batched in (True, False):
+            invoked = []
+
+            def fake(args, invoked=invoked, **kwargs):
+                invoked.append(args[0] if args[0] != "swift" else " ".join(args[:2]))
+                if args[0] == "cargo" and "--no-run" in args:
+                    lib = json.dumps(artifact(folder, ["lib"], "echode_model", "/bin/lib-1"))
+                    return subprocess.CompletedProcess(args, 0, lib + "\n", "")
+                if args[0] == "swift":
+                    return subprocess.CompletedProcess(
+                        args, 0, "Test s() passed\nTest run with 1 test in 1 suite passed", ""
+                    )
+                return subprocess.CompletedProcess(
+                    args, 0, "test r ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored;", ""
+                )
+
+            with self.subTest(batched=batched), tempfile.TemporaryDirectory() as directory:
+                results = []
+                contracts.run_tests(ROOT, cases, fake, {}, Path(directory), results.append, batched=batched)
+                self.assertEqual(invoked[:2], ["swift build", "swift test"])
+                self.assertEqual(invoked[2:], ["cargo", "/bin/lib-1"] if batched else ["cargo"])
+                self.assertEqual([result["status"] for result in results], ["passed", "passed"])
+                self.assertEqual(results[1]["build"], "members" if batched else "package")
+                self.assertNotIn("build", results[0])
 
     def test_a_swift_batch_builds_once_and_filters_every_test_in_one_helper_run(self):
         cases = [
@@ -585,7 +733,7 @@ class ContractEvidenceTests(unittest.TestCase):
             [("one", "passed", "batch"), ("two", "passed", "batch")],
         )
 
-    def test_a_task_runs_no_counterexample_and_the_full_tier_does_not_reuse_its_batch_evidence(self):
+    def test_a_task_runs_no_counterexample_and_each_tier_reuses_only_its_own_evidence(self):
         cases = [
             {
                 "id": name,
@@ -602,6 +750,7 @@ class ContractEvidenceTests(unittest.TestCase):
         tested, controlled = [], []
 
         def run_tests(_root, pending, _invoke, stamps, _evidence, record, batched=False):
+            # As run_tests records them: a task proves "a" in a batch and "b" alone (ADR 0271).
             for case in pending:
                 tested.append((case["id"], batched))
                 record(
@@ -609,7 +758,8 @@ class ContractEvidenceTests(unittest.TestCase):
                         "id": case["id"],
                         "status": "passed",
                         "fingerprint": stamps[case["id"]],
-                        **({"isolation": "batch"} if batched else {}),
+                        **({"isolation": "batch"} if batched and case["id"] == "a" else {}),
+                        **contracts.evidence_build(case, batched),
                     }
                 )
 
@@ -633,6 +783,8 @@ class ContractEvidenceTests(unittest.TestCase):
                 self.assertEqual(controlled, [])
                 report = json.loads((root / "target/verification/product-contracts.json").read_text())
                 self.assertEqual(report["execution"]["control_scope"], "none")
+                # ADR 0328: the full tier proves each Rust test alone in its own package's build,
+                # a task in the default members' build. Neither stands for the other.
                 self.assertEqual(contracts.run(root, cases, policy={}), 0)
                 self.assertEqual(contracts.run(root, cases, policy={}, tests_only=True), 0)
                 report = json.loads((root / "target/verification/product-contracts.json").read_text())
@@ -641,7 +793,8 @@ class ContractEvidenceTests(unittest.TestCase):
                     ["passed", "passed"],
                     "a task keeps the full tier's current counterexample passes on record",
                 )
-        self.assertEqual(tested, [("a", True), ("b", True), ("a", False), ("b", False)])
+                self.assertEqual(contracts.run(root, cases, policy={}, tests_only=True), 0)
+        self.assertEqual(tested, [("a", True), ("b", True), ("a", False), ("b", False), ("a", True), ("b", True)])
         self.assertEqual(controlled, ["a", "b"])
 
     def test_shards_split_every_counterexample_once(self):
