@@ -322,6 +322,11 @@ fn measure_playback_scale() {
             rows.push(edit_adoption(256, 4_000, played, edit));
         }
     }
+    // Sizes nearer a song, to judge a tempo edit's replan against one frame
+    // (ADR 0278's 16.7 ms for a GUI stall).
+    for tracks in [64, 128] {
+        rows.push(edit_adoption(tracks, 1_000, 100, Edit::Tempo));
+    }
     for (tracks, clips) in [(64, 64), (128, 64)] {
         rows.push(model_edit(tracks, clips));
     }

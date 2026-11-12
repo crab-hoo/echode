@@ -187,7 +187,7 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
     停止中の編集の素材の読込み・SRC は別スレッドで行い、読込み中の再生は新しい計画まで保留する。
     必須契約 `output-prewarm`・`output-prewarm-play`・`output-prepare-worker`・`output-prepare-on-open` で確認する。
   - 残る条件:
-    計画生成は文書ワーカーで待つ。
+    計画生成は文書ワーカーで待つ。テンポの変更の作り直しは、ノートの番号を位置で引き継いで約 7 倍速くした（[ADR 0335](decisions/0335-retimed-plans-keep-note-numbers.md)）。
     初回の出力導入時の差分で増えるヘルパーも準備スレッドで起動し、再生の開始はその計画の公開を待つ
     （[ADR 0333](decisions/0333-install-diff-graph-off-worker.md)、必須契約 `output-install-graph`）。
     再生中の編集の素材も別スレッドで読み、テンポの変わった計画は採用時に拍を保つ

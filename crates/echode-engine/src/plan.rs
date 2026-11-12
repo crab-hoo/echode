@@ -37,7 +37,15 @@ pub struct PlaybackIds {
     /// Notes whose derived lookups or event demand were computed since that build.
     #[cfg(test)]
     pub(crate) derived_notes: usize,
+    /// Notes whose numbers that build looked up in `notes` instead of taking
+    /// them from the track's last plan.
+    #[cfg(test)]
+    pub(crate) looked_up_notes: usize,
 }
+
+/// A visited note the plan left out: silent in its clip, or zero length once
+/// timed. Note numbers stay below `i32::MAX`.
+const UNPLANNED: u32 = u32::MAX;
 
 /// A model note's playback number and how many current note spans use it.
 /// One content placed twice gives two spans with the same model ID.
@@ -56,8 +64,14 @@ struct PlannedTrack {
     plan: Arc<TrackPlan>,
     derived: TrackDerived,
     demand: Option<CachedDemand>,
+    /// Each visited note's number, in clip and content order, or [`UNPLANNED`].
+    /// A retimed track takes its numbers from here instead of from `notes`.
+    numbers: Arc<[u32]>,
     /// Computed by the build that stored it, rather than carried over.
     rebuilt: bool,
+    /// Rebuilt for a new tempo map or rate with the same notes planned as
+    /// before, so the note uses it counts are unchanged.
+    same_notes: bool,
 }
 
 /// A track's event demand and the loop bounds and block frames it was sized for.
@@ -103,6 +117,10 @@ impl PlaybackIds {
     /// The current number of `model`, or a new one held in `fresh` until the
     /// build succeeds. A failed build discards `fresh`; its numbers stay used.
     fn note(&mut self, fresh: &mut HashMap<u128, u32>, model: u128) -> Result<u32, PlaybackError> {
+        #[cfg(test)]
+        {
+            self.looked_up_notes += 1;
+        }
         if let Some(number) = self.notes.get(&model) {
             return Ok(number.id);
         }
@@ -148,13 +166,18 @@ impl PlaybackIds {
 
     /// Publishes a complete build. Spans of rebuilt plans are counted before
     /// the plans they replace are released, so a note that moved keeps its number.
+    /// A retimed track with the same notes adds and releases the same uses,
+    /// so it touches neither.
     fn commit(
         &mut self,
         planned: HashMap<u128, PlannedTrack>,
         tracks: HashMap<u128, u32>,
         basis: (TempoMap, u32),
     ) {
-        for entry in planned.values().filter(|entry| entry.rebuilt) {
+        for entry in planned
+            .values()
+            .filter(|entry| entry.rebuilt && !entry.same_notes)
+        {
             for note in &entry.plan.notes {
                 self.notes
                     .entry(note.note)
@@ -166,7 +189,10 @@ impl PlaybackIds {
             }
         }
         for (track, previous) in &self.planned {
-            if planned.get(track).is_some_and(|entry| !entry.rebuilt) {
+            if planned
+                .get(track)
+                .is_some_and(|entry| !entry.rebuilt || entry.same_notes)
+            {
                 continue;
             }
             for note in &previous.plan.notes {
@@ -222,6 +248,7 @@ pub(crate) fn build(
     {
         ids.planned_notes = 0;
         ids.derived_notes = 0;
+        ids.looked_up_notes = 0;
     }
     let reusable = ids
         .basis
@@ -242,16 +269,16 @@ pub(crate) fn build(
             .map(|clip| project.shared_content(clip.content).cloned())
             .collect::<Option<Vec<_>>>()
             .ok_or(PlaybackError::Time)?;
-        if reusable
-            && let Some(previous) = ids.planned.get(&track.id.raw())
-            && Arc::ptr_eq(&previous.track, track)
-            && previous.contents.len() == contents.len()
-            && previous
-                .contents
-                .iter()
-                .zip(&contents)
-                .all(|(before, now)| Arc::ptr_eq(before, now))
-        {
+        let unchanged = ids.planned.get(&track.id.raw()).filter(|previous| {
+            Arc::ptr_eq(&previous.track, track)
+                && previous.contents.len() == contents.len()
+                && previous
+                    .contents
+                    .iter()
+                    .zip(&contents)
+                    .all(|(before, now)| Arc::ptr_eq(before, now))
+        });
+        if reusable && let Some(previous) = unchanged {
             // A surviving track keeps its key, so the stored plan still names it.
             tracks.push(TrackPlan::clone(&previous.plan));
             derived.push(previous.derived.clone());
@@ -263,27 +290,50 @@ pub(crate) fn build(
                     plan: Arc::clone(&previous.plan),
                     derived: previous.derived.clone(),
                     demand: previous.demand,
+                    numbers: Arc::clone(&previous.numbers),
                     rebuilt: false,
+                    same_notes: true,
                 },
             );
             continue;
         }
+        // Only the tempo map or rate changed: the same notes are visited in the
+        // same order, so each keeps the number its position had.
+        let retimed = unchanged.map(|previous| Arc::clone(&previous.numbers));
+        let mut same_notes = retimed.is_some();
+        let mut numbers = Vec::with_capacity(retimed.as_ref().map_or(0, |numbers| numbers.len()));
         let mut notes = Vec::new();
         for (clip, content) in track.clips.iter().zip(&contents) {
             for note in &content.notes {
-                let Some((on, off)) = clip.audible(note).map_err(|_| PlaybackError::Time)? else {
+                let position = numbers.len();
+                let before = retimed
+                    .as_ref()
+                    .and_then(|previous| previous.get(position).copied());
+                let span = match clip.audible(note).map_err(|_| PlaybackError::Time)? {
+                    Some((on, off)) => {
+                        let on = index
+                            .tick_to_sample(on.get(), sample_rate)
+                            .ok_or(PlaybackError::Time)?;
+                        let off = index
+                            .tick_to_sample(off.get(), sample_rate)
+                            .ok_or(PlaybackError::Time)?;
+                        (on < off).then_some((on, off))
+                    }
+                    None => None,
+                };
+                let Some((on, off)) = span else {
+                    same_notes &= before == Some(UNPLANNED);
+                    numbers.push(UNPLANNED);
                     continue;
                 };
-                let on = index
-                    .tick_to_sample(on.get(), sample_rate)
-                    .ok_or(PlaybackError::Time)?;
-                let off = index
-                    .tick_to_sample(off.get(), sample_rate)
-                    .ok_or(PlaybackError::Time)?;
-                if on >= off {
-                    continue;
-                }
-                let note_id = ids.note(&mut fresh, note.id.raw())?;
+                let note_id = match before {
+                    Some(number) if number != UNPLANNED => number,
+                    _ => {
+                        same_notes = false;
+                        ids.note(&mut fresh, note.id.raw())?
+                    }
+                };
+                numbers.push(note_id);
                 notes.push(NoteSpan {
                     on,
                     off,
@@ -293,6 +343,12 @@ pub(crate) fn build(
                     velocity: note.velocity,
                 });
             }
+        }
+        if retimed
+            .as_ref()
+            .is_some_and(|previous| previous.len() != numbers.len())
+        {
+            same_notes = false;
         }
         #[cfg(test)]
         {
@@ -336,7 +392,9 @@ pub(crate) fn build(
                 plan: Arc::new(plan),
                 derived: lookups,
                 demand: None,
+                numbers: numbers.into(),
                 rebuilt: true,
+                same_notes,
             },
         );
     }

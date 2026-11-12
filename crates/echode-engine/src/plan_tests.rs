@@ -212,6 +212,7 @@ fn reused_track_plans_match_full_rebuilds_across_edits_and_undo() {
             }
         }
         assert_eq!(reused.notes.len(), seen.len(), "step {step}");
+        assert_uses_match_spans(&reused, &built.plan, step);
         let total: usize = full.tracks.iter().map(|track| track.notes.len()).sum();
         if reused.planned_notes < total {
             partial += 1;
@@ -232,5 +233,139 @@ fn reused_track_plans_match_full_rebuilds_across_edits_and_undo() {
     assert!(
         shared > 10,
         "only {shared} builds shared a note between spans"
+    );
+}
+
+/// Each mapped note's use count is the number of spans of it in `plan`.
+fn assert_uses_match_spans(ids: &PlaybackIds, plan: &Plan, step: usize) {
+    let mut spans = std::collections::HashMap::<u128, usize>::new();
+    for note in plan.tracks.iter().flat_map(|track| &track.notes) {
+        *spans.entry(note.note).or_default() += 1;
+    }
+    assert_eq!(ids.notes.len(), spans.len(), "step {step}");
+    for (note, count) in spans {
+        assert_eq!(
+            ids.notes.get(&note).map(|number| number.uses),
+            Some(count),
+            "step {step}: note uses differ from its spans"
+        );
+    }
+}
+
+/// 8 tracks of 32 notes, each content placed twice; sizes for this check only.
+fn placed_twice() -> Project {
+    let mut project = Project::new();
+    for index in 0..8 {
+        let (next, track) = project.add_track(format!("track {index}"));
+        project = next;
+        for note in 0..32 {
+            // Quarter starts; one to three sixteenths long, which last no
+            // sample at a rate of a few hertz.
+            let quarter = echode_model::TICKS_PER_QUARTER;
+            let draft = NoteDraft {
+                pitch: 40 + note as u8,
+                start: Tick::new(note * quarter),
+                length: Tick::new((1 + note % 3) * quarter / 16),
+                ..note_draft()
+            };
+            project = project.insert_note(track, draft).unwrap().0;
+        }
+        // A linked placement: the same note IDs twice on one track.
+        let clip = project.tracks()[index].clips[0].id;
+        project = project
+            .link_clip(
+                clip,
+                track,
+                Tick::quarters(64).unwrap(),
+                echode_model::Id::generate(),
+            )
+            .unwrap();
+    }
+    project
+}
+
+fn note_draft() -> NoteDraft {
+    note()
+}
+
+/// A tempo edit replans every note, but the notes are the same: their numbers
+/// come from each track's last plan and their uses stay, with no lookups.
+#[test]
+fn a_tempo_edit_keeps_note_numbers_without_looking_them_up() {
+    let project = placed_twice();
+    let mut ids = PlaybackIds::new();
+    let before = build(&project, project.tempo(), 48_000, &mut ids).unwrap();
+    let total: usize = before
+        .plan
+        .tracks
+        .iter()
+        .map(|track| track.notes.len())
+        .sum();
+    let faster = project.with_tempo(
+        Tick::new(0),
+        echode_model::Tempo::quarters_per_minute(150).unwrap(),
+    );
+    let after = build(&faster, faster.tempo(), 48_000, &mut ids).unwrap();
+    assert_eq!(
+        ids.planned_notes, total,
+        "a tempo edit must retime every note"
+    );
+    assert_eq!(
+        ids.looked_up_notes, 0,
+        "a tempo edit looked up the numbers of unchanged notes"
+    );
+    let full = build_plan(&faster, faster.tempo(), 48_000, &mut PlaybackIds::new()).unwrap();
+    for ((retimed, rebuilt), previous) in after
+        .plan
+        .tracks
+        .iter()
+        .zip(&full.tracks)
+        .zip(&before.plan.tracks)
+    {
+        assert_eq!(spans(retimed).2, spans(rebuilt).2);
+        let numbers = |plan: &TrackPlan| {
+            let mut pairs: Vec<_> = plan
+                .notes
+                .iter()
+                .map(|note| (note.note, note.note_id))
+                .collect();
+            pairs.sort_unstable();
+            pairs
+        };
+        assert_eq!(
+            numbers(retimed),
+            numbers(previous),
+            "a retimed note changed number"
+        );
+    }
+    assert_uses_match_spans(&ids, &after.plan, 0);
+}
+
+/// At a rate low enough that short notes last no sample, they leave the plan;
+/// back at the device rate they return. The retimed tracks then look those
+/// notes up again and count their uses anew.
+#[test]
+fn notes_that_leave_or_rejoin_a_retimed_plan_keep_their_uses_exact() {
+    let project = placed_twice();
+    let mut ids = PlaybackIds::new();
+    for (step, rate) in [48_000, 8, 48_000, 8, 8, 48_000].into_iter().enumerate() {
+        let built = build(&project, project.tempo(), rate, &mut ids).unwrap();
+        let full = build_plan(&project, project.tempo(), rate, &mut PlaybackIds::new()).unwrap();
+        for (retimed, rebuilt) in built.plan.tracks.iter().zip(&full.tracks) {
+            assert_eq!(spans(retimed).2, spans(rebuilt).2, "rate {rate}");
+        }
+        assert_uses_match_spans(&ids, &built.plan, step);
+    }
+    let at_low = build_plan(&project, project.tempo(), 8, &mut PlaybackIds::new()).unwrap();
+    let at_device = build_plan(&project, project.tempo(), 48_000, &mut PlaybackIds::new()).unwrap();
+    let count = |plan: &Plan| {
+        plan.tracks
+            .iter()
+            .map(|track| track.notes.len())
+            .sum::<usize>()
+    };
+    assert!(
+        count(&at_low) < count(&at_device),
+        "no note left the low-rate plan"
     );
 }

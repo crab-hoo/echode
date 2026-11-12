@@ -247,6 +247,7 @@ Swift の契約を先に実行する。`cargo test` は `target/debug` のヘル
   プラグイン付きの `plugin-loop` は折り返しだけ、`plugin-edits` は採用だけを抽出し、最大値も比べる（[ADR 0239](decisions/0239-live-note-cursor-work.md)）。
   トラックあたりの値が数とともに増えれば、2 乗の処理が残っている（[ADR 0236](decisions/0236-callback-work-per-track.md)）。
 - `spike-scale`: 機器とプラグインなしで、ループの折り返しと再生中の編集のブロック、制御側の作り直し、モデルの編集と読込みの検証を release 計測する（`target/spike-scale.json`）。
+  テンポの編集は、曲に近い 64・128 トラック × 1,000 ノートでも測る（[ADR 0335](decisions/0335-retimed-plans-keep-note-numbers.md)）。
   どの変更でも選ばれない明示の計測で、FCA-01〜05 の修正の前後に実行する（[実行指示](reviews/2026-11-03-fix-instructions.md)）。
   検査基盤へ結果を記録する時は `python3 -B scripts/verify.py --all --only spike-scale --run spike-scale` とし、その後に通常の `make verify` を行う。
   通常選択に含まれないため `make verify VERIFY_ARGS='--run spike-scale'` だけでは拒否される。

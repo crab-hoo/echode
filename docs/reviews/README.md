@@ -23,6 +23,7 @@
   イベント容量の FCA-03 は [ADR 0240](../decisions/0240-block-local-event-capacity.md) で対応した。
   配置の PCM の複製（FCA-10）は [ADR 0241](../decisions/0241-unscaled-placement-pcm.md) で対応した。
   FCA-04 は [ADR 0274](../decisions/0274-reused-track-plans.md) で、変わらないトラックの計画を使い回すようにした。
+  テンポ・レートの変更で作り直す時の番号表の照会は [ADR 0335](../decisions/0335-retimed-plans-keep-note-numbers.md) でなくした。
   FCA-05 の先行分は [ADR 0242](../decisions/0242-model-content-lookup-and-references.md) と監査の追記を参照する。残りは [ADR 0278](../decisions/0278-audit-backlog-order.md) で区切った。
   WAV（FCA-16）は [ADR 0243](../decisions/0243-float-wav-metadata.md) の float ヘッダと、
   [ADR 0247](../decisions/0247-pcm24-wav-export.md) の PCM24 と [ADR 0248](../decisions/0248-pcm16-wav-export.md) の PCM16 を接続した。
