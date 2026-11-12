@@ -105,8 +105,10 @@ class ExecutionTests(unittest.TestCase):
         command = [
             sys.executable,
             "-c",
-            f"from pathlib import Path; p=Path({str(counter)!r}); "
-            "p.write_text(p.read_text()+'x' if p.exists() else 'x')",
+            (
+                f"from pathlib import Path; p=Path({str(counter)!r}); "
+                "p.write_text(p.read_text()+'x' if p.exists() else 'x')"
+            ),
         ]
         checks = [
             self.check("check", preflight=["ready"]),
@@ -188,11 +190,11 @@ class ExecutionTests(unittest.TestCase):
         self.assertRegex(results["measure"]["deferred_at"], r"^\d{4}-\d\d-\d\dT")
         self.assertIn("未実行の理由: no device（記録 ", (self.root / "target/verification/report.md").read_text())
         for refused in (
-            dict(defer=["measure", "listen"], reason="shared"),
-            dict(defer=["measure=a", "measure=b"]),
-            dict(defer=["measure= "]),
-            dict(defer=["measure=a"], reason="stray"),
-            dict(defer=["measure"]),
+            {"defer": ["measure", "listen"], "reason": "shared"},
+            {"defer": ["measure=a", "measure=b"]},
+            {"defer": ["measure= "]},
+            {"defer": ["measure=a"], "reason": "stray"},
+            {"defer": ["measure"]},
         ):
             with self.subTest(refused=refused), self.assertRaises(ValueError):
                 self.run_verify(support.arguments(**refused))
@@ -222,10 +224,10 @@ class ExecutionTests(unittest.TestCase):
         self.assertFalse((self.root / "target/verification/timing-history.jsonl").exists())
         self.assertIn("--record-only", (self.root / "target/verification/report.md").read_text())
         for refused in (
-            dict(record_only=True),
-            dict(record_only=True, defer=["measure=x"], run=["measure"]),
-            dict(record_only=True, defer=["measure=x"], only=["measure"]),
-            dict(record_only=True, defer=["measure=x"], force=True),
+            {"record_only": True},
+            {"record_only": True, "defer": ["measure=x"], "run": ["measure"]},
+            {"record_only": True, "defer": ["measure=x"], "only": ["measure"]},
+            {"record_only": True, "defer": ["measure=x"], "force": True},
         ):
             with self.subTest(refused=refused), self.assertRaises(ValueError):
                 self.run_verify(support.arguments(**refused))
@@ -292,6 +294,7 @@ class ExecutionTests(unittest.TestCase):
         for name, check in checks.items():
             if check["mode"] == "automatic" and name not in (
                 "check-format",
+                "check-lint",
                 "check-verification",
                 "check-tsan-runtime",
             ):
@@ -337,7 +340,7 @@ class CheckedCommandTests(unittest.TestCase):
         argv = [sys.executable, str(ROOT / "scripts/checked_commands.py"), "--log-dir", str(folder), *extra]
         for command in commands:
             argv += ["--command", command]
-        return subprocess.run(argv, capture_output=True, text=True)
+        return subprocess.run(argv, capture_output=True, text=True, check=False)
 
     def test_all_commands_run_but_any_failure_is_returned_and_logs_remain_complete(self):
         import shlex

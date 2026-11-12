@@ -45,6 +45,7 @@ make debug-report
   - clippy が `unsafe` の根拠を求める
   - `check-workspace-lints` が lint の継承を求める
   - `check-typed-errors` が文字列のエラーを拒否する
+  - `check-lint` が整形の差や lint の指摘を報告する
   - Cargo の依存メタデータが欠ける
   - Swift の編集型の生成鮮度が不一致になる
   - Rust に追加したアクションを Swift が `unknown variant` として拒否する

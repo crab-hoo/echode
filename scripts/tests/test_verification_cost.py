@@ -114,7 +114,7 @@ class VerificationCostTests(unittest.TestCase):
                 patch.object(
                     verify,
                     "input_digest",
-                    side_effect=lambda root, relative: (
+                    side_effect=lambda root, relative, path=path: (
                         digest(root, relative) + (b"edited" if relative == path else b"")
                     ),
                 ),
@@ -125,7 +125,10 @@ class VerificationCostTests(unittest.TestCase):
                     "diagnostic code must not invalidate every contract",
                 )
                 after = verify.check_fingerprints(ROOT, policy, {}, {})
-                self.assertEqual({name for name in checks if checks[name] != after[name]}, {"check-verification"})
+                # check-lint reads every Python file; it builds and tests no product.
+                self.assertEqual(
+                    {name for name in checks if checks[name] != after[name]}, {"check-verification", "check-lint"}
+                )
 
     def test_hooks_and_ci_select_foundation_not_unrelated_sanitizers(self):
         policy = verify.load_policy(ROOT)

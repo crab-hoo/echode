@@ -226,8 +226,10 @@ def render(data):
     changes = diagnosis["changed_paths"]
     lines = [
         f"Source: {diagnosis['source']}",
-        f"Environment: missing={environment['missing_tools']}; tool_errors={environment['tool_errors']}; "
-        f"setup_needed={['make ' + target for target in environment['setup_needed']]}",
+        (
+            f"Environment: missing={environment['missing_tools']}; tool_errors={environment['tool_errors']}; "
+            f"setup_needed={['make ' + target for target in environment['setup_needed']]}"
+        ),
         f"App: {diagnosis['build']['status']}; verification: {verification['freshness']}; lock: {'BUSY - wait before editing' if verification['running'] else 'idle'}",
     ]
     if verification["error"]:

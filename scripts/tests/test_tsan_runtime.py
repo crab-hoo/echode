@@ -96,6 +96,7 @@ class RuntimeTests(unittest.TestCase):
                 "ECHODE_TEST_COMMAND_LOG": str(log),
                 **environment,
             },
+            check=False,
         )
 
     def test_address_check_still_launches_swift_with_macos_bash(self):
@@ -195,6 +196,7 @@ class RuntimeTests(unittest.TestCase):
                     capture_output=True,
                     text=True,
                     timeout=10,
+                    check=False,
                 )
                 self.assertEqual(result.returncode == 0, accepted, result.stderr)
 
@@ -221,6 +223,7 @@ class RuntimeTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
                 timeout=10,
+                check=False,
             )
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("SUMMARY: ThreadSanitizer: data race Document.swift:59", result.stderr)

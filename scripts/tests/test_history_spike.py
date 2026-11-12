@@ -36,6 +36,7 @@ class HistorySpikeTests(unittest.TestCase):
             capture_output=True,
             text=True,
             timeout=30,
+            check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         metadata = json.loads(result.stdout)

@@ -42,18 +42,18 @@ wait_for_verify = module("wait_for_verify", "wait_for_verify.py")
 
 
 def arguments(**overrides):
-    options = dict(
-        base=None,
-        all=False,
-        full=False,
-        only=[],
-        run=[],
-        defer=[],
-        reason=None,
-        record_only=False,
-        plan=False,
-        force=False,
-    )
+    options = {
+        "base": None,
+        "all": False,
+        "full": False,
+        "only": [],
+        "run": [],
+        "defer": [],
+        "reason": None,
+        "record_only": False,
+        "plan": False,
+        "force": False,
+    }
     options.update(overrides)
     return argparse.Namespace(**options)
 
@@ -2284,6 +2284,7 @@ class PolicyTests(unittest.TestCase):
             self.selected("spikes/input/Sources/EchodeInputCore/Gesture.swift"),
             {
                 "check-format",
+                "check-lint",
                 "check-verification",
                 "check",
                 "check-swift",
@@ -2353,12 +2354,21 @@ class PolicyTests(unittest.TestCase):
             self.assertEqual(self.selected(path), expected)
         self.assertEqual(
             self.selected("docs/PLAN.md"),
-            {"check-format", "check-verification", "check", "check-swift", "check-product-contracts", "check-real-hal"},
+            {
+                "check-format",
+                "check-lint",
+                "check-verification",
+                "check",
+                "check-swift",
+                "check-product-contracts",
+                "check-real-hal",
+            },
         )
 
     def test_a_helper_script_selects_only_the_checks_that_run_it(self):
         always = {
             "check-format",
+            "check-lint",
             "check-verification",
             "check",
             "check-swift",
@@ -2417,6 +2427,7 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(redefined(policy), {check["id"] for check in self.policy["checks"]})
         always = {
             "check-format",
+            "check-lint",
             "check-verification",
             "check",
             "check-swift",
@@ -3002,6 +3013,7 @@ class PolicyTests(unittest.TestCase):
             cwd=ROOT,
             capture_output=True,
             text=True,
+            check=False,
         )
         self.assertIn(result.returncode, (0, 1), result.stderr)
         leaks = [line for line in result.stdout.splitlines() if not line.endswith(("/Users/someone", "/Users/Shared"))]
@@ -3588,12 +3600,14 @@ class WaitForVerifyTests(unittest.TestCase):
             [
                 sys.executable,
                 "-c",
-                "import fcntl, time, sys\n"
-                "from pathlib import Path\n"
-                "handle = open(sys.argv[1], 'a')\n"
-                "fcntl.flock(handle, fcntl.LOCK_EX)\n"
-                "Path(sys.argv[2]).write_text('ready')\n"
-                "time.sleep(0.35)\n",
+                (
+                    "import fcntl, time, sys\n"
+                    "from pathlib import Path\n"
+                    "handle = open(sys.argv[1], 'a')\n"
+                    "fcntl.flock(handle, fcntl.LOCK_EX)\n"
+                    "Path(sys.argv[2]).write_text('ready')\n"
+                    "time.sleep(0.35)\n"
+                ),
                 str(lock_path),
                 str(ready),
             ]
@@ -3620,12 +3634,14 @@ class WaitForVerifyTests(unittest.TestCase):
             [
                 sys.executable,
                 "-c",
-                "import fcntl, time, sys\n"
-                "from pathlib import Path\n"
-                "handle = open(sys.argv[1], 'a')\n"
-                "fcntl.flock(handle, fcntl.LOCK_EX)\n"
-                "Path(sys.argv[2]).write_text('ready')\n"
-                "time.sleep(30)\n",
+                (
+                    "import fcntl, time, sys\n"
+                    "from pathlib import Path\n"
+                    "handle = open(sys.argv[1], 'a')\n"
+                    "fcntl.flock(handle, fcntl.LOCK_EX)\n"
+                    "Path(sys.argv[2]).write_text('ready')\n"
+                    "time.sleep(30)\n"
+                ),
                 str(lock_path),
                 str(ready),
             ]

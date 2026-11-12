@@ -2,6 +2,7 @@
 
 必須規則は [AGENTS.md](../AGENTS.md)。この文書は実際の作業手順とコードの所在を案内する。
 検査基盤は Python 3.11 以降（標準の `tomllib` を使用、追加パッケージ不要）で動く。
+lint の固定版（ruff・shellcheck・shfmt）は `make setup-lint` が `target/lint-tools` に入れる（[ADR 0323](decisions/0323-swift-python-shell-format-and-lint.md)）。
 動的検査の初回は `make setup-bridge` を使う。TSan の固定ソース取得・CMake / Ninja と検査専用ランタイムは [検査手順](verification.md#環境フックと-ci) を参照する。
 
 ## 開始から完了まで
@@ -14,7 +15,7 @@
 3. 不具合は最小入力、初期状態、操作順、期待と実際、使用した版を記録する。
    製品の入口から再現し、回帰テストを先に失敗させる。環境エラーは [デバッグ手順](debugging.md) で切り分ける。
 4. 境界と不変条件を守って修正し、必要なドキュメント・テスト・デバッグ基盤も同じ作業で更新する。
-   作業中の個別テストは `-q` を付けて出力を抑え（例: `cargo test -q -p <crate> <filter>`）、最後の編集後に `make verify` を実行する。
+   作業中の個別テストは `-q` を付けて出力を抑え（例: `cargo test -q -p <crate> <filter>`）、最後の編集後に `make fmt` と `make verify` を実行する。
 5. 選択された実機・計測は実行するか理由を記録し、最後の編集後に全選択項目を確認する。途中の `--only` の成功を完了の証拠にしない。
 6. 最終報告には変更の効果、基盤の更新内容（不要なら理由）、失敗した検査、見送った検査名と理由、残る制約を簡潔に記す。
    検査の報告範囲は [AGENTS.md](../AGENTS.md#進捗と結果の報告) に従う。

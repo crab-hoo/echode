@@ -43,7 +43,8 @@ public func runArrangeProbe(reportPath: String) {
                 view.markMainBusy(true)
                 piano.grid.markMainBusy(true)
                 let deadline = Date().addingTimeInterval(0.5)
-                while Date() < deadline { /* Deliberate MainActor load in this explicit probe only. */  }
+                // Deliberate MainActor load in this explicit probe only.
+                while Date() < deadline {}
                 view.markMainBusy(false)
                 piano.grid.markMainBusy(false)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {

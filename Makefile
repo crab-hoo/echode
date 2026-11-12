@@ -3,7 +3,7 @@
 SHELL := /bin/bash -euo pipefail
 .PHONY: spike-verification-failures
 
-.PHONY: bundled-plugins app dist xcode sign-setup spike-app spike-playhead spike-arrange-frame spike-piano-frame spike-main-thread spike-audio spike-audition spike-plugin-tracks spike-scale check check-format check-base check-product-contracts check-real-hal verify verify-plan check-verification doctor agent-context debug-report fmt setup setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-engine-smoke spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-tsan-runtime check-bridge-miri check-shell check-swift check-contract-controls contract-prerequisites verify-full rtsan setup-fuzz fuzz check-fuzz setup-coverage coverage
+.PHONY: bundled-plugins app dist xcode sign-setup spike-app spike-playhead spike-arrange-frame spike-piano-frame spike-main-thread spike-audio spike-audition spike-plugin-tracks spike-scale check check-format check-lint check-base check-product-contracts check-real-hal verify verify-plan check-verification doctor agent-context debug-report fmt setup setup-lint setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-engine-smoke spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-tsan-runtime check-bridge-miri check-shell check-swift check-contract-controls contract-prerequisites verify-full rtsan setup-fuzz fuzz check-fuzz setup-coverage coverage
 
 bundled-plugins:
 	bash scripts/build-bundled-plugins.sh
@@ -58,6 +58,7 @@ spike-main-thread:
 # Portable checks include required product regressions, once each.
 check:
 	$(MAKE) check-format
+	$(MAKE) check-lint
 	$(MAKE) check-verification
 	$(MAKE) check-base
 	$(MAKE) check-swift
@@ -72,6 +73,10 @@ check-swift-actions:
 
 check-format:
 	cargo fmt --all --check
+
+# Swift, Python and shell formatting and lint; Rust has check-format and clippy (ADR 0323).
+check-lint:
+	python3 -B scripts/lint.py check
 
 # The verifier records the Rust part, the Swift part and product contracts as separate checks.
 check-base:
@@ -153,12 +158,13 @@ verification-profile:
 check-verification:
 	python3 -B scripts/run_unit_tests.py
 
-# Static checks that need no M4, for contributors and GitHub Actions (ADR 0269).
-# Hosted macOS runners are M1 / M2: clippy compiles for apple-m1 there, so build scripts and
-# proc macros never execute M4 instructions. Not a substitute for `make check`.
+# Static checks that need no M4, for contributors and GitHub Actions (ADR 0269). Hosted runners
+# are M1 / M2: clippy targets apple-m1, so build scripts never run M4 instructions. The lint skips
+# swift-format, which follows the runner's Xcode (ADR 0323). Not a substitute for `make check`.
 .PHONY: check-portable
 check-portable:
 	cargo fmt --all --check
+	python3 -B scripts/lint.py check --pinned-only
 	python3 -B scripts/run_unit_tests.py
 	scripts/check-ffi.sh
 	python3 -B scripts/check_audio_lints.py
@@ -185,10 +191,16 @@ debug-report:
 
 fmt:
 	cargo fmt
+	python3 -B scripts/lint.py format
 
 # Tools `make check` needs besides the toolchain in rust-toolchain.toml.
 setup:
 	cargo install --locked cargo-deny@0.20.2
+	$(MAKE) setup-lint
+
+# The pinned ruff, shellcheck and shfmt in target/lint-tools (network). swift-format comes with Xcode.
+setup-lint:
+	python3 -B scripts/lint.py setup
 
 # Fixed validation toolchain; never changes the product compiler/default.
 setup-bridge:

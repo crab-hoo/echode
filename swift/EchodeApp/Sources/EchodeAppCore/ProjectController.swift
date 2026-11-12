@@ -742,10 +742,9 @@ public final class ProjectController {
     func performActions(
         referencing actions: [ReferencingEditAction], documentID: DocumentID, selectingAddedTrack: Bool = false
     ) async -> Bool {
-        await applyEdit({ actions }, documentID: documentID, selectingAddedTrack: selectingAddedTrack) {
-            document, actions in
-            try await document.perform(referencing: actions)
-        }
+        await applyEdit(
+            { actions }, documentID: documentID, selectingAddedTrack: selectingAddedTrack,
+            submit: { document, actions in try await document.perform(referencing: actions) })
     }
 
     private func applyEdit<Fields>(

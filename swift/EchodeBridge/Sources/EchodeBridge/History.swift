@@ -10,7 +10,12 @@ public struct SavedRevision: Decodable, Sendable, Equatable, Identifiable {
 public struct RecoveryNotice: Decodable, Sendable, Equatable {
     public let tip: String
     public let base: String
-    public let applied_seq: UInt64
+    public let appliedSeq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case tip, base
+        case appliedSeq = "applied_seq"
+    }
 }
 
 public struct HistoryReport: Decodable, Sendable, Equatable {
@@ -18,7 +23,12 @@ public struct HistoryReport: Decodable, Sendable, Equatable {
     public let revisions: [SavedRevision]
     public let changed: Bool
     /// Versioned GUI preferences; absent on unrelated history responses.
-    public let export_settings: String?
+    public let exportSettings: String?
+
+    enum CodingKeys: String, CodingKey {
+        case recovery, revisions, changed
+        case exportSettings = "export_settings"
+    }
 }
 
 public enum HistoryCommand: Encodable, Sendable {

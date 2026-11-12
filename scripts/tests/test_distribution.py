@@ -88,7 +88,9 @@ class DistributionSpec(unittest.TestCase):
             binary = root / "target/release/libplatform_dylib.dylib"
             distribution.validate_binary(binary)
             probe = "import ctypes, sys; library = ctypes.CDLL(sys.argv[1]); library.answer.restype = ctypes.c_size_t; assert library.answer() > 0"
-            loaded = subprocess.run([sys.executable, "-c", probe, str(binary)], capture_output=True, text=True)
+            loaded = subprocess.run(
+                [sys.executable, "-c", probe, str(binary)], capture_output=True, text=True, check=False
+            )
             self.assertEqual(loaded.returncode, 0, loaded.stderr)
 
     def test_old_deployment_target_is_rejected_before_bundle_assembly(self):
@@ -181,7 +183,7 @@ class SignedBundle(unittest.TestCase):
                 foreign = self.foreign_library(root)
                 main = app / "Contents/MacOS/Echode"
                 helper_bin = app / "Contents/Helpers/EchodePluginHost.app/Contents/MacOS/echode-plugin-host"
-                accepted = subprocess.run([str(helper_bin), str(foreign)], capture_output=True, text=True)
+                accepted = subprocess.run([str(helper_bin), str(foreign)], capture_output=True, text=True, check=False)
                 self.assertEqual(accepted.returncode, 0, accepted.stderr)
                 with self.subTest("the main app refuses the library at load time"):
                     if not self.host_enforces_library_validation(root, foreign):
@@ -189,7 +191,7 @@ class SignedBundle(unittest.TestCase):
                         if os.environ.get("GITHUB_ACTIONS") != "true":
                             self.fail("this Mac does not enforce library validation, so the main app cannot be checked")
                         self.skipTest("the runner does not enforce library validation")
-                    rejected = subprocess.run([str(main), str(foreign)], capture_output=True, text=True)
+                    rejected = subprocess.run([str(main), str(foreign)], capture_output=True, text=True, check=False)
                     self.assertEqual(rejected.returncode, 1, rejected.stderr)
             finally:
                 subprocess.run(["security", "delete-keychain", str(keychain)], check=False)
@@ -246,7 +248,7 @@ class SignedBundle(unittest.TestCase):
             check=True,
             capture_output=True,
         )
-        completed = subprocess.run([str(control), str(library)], capture_output=True, text=True)
+        completed = subprocess.run([str(control), str(library)], capture_output=True, text=True, check=False)
         self.assertIn(completed.returncode, (0, 1), completed.stderr)
         return completed.returncode == 1
 
@@ -262,14 +264,12 @@ class SignedBundle(unittest.TestCase):
         return library
 
     def codesign_details(self, path):
-        completed = subprocess.run(["codesign", "-dvvv", str(path)], capture_output=True, text=True)
+        completed = subprocess.run(["codesign", "-dvvv", str(path)], capture_output=True, text=True, check=False)
         return completed.stdout + completed.stderr
 
     def entitlements(self, path):
         completed = subprocess.run(
-            ["codesign", "-d", "--entitlements", "-", str(path)],
-            capture_output=True,
-            text=True,
+            ["codesign", "-d", "--entitlements", "-", str(path)], capture_output=True, text=True, check=False
         )
         return completed.stdout + completed.stderr
 

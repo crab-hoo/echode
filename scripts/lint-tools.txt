@@ -1,0 +1,13 @@
+# The linters and formatters scripts/lint.py runs (ADR 0323). `make setup-lint` installs
+# exactly these wheels into target/lint-tools. Echode builds only on macOS, so only the
+# macOS wheels are listed. A new pin needs `make setup-lint`, `make fmt` and a fix of
+# every new finding in the same change.
+ruff==0.17.4 \
+    --hash=sha256:7ed2f416349944f908f9574215994602242b0836844eba48eec61473033afca0 \
+    --hash=sha256:13e781c3c5f663e7fba737eaaeb70dd943dd55171daf316afb25cd5268cfe0c7
+shellcheck-py==0.11.0.1 \
+    --hash=sha256:6b88d0a244c82ed07e06a53e444da841f69330ca59ae15d4a66c391655dae7a0 \
+    --hash=sha256:b6a3fee28efda2e16e38d6e6d59faf7224300256456639727370d404730849e8
+shfmt-py==4.2.0 \
+    --hash=sha256:7b7fa81b120fdccebbe60b9c3411ce1b549fa2828f2809e8fa5e231a9bac65dd \
+    --hash=sha256:aaf9e195c2e115309c32ef0d8d05b42afc4a23468b61230a09a8a4bdac95d027

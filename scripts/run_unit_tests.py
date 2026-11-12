@@ -32,6 +32,7 @@ def run_module(name, directory=TESTS):
         capture_output=True,
         text=True,
         env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        check=False,
     )
     return {
         "module": name,

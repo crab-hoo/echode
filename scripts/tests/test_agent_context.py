@@ -113,14 +113,18 @@ class ContextTests(unittest.TestCase):
         reference = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=self.root, text=True).strip()
         with patch.dict(os.environ, {"VERIFY_BASE": reference}):
             self.assertEqual(context.collect(self.root)["diagnosis"]["base"], reference)
-        with patch.dict(os.environ, {"VERIFY_BASE": "explicit-missing-ref"}):
-            with self.assertRaises(subprocess.CalledProcessError):
-                context.collect(self.root)
+        with (
+            patch.dict(os.environ, {"VERIFY_BASE": "explicit-missing-ref"}),
+            self.assertRaises(subprocess.CalledProcessError),
+        ):
+            context.collect(self.root)
 
     def test_changed_collection_missing_guides_and_unmapped_areas_fail_closed(self):
-        with patch.object(context.diagnose, "source_stamp", side_effect=["before", "before", "after"]):
-            with self.assertRaisesRegex(ValueError, "changed during"):
-                context.collect(self.root)
+        with (
+            patch.object(context.diagnose, "source_stamp", side_effect=["before", "before", "after"]),
+            self.assertRaisesRegex(ValueError, "changed during"),
+        ):
+            context.collect(self.root)
         (self.root / "docs/README.md").unlink()
         with self.assertRaises(FileNotFoundError):
             context.collect(self.root)
@@ -295,6 +299,7 @@ class SourceViewTests(unittest.TestCase):
             capture_output=True,
             text=True,
             timeout=10,
+            check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(json.loads(result.stdout)["content"].startswith("## 検査をまとめて進める\n"))
@@ -316,6 +321,7 @@ class SourceViewTests(unittest.TestCase):
                     capture_output=True,
                     text=True,
                     timeout=10,
+                    check=False,
                 )
                 self.assertEqual(result.returncode, 1)
                 self.assertEqual(result.stdout, "")

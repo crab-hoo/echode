@@ -59,7 +59,11 @@ def invoke():
     (ROOT / "target").mkdir(exist_ok=True)
     with (ROOT / "target/agent-check.log").open("w") as log:
         return subprocess.run(
-            [sys.executable, str(ROOT / "scripts/verify.py")], cwd=ROOT, stdout=log, stderr=subprocess.STDOUT
+            [sys.executable, str(ROOT / "scripts/verify.py")],
+            cwd=ROOT,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            check=False,
         ).returncode
 
 

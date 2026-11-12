@@ -133,7 +133,7 @@ GitHub の `full` がプッシュごとに実行する。作業ごとの `make v
 
 ### ツール不足・ビルド失敗
 
-`doctor` の `missing_tools` と最初のエラーを読む。通常ツールは `make setup`、動的検査は `make setup-bridge`。
+`doctor` の `missing_tools` と最初のエラーを読む。通常ツールは `make setup`（lint の固定版だけなら `make setup-lint`）、動的検査は `make setup-bridge`。
 ツールがそろっていても、`setup_needed` に `setup-bridge` があれば TSan の検査専用ランタイムが未準備か、
 Xcode・CMake・Ninja の版と合わない。この時 TSan の検査はソースの変更がなくても `stale` になる。
 `swift test -q` が `Build failed` / `fatalError` だけを返す場合は、`swift build --build-tests` で診断を取得する。
@@ -194,6 +194,15 @@ I/O エラーの原因は、内側の型にして `io::Error::new(kind, 型)` �
 スパイクの JSON・版・ワーカーの失敗だけは feature 付きの `Spike(SpikeError)` に置く。
 複数の待ち手へ渡す失敗は `Shared` で原因を共有し、文を複製しない。`original()` で元の変種を調べる。
 検査は構文で見るので、変数に入れた `&'static str` や型の推論を要する経路は見つけない。
+
+### `check-lint` が整形の差や lint の指摘を報告する
+
+- `lint tools: ... run make setup-lint`: 固定版が未導入か、`scripts/lint-tools.txt` が導入後に変わった。`target/` を消した時も起きる。導入はネットワークを使う。
+- `Would reformat`（ruff）、`--list` のファイル名（shfmt）、`[Indentation]` などの配置（swift-format）: `make fmt` で直す。
+- 規則の名前付きの指摘: コードで直す（[ADR 0323](../decisions/0323-swift-python-shell-format-and-lint.md) の「直した指摘」が例）。抑止は理由を書いた時だけ使う。
+- コードを変えていないのに swift-format の差が出る: Xcode の更新で swift-format が変わった。`make fmt` の結果だけを 1 つのコミットにし、`.git-blame-ignore-revs` に足す。
+- `make fmt` の後にビルドが通らない: swift-format が括弧を外した比較 `a < b, c > (d)` は、次の整形で `a<b, c>(d)` というジェネリクスの呼出しに読み直される。
+  `make fmt` は swift-format を 2 回かけるので、この形はビルドで止まる。比較の順を変えるか、値を先に変数へ入れる。
 
 ### Cargo の依存メタデータが欠ける
 

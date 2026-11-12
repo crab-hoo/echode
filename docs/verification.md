@@ -122,7 +122,7 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
 
 ## 自動検査
 
-通常の `make check` は `check-format`、`check-verification`、`check-base`、`check-swift`、`check-product-contracts` を順に 1 回ずつ実行する。
+通常の `make check` は `check-format`、`check-lint`、`check-verification`、`check-base`、`check-swift`、`check-product-contracts` を順に 1 回ずつ実行する。
 `scripts/verify.py` では JSON の `make_target` により、結果 ID `check` が `check-base` を実行し、Rust、Swift、製品契約は別の結果として記録する。
 
 - `check-verification`: 検査選択、依存入力の失効、診断、署名、作業資料のリンクと行長整合、ADR・監査・スパイクを含む全文書のローカルリンク。
@@ -133,6 +133,7 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
   文書だけの変更ではこれを再実行し、入力が変わっていない製品検査は再利用する。
   エージェント入口の選択の一致・失敗情報の保持・原文読込と鮮度の境界も既存の検査内で確認する（[手順](agent-workflow.md)）。
 - `check-format`: 従来 `check-base` のビルド後に行っていた Rust フォーマットを独立して先に検査する。
+- `check-lint`: Swift・Python・シェルの整形と lint（[整形と lint](#整形と-lint)）。
 - `check` (`check-base`): Rust のビルドと全テスト、ランダムな編集の不変条件・Undo / Redo・保存往復、基準音声、保存形式、ブロック長比較、プラグインのクラッシュ・ハング、clippy、FFI、ライセンス。
   `make check-swift-actions` で登録簿・公開スキーマと Swift の生成編集型を照合し、古い生成物を変更せず拒否する。
   FFI の例外はパスとシンボルの組に限り、既存の許可ファイルへの新しい宣言も拒否する（[ADR 0265](decisions/0265-symbol-scoped-foreign-declarations.md)）。
@@ -337,6 +338,7 @@ Bash は待たせないので、状態とログは読めるが、ファイルを
 フックの上限は `verification.json` の `hook_timeout` と一致させ、全自動検査と事前確認の直列予算を覆うことを検査する。
 ロック待機の上限は同じ予算から JSON 応答用の 10 秒を引く。これは検査自体の高速化や個別期限の延長ではない。
 GitHub Actions の `check` は、M4 を要らない `make check-portable` と `make advisories` を実行する（[ADR 0269](decisions/0269-github-public-ci-scope.md)）。
+`check-portable` の前に `make setup-lint` で lint の固定版を入れる。
 M4 のない環境の協力者も同じ入口を使える。
 `full` は全体の段階の 6 件を、手元と同じ apple-m4 のビルドのまま M1 のランナーで実行する。
 反例は `ECHODE_CONTRACT_SHARD=I/N` で 4 つのジョブに分け、各ジョブは必須テストを全部実行してから自分の分の反例を実行する。
@@ -344,6 +346,22 @@ M4 のない環境の協力者も同じ入口を使える。
 作業の段階のネイティブ検査は CI になく、手元の `make verify` で行う。
 CI の合格は `make verify` の合格ではなく、`report.md` にも記録しない。
 調査資料の収集は [デバッグ手順](debugging.md) を参照する。
+
+## 整形と lint
+
+`check-lint` は `scripts/lint.py check` で、追跡中と未追跡の全ファイルを言語ごとに検査する（[ADR 0323](decisions/0323-swift-python-shell-format-and-lint.md)）。
+拡張子のないスクリプトは `#!` の行で振り分ける。どれも道具の既定の規則で、変更行だけには絞らない。
+
+| 対象 | 整形 | lint | 版 |
+|---|---|---|---|
+| Swift | swift-format（`.swift-format`） | swift-format | Xcode 同梱 |
+| Python | ruff format（`ruff.toml`） | ruff check | `scripts/lint-tools.txt` |
+| シェル | shfmt（`-i 4 -ci`） | shellcheck（`.shellcheckrc`） | `scripts/lint-tools.txt` |
+
+固定版は `make setup-lint`（`make setup` が呼ぶ）が `target/lint-tools` に入れ、事前確認 `lint-tools` が確かめる。
+配置の差は `make fmt` で直し、lint の指摘はコードで直す。抑止（`# noqa`、`// swift-format-ignore`）は理由を書いた時だけ使う。
+`make check-portable` は `--pinned-only` で swift-format を除く。ホストのランナーの Xcode の版が手元と異なり得るからである。
+生成した `EditAction.swift` は `// swift-format-ignore-file` を持ち、`check-swift-actions` が生成器の出力と照合する。
 
 ## 検査基盤で区別すること
 

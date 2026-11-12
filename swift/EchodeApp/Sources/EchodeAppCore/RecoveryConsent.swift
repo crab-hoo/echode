@@ -13,7 +13,7 @@ public struct RecoveryPrompt: Sendable, Equatable {
             + text(
                 "An older version was recovered. Recent edits may be missing. Cancel and preserve a copy of the project before continuing. Continuing saves the recovered version as a new checkpoint."
             )
-            + "\n\n\(text("Unreadable version")): \(notice.tip)\n\(text("Recovered version")): \(notice.base)\n\(text("Applied journal sequence")): \(notice.applied_seq)"
+            + "\n\n\(text("Unreadable version")): \(notice.tip)\n\(text("Recovered version")): \(notice.base)\n\(text("Applied journal sequence")): \(notice.appliedSeq)"
     }
 }
 

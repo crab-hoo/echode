@@ -74,7 +74,6 @@ class DiagnosticTests(unittest.TestCase):
     def save_report(self, status="passed"):
         directory = self.root / "target/verification"
         directory.mkdir(parents=True, exist_ok=True)
-        changed = diagnose.verify.changed_paths(self.root)
         policy = diagnose.verify.load_policy(self.root)
         stamp = diagnose.verify.check_fingerprints(self.root, policy, self.tools)["check"]
         (directory / "report.json").write_text(
@@ -165,9 +164,11 @@ class DiagnosticTests(unittest.TestCase):
             data = diagnose.collect(self.root)
         self.assertEqual(data["base"], reference)
         self.assertEqual(data["changed_paths"], ["source.txt"])
-        with patch.dict(os.environ, {"VERIFY_BASE": "missing-fixture-ref"}):
-            with self.assertRaises(subprocess.CalledProcessError):
-                diagnose.collect(self.root)
+        with (
+            patch.dict(os.environ, {"VERIFY_BASE": "missing-fixture-ref"}),
+            self.assertRaises(subprocess.CalledProcessError),
+        ):
+            diagnose.collect(self.root)
 
     def test_persistent_lock_file_is_idle_until_it_is_actually_locked(self):
         self.save_report()
@@ -212,6 +213,7 @@ class DiagnosticTests(unittest.TestCase):
             capture_output=True,
             text=True,
             timeout=60,
+            check=False,
         )
         self.assertEqual(result.returncode, 2)
         self.assertIn("--record-build requires --expected-source", result.stderr)

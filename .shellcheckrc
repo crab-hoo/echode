@@ -1,0 +1,4 @@
+# The scripts change to the repository root before they source scripts/*.env,
+# so shellcheck follows those files from there (ADR 0323).
+external-sources=true
+source-path=SCRIPTDIR/..

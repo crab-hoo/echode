@@ -14,7 +14,7 @@ PACKAGES = ("swift/EchodeApp", "swift/EchodeBridge", "spikes/draw", "spikes/inpu
 
 
 def run(arguments, **options):
-    result = subprocess.run(arguments, cwd=ROOT, capture_output=True, text=True, **options)
+    result = subprocess.run(arguments, cwd=ROOT, capture_output=True, text=True, **options, check=False)
     if result.returncode:
         raise AssertionError(result.stdout + result.stderr)
     return result.stdout
@@ -40,9 +40,11 @@ class BuildPlatformTests(unittest.TestCase):
         from scripts.check_build_host import main
 
         error = subprocess.CalledProcessError(1, "sysctl", stderr="Operation not permitted")
-        with patch("scripts.check_build_host.subprocess.run", side_effect=error):
-            with self.assertRaisesRegex(SystemExit, "Cannot verify the M4 native-test host: Operation not permitted"):
-                main()
+        with (
+            patch("scripts.check_build_host.subprocess.run", side_effect=error),
+            self.assertRaisesRegex(SystemExit, "Cannot verify the M4 native-test host: Operation not permitted"),
+        ):
+            main()
 
     def test_native_test_host_requires_m4_and_macos27(self):
         from scripts.check_build_host import supports_native_tests

@@ -102,6 +102,6 @@ extension ProjectController {
         let snapshot = try? await document.history(.exportSettings())
         guard inputSession(for: documentID) === captured else { return nil }
         let report = try? snapshot?.historyReport()
-        return ExportSettings.decodeStored(report?.export_settings) ?? fallback
+        return ExportSettings.decodeStored(report?.exportSettings) ?? fallback
     }
 }

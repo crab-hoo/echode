@@ -185,8 +185,10 @@ def describe_load(stall):
 
 def summarize_run(stalls, issues, names):
     lines = [
-        f"longest stall {max((stall.seconds for stall in stalls), default=0.0):.2f} s; "
-        f"most silence in {WINDOW_SECONDS:.0f} s {most_silence(stalls):.2f} s"
+        (
+            f"longest stall {max((stall.seconds for stall in stalls), default=0.0):.2f} s; "
+            f"most silence in {WINDOW_SECONDS:.0f} s {most_silence(stalls):.2f} s"
+        )
     ]
     longest = max(stalls, key=lambda stall: stall.seconds, default=None)
     if longest and longest.load:

@@ -40,25 +40,28 @@ struct AudioReplyObservationTests {
         }
 
         #expect(
-            try !notifies({
-                status()
-                _ = session.audition
-            }) { session.receive(try reply(tick: 240, audition: 1)) })
-        #expect(try notifies({ _ = session.position }) { session.receive(try reply(tick: 480, audition: 1)) })
+            try !notifies(
+                {
+                    status()
+                    _ = session.audition
+                }, when: { session.receive(try reply(tick: 240, audition: 1)) }))
+        #expect(try notifies({ _ = session.position }, when: { session.receive(try reply(tick: 480, audition: 1)) }))
 
         #expect(
-            try !notifies({
-                status()
-                _ = session.position
-            }) { session.receive(try reply(tick: 480, audition: 2)) })
-        #expect(try notifies({ _ = session.audition }) { session.receive(try reply(tick: 480, audition: 3)) })
+            try !notifies(
+                {
+                    status()
+                    _ = session.position
+                }, when: { session.receive(try reply(tick: 480, audition: 2)) }))
+        #expect(try notifies({ _ = session.audition }, when: { session.receive(try reply(tick: 480, audition: 3)) }))
 
         #expect(
-            try !notifies({
-                _ = session.position
-                _ = session.audition
-            }) { session.receive(try reply(tick: 480, audition: 3, metronome: true)) })
-        #expect(try notifies({ _ = session.audio }) { session.receive(try reply(tick: 480, audition: 3)) })
+            try !notifies(
+                {
+                    _ = session.position
+                    _ = session.audition
+                }, when: { session.receive(try reply(tick: 480, audition: 3, metronome: true)) }))
+        #expect(try notifies({ _ = session.audio }, when: { session.receive(try reply(tick: 480, audition: 3)) }))
         #expect(session.position == 480 && session.audition?.request == 3 && !session.audio.metronome)
     }
 

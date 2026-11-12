@@ -114,9 +114,8 @@ class ContractEvidenceTests(unittest.TestCase):
             self.assertEqual(source.read_text(), "fn value() -> u8 { 1 }\n")
             self.assertGreater(source.stat().st_mtime_ns, built - 10**9)
             stale = dict(contract, negative_control={"file": "src/lib.rs", "old": "missing", "new": "x"})
-            with self.assertRaises(ValueError):
-                with contracts.mutated(checkout, stale, stale["negative_control"]):
-                    pass
+            with self.assertRaises(ValueError), contracts.mutated(checkout, stale, stale["negative_control"]):
+                pass
 
     def test_rust_counterexamples_change_dependencies_first_and_group_each_crate(self):
         def case(name, path, package="echode-ffi"):

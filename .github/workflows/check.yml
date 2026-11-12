@@ -37,6 +37,7 @@ jobs:
         with:
           tool: cargo-deny@0.20.2
       - run: cargo fetch --locked
+      - run: make setup-lint
       - run: make check-portable
 
   advisories:

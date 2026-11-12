@@ -88,7 +88,7 @@
 | M2 | `unsafe` の根拠と FFI の長さの検査 | XCA-15・FFI-A1 | 対応済み（ADR 0321）。全 crate の `unsafe` に根拠があり、lint は `forbid`。C ABI の引数は `abi.rs` が一つの規則で検査する |
 | M3 | fuzz とカバレッジ | XCA-17 | 対応済み（ADR 0290）。5 つの入口に fuzz の対象を置き、見つかった 2 件を直した。`make coverage` で Rust 84.3%、Swift 72.9% |
 | M4 | ログの仕組み | DEV-8・XCA-19 | 対応済み（ADR 0322）。`log` の窓口と `echode-log` のロガーでファイルと統合ログへ書く。コールバックの取りこぼしはリングで渡し、ノード名付きで書く |
-| M5 | Swift・Python・シェルの整形と lint | XCA-18 | どれもない |
+| M5 | Swift・Python・シェルの整形と lint | XCA-18 | 対応済み（ADR 0323）。`check-lint` が swift-format・ruff・shfmt・shellcheck を全ファイルにかける。版は固定し、swift-format は Xcode に従う |
 | M6 | Codex のフック | XCA-06・ENV-04 | Claude Code は対応済み。Codex の matcher は Cursor の道具名のまま |
 | M7 | 入口と依存の整備 | XCA-20・DEV-9 | 下の注を参照 |
 | M8 | Swift のテストの期限 | XCA-09 の残り | `.timeLimit` は 0 件 |
@@ -191,6 +191,9 @@
 - 2026-11-12（ADR 0322）: M4 を閉じた。製品のコードは `log` の欄付きのマクロで書き、アプリは `echode.ndjson` と統合ログ、CLI は統合ログへ書く。
   コールバックは記録せず、取りこぼしと締め切りを越えたブロックをリングで制御スレッドへ渡し、デバイス・トラック・CLAP ID 付きで書く（必須契約 `engine-deadline-log`）。
   診断の NDJSON の回転は 1 つの規則にし、`make debug-report` がログも集める。次は ADR 0278 の順の M5 である。
+- 2026-11-12（ADR 0323）: M5 を閉じた。監査の「変更行だけ」は差分の基準に依存する層が要るので採らず、全体を一度整形した（`.git-blame-ignore-revs`）。
+  各道具の既定の規則で、Python 57 件・Swift 15 件・シェル 1 件の指摘を直した。swift-format が括弧を外した比較をジェネリクスの呼出しに読み直す危険を 1 か所で見つけた。
+  次は ADR 0278 の順の M6 である。
 - M1 は保存の不確定だけを型にした（[ADR 0234](../decisions/0234-typed-journal-durability.md)）。11/2 の後に作った `echode-document` にも 16 か所ある。（統合時の記録。2026-11-11 の ADR 0320 で対応済み）
 - M7: `justfile` に `verify-full`・`agent-context` がない。`check-shell` は Swift のラッパーの検査の名前のまま。
   `check-base` の `cargo build` に `--locked` がない。`libc` を 7 crate、`serde_json` を 8 crate が個別に宣言する。

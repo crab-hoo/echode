@@ -50,7 +50,7 @@ else
 fi
 
 if [[ -n "${TARGET_BUILD_DIR:-}" && -n "${WRAPPER_NAME:-}" ]]; then
-    rm -rf "${TARGET_BUILD_DIR}/${WRAPPER_NAME}"
+    rm -rf "${TARGET_BUILD_DIR:?}/${WRAPPER_NAME:?}"
     cp -R target/dist/Echode.app "${TARGET_BUILD_DIR}/${WRAPPER_NAME}"
 fi
 printf 'Built %s/target/dist/Echode.app\n' "$PWD"

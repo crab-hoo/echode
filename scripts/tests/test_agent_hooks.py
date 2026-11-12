@@ -132,6 +132,7 @@ class RegisteredAuditReproductions(unittest.TestCase):
             ],
             capture_output=True,
             text=True,
+            check=False,
         )
         self.assertNotEqual(result.returncode, 0, "text only in the Command: line passed as the expected red")
 
@@ -172,7 +173,9 @@ class ForeignDeclarations(unittest.TestCase):
             (directory / "crates/x/src").mkdir(parents=True)
             for name, text in sources.items():
                 (directory / "crates/x/src" / name).write_text(text)
-            return subprocess.run(["bash", str(directory / "scripts/check-ffi.sh")], capture_output=True, text=True)
+            return subprocess.run(
+                ["bash", str(directory / "scripts/check-ffi.sh")], capture_output=True, text=True, check=False
+            )
 
     def test_extern_blocks_without_an_abi_with_another_abi_or_a_split_brace_are_found(self):
         result = self.check_sources(

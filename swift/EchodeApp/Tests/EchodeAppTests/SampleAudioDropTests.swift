@@ -111,7 +111,8 @@ struct SampleAudioDropTests {
         write([try #require(URL(string: "https://example.invalid/tone.wav"))])
         #expect(AudioFileDrop.audioURL(from: board) == nil)
         write([wav])
-        #expect(view.audioDrop(board, at: CGPoint(x: 220, y: 10), flags: [], document: document) == nil)  // Ruler, not a lane.
+        // Ruler, not a lane.
+        #expect(view.audioDrop(board, at: CGPoint(x: 220, y: 10), flags: [], document: document) == nil)
         for point in [
             CGPoint(x: 160, y: 34), CGPoint(x: 640, y: 34), CGPoint(x: 220, y: -1), CGPoint(x: 220, y: 300),
             CGPoint(x: CGFloat.infinity, y: 0),

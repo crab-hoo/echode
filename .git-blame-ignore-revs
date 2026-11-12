@@ -1,0 +1,6 @@
+# Formatter-only commits that `git blame` skips after
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+# Add each later commit that only applies `make fmt` (ADR 0323).
+
+# Format Swift, Python and shell sources with swift-format, ruff and shfmt
+d79bbdf89f6dd1ed8c9215679a8f1c4c202949b4

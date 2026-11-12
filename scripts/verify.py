@@ -354,7 +354,7 @@ def select_checks(policy, changed, all_checks=False, redefined=None, full=False,
     # Without the diff base (redefined=None), every automatic check is selected.
     definitions = matches(changed, [POLICY.as_posix(), "Makefile"])
     for check in policy["checks"]:
-        hits = sorted(set(path for area in check["areas"] for path in matches(changed, policy["areas"][area])))
+        hits = sorted({path for area in check["areas"] for path in matches(changed, policy["areas"][area])})
         reasons = hits
         if check["mode"] == "automatic":
             reasons += global_hits + infrastructure
@@ -514,7 +514,12 @@ def tool_identity(root):
     for command in commands:
         try:
             result = subprocess.run(
-                command, cwd=root, capture_output=True, timeout=15, env={**os.environ, "RUSTUP_AUTO_INSTALL": "0"}
+                command,
+                cwd=root,
+                capture_output=True,
+                timeout=15,
+                env={**os.environ, "RUSTUP_AUTO_INSTALL": "0"},
+                check=False,
             )
             identity[" ".join(command)] = str(result.returncode) + ":" + os.fsdecode(result.stdout + result.stderr)
         except (OSError, subprocess.TimeoutExpired) as error:

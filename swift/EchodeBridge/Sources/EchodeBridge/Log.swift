@@ -6,7 +6,10 @@ import Foundation
 /// `make debug-report` copies. Never write from an audio callback.
 public enum EchodeLog {
     public enum Level: UInt32, Sendable {
-        case error = 1, warning = 2, info = 3, debug = 4
+        case error = 1
+        case warning = 2
+        case info = 3
+        case debug = 4
     }
 
     /// The app's file beside the panic and audition logs.

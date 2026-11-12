@@ -10,10 +10,11 @@ M4 ファミリー以降の Apple Silicon、macOS 27 以降、Xcode 27 と Rust 
 
 ```sh
 make doctor           # 環境、アプリと検査結果の古さを確認
-make setup            # 通常検査の追加ツールを初回に用意
+make setup            # 通常検査の追加ツール（cargo-deny と lint の固定版）を初回に用意
 make setup-bridge     # 橋渡しの動的検査用ツールを初回に用意
 make setup-fuzz       # fuzz 用の固定 nightly と cargo-fuzz を初回に用意
 make app              # target/Echode.app を作る
+make fmt              # Rust・Swift・Python・シェルを整形
 make verify-plan      # 変更に応じた検査を確認
 make verify           # 作業ごとの完了確認。自動検査と実機検査の記録を確認
 make verify-full      # サニタイザと全反例を含む自動検査の全件。通常は GitHub の full が実行

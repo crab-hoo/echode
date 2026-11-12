@@ -81,7 +81,7 @@ struct RecoveryConsentTests {
         defer { removeTestFile(fixture.url) }
         let document = try Document(opening: fixture.url.path)
         let read = try await document.history(.exportSettings())
-        #expect(try read.historyReport().export_settings == nil)
+        #expect(try read.historyReport().exportSettings == nil)
         do {
             _ = try await document.history(.exportSettings(json: "{}"))
             Issue.record("Unconfirmed recovery accepted an export preference write")

@@ -44,12 +44,13 @@ def identity_installed(keychain):
         ["security", "find-certificate", "-c", IDENTITY, str(keychain)],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        check=False,
     )
     return completed.returncode == 0
 
 
 def run(command):
-    completed = subprocess.run(command, text=True, capture_output=True)
+    completed = subprocess.run(command, text=True, capture_output=True, check=False)
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout).strip()
         raise RuntimeError(f"{command[0]} failed: {detail}")

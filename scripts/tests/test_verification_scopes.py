@@ -35,7 +35,7 @@ def actual_policy_impacts():
     impacts = {}
     for label, edits in scenarios.items():
 
-        def edited_digest(root, relative):
+        def edited_digest(root, relative, edits=edits):
             return digest(root, relative) + (b"synthetic-byte-edit" if relative in edits else b"")
 
         with patch.object(verify, "input_digest", side_effect=edited_digest):
@@ -300,7 +300,7 @@ class VerificationScopeTests(unittest.TestCase):
                     "include": str(include),
                 }
 
-                def copy_header():
+                def copy_header(command=command, root=root, env=env):
                     subprocess.run(["bash", "-euo", "pipefail", "-c", command], cwd=root, env=env, check=True)
 
                 copy_header()

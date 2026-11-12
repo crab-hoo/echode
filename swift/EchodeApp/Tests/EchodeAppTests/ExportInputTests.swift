@@ -66,7 +66,7 @@ struct ExportInputTests {
         #expect(host.rootView.validatedSettings?.normalizePeakDb == -3.5)
         // Draft changes never save settings or consume Undo before starting a job.
         let stored = try await document.history(.exportSettings()).historyReport()
-        #expect(ExportSettings.decodeStored(stored.export_settings) == initial)
+        #expect(ExportSettings.decodeStored(stored.exportSettings) == initial)
         window.makeFirstResponder(nil)
         #expect(!job.running && controller.undoCount == 0)
         await controller.close()
