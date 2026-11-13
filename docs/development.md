@@ -81,6 +81,8 @@ lint の固定版（ruff・shellcheck・shfmt）は `make setup-lint` が `targe
 - 別プロセス・ディスク・利用者のファイルから読む入口を足したら、`crates/echode-fuzz` の既存の対象が通すか確かめ、通さなければ対象を足す。
   fuzz の発見は最小化して `regressions/<対象>/` に置き、所属の crate にも製品の境界を通す回帰を足す（[デバッグ手順](debugging/verification-and-build.md)）。
 - 必須契約（`product_contracts`）は、正しいソースで実テストが 1 件通過し、誤りを戻したソースのコピーでは期待値で失敗することを確認する。
+- 機器なしの出力の回帰で、別スレッドの準備（`echode-graph-prepare`・`echode-media-prepare`）を待つ再生の音を断定する時は、固定のブロック数を送って済ませない。
+  `session_tests.rs` の `until_running` か `until_published` で状態が変わるまで送る。固定の数は準備が遅い時だけ落ち、手元で再現しにくい（[デバッグ手順](debugging/verification-and-build.md)）。
 - Swift のテストは Swift Testing で書く。XCTest はイベント列を書かず、待ち続けの監視から見えない。
   `swift test` を動かす入口を足す時は `swift_test_watchdog.py` を通し、DYLD_* を設定する入口では `Watchdog` をプロセス内で使う（[ADR 0325](decisions/0325-swift-test-stall-watchdog.md)）。
 - `@MainActor` のテストは同時に動き、主スレッドを交互に使う。長い同期処理は `await` で区切るか主アクターの外へ移し、他のテストの実時間の待ちを止めない。

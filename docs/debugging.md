@@ -39,6 +39,7 @@ make debug-report
   - `check` の `FSEvents did not report the new bundle`（`watch::tests`）
   - 検査の後に `target/debug/echode` のプラグイン処理が `control socket closed: dyld[...]: Library not loaded: @rpath/libclang_rt.rtsan_osx_dynamic.dylib` で失敗する
   - `cargo test -p echode-plugin-host` を直接動かすと `hosted_playback` の多くが無音の断定で失敗する
+  - 機器なしの出力の回帰が GitHub の `full` だけで `pumped_peak(...) > 0.1` に落ちる
 - ツール・ビルド・生成物
   - ツール不足・ビルド失敗
   - Swift のテストのリンクで `_NSApplicationMain` などが未定義になる

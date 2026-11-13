@@ -360,6 +360,26 @@ fn pumped_peak(session: &mut Session, blocks: usize) -> f32 {
     peak
 }
 
+/// Pumps blocks until Play sounds and returns their peak. Play waits for the
+/// plan carrying the edits so far while its media or helpers are prepared on
+/// other threads (ADR 0330, ADR 0333), so a fixed number of blocks can end
+/// before that plan reaches the callback.
+fn until_running(session: &mut Session) -> f32 {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut peak = 0.0f32;
+    while !session.state().running {
+        assert!(std::time::Instant::now() < deadline, "play never started");
+        assert!(
+            session.state().error.is_none(),
+            "{:?}",
+            session.state().error
+        );
+        peak = peak.max(pumped_peak(session, 1));
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    peak
+}
+
 #[test]
 fn group_previews_started_during_output_preparation_apply_together_under_rtsan() {
     let (project, first) = Project::new().add_track("audio");
@@ -449,7 +469,10 @@ fn contract_a_first_device_view_opens_the_output_without_holding_edits_or_transp
     assert!(state.error.is_none(), "{:?}", state.error);
     assert_eq!(state.tick, beat, "the locate made while opening applies");
     assert_eq!(state.loop_start, Some(0));
-    // The track added while opening sounds, from the located position.
+    // Play waits for the plan with the edits made while opening, whose graph
+    // is prepared on another thread (ADR 0333). The track added while opening
+    // then sounds, from the located position.
+    until_running(&mut session);
     assert!(pumped_peak(&mut session, 8) > 0.1);
     let state = session.state();
     assert!(state.running && !state.opening && state.tick > beat);
@@ -786,14 +809,7 @@ fn contract_a_prepared_output_plays_at_once_and_loads_stopped_edits_off_the_work
         "the old plan stayed silent"
     );
     gate.release();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    let mut peak = 0.0f32;
-    while !session.state().running {
-        assert!(std::time::Instant::now() < deadline, "play never started");
-        peak = peak.max(pumped_peak(&mut session, 1));
-        std::thread::sleep(std::time::Duration::from_millis(1));
-    }
-    peak = peak.max(pumped_peak(&mut session, 8));
+    let peak = until_running(&mut session).max(pumped_peak(&mut session, 8));
     // Half the gain: about 0.09 per channel. The old plan would give 0.18.
     assert!(peak > 0.05 && peak < 0.1, "{peak}");
     assert!(
@@ -849,11 +865,7 @@ fn contract_playing_edits_load_media_off_the_worker_and_keep_the_beat_under_rtsa
     session.use_headless_output(output.clone());
     session.perform(AudioCommand::Play).unwrap();
     until_opened(&mut session);
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while !session.state().running {
-        assert!(std::time::Instant::now() < deadline, "play never started");
-        pumped_peak(&mut session, 1);
-    }
+    until_running(&mut session);
     // About 0.18 per channel at gain 1 after the centre pan.
     let peak = pumped_peak(&mut session, 8);
     assert!(peak > 0.15, "{peak}");
@@ -949,13 +961,7 @@ fn contract_an_install_while_playing_waits_for_the_media_of_an_edit_made_meanwhi
         "the plan the edit replaced sounded"
     );
     gate.release();
-    let mut peak = 0.0f32;
-    while !session.state().running {
-        assert!(std::time::Instant::now() < deadline, "play never started");
-        peak = peak.max(pumped_peak(&mut session, 1));
-        std::thread::sleep(std::time::Duration::from_millis(1));
-    }
-    peak = peak.max(pumped_peak(&mut session, 8));
+    let peak = until_running(&mut session).max(pumped_peak(&mut session, 8));
     // Half the gain: about 0.09 per channel. The replaced plan gives 0.18.
     assert!(peak > 0.05 && peak < 0.1, "{peak}");
     assert_eq!(output.prepared(), 1);
@@ -1048,16 +1054,7 @@ fn contract_an_install_prepares_the_graph_of_an_edit_made_meanwhile_off_the_work
             "the plan the edit replaced sounded"
         );
     }
-    while !session.state().running {
-        assert!(std::time::Instant::now() < deadline, "play never started");
-        pumped_peak(&mut session, 1);
-        assert!(
-            session.state().error.is_none(),
-            "{:?}",
-            session.state().error
-        );
-        std::thread::sleep(std::time::Duration::from_millis(1));
-    }
+    until_running(&mut session);
     // Past the start's fade: two tracks give about 0.35 per channel, the
     // replaced plan 0.18.
     pumped_peak(&mut session, 8);

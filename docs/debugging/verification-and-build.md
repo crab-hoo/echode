@@ -148,6 +148,15 @@ ASan・TSan・Miri の `target/bridge`（2026-11-09 に 5.9 GB）、TSan のラ�
 `hosted_playback` の楽譜はこの音源で鳴らす。`make verify` は先に `make bundled-plugins` を実行するが、`cargo test` は作らない。
 `make bundled-plugins` の後に再実行する（2026-11-11、ADR 0318 の作業で 10 件がこれで失敗し、作った後は 60 件が通った）。
 
+### 機器なしの出力の回帰が GitHub の `full` だけで `pumped_peak(...) > 0.1` に落ちる
+
+2026-11-13 の `full` で、`output-opening` が `session_tests.rs` の `pumped_peak(&mut session, 8) > 0.1` に落ちた。手元の単独実行では 300 回に 2 回だった。
+準備中に編集した出力の導入では、再生がその編集の計画の公開を待つ（`holding_start`、[ADR 0333](../decisions/0333-install-diff-graph-off-worker.md)）。
+グラフは `echode-graph-prepare`、素材は `echode-media-prepare` が作る。テストが待たずに固定の 8 ブロックを送ると、準備スレッドが遅れた時だけ全ブロックが無音になる。製品の不良ではない。
+`playback_preparation.rs` の `spawn` の先頭に一時的に 20 ms の遅延を入れると決定的に再現する。直したテストがこの遅延でも通るか確かめてから戻す。
+CPU 負荷（`yes`）や並列の反復では再現率は上がらなかった。期限や送るブロック数を増やして隠さない。
+保留の後の音は `until_running`（`running` まで 1 ブロックずつ送る）か `until_published` で待ってから断定する。
+
 ### 検査の後に `target/debug/echode` のプラグイン処理が `control socket closed: dyld[...]: Library not loaded: @rpath/libclang_rt.rtsan_osx_dynamic.dylib` で失敗する
 
 `make rtsan` が `target/debug/echode-plugin-host` を RTSan 版で上書きした状態である。製品の不具合ではない。
