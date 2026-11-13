@@ -33,7 +33,7 @@
   消失済みの過去の完全ログ・画像は復元していない（[証拠の保全](evidence/README.md)）。
 - **プロジェクトの開始**: 前回プロジェクトの復元に失敗した後の実画面の操作はユーザー確認待ち（UC-31）。
   最初に Git の初期化が失敗した理由は未確定である（[ADR 0121](decisions/0121-startup-recovery-and-errno-validation.md)）。
-- **パッケージの浮動小数点の精度**: 既に丸められた保存値は復元しない。スキーマは 6 のまま（[ADR 0196](decisions/0196-lossless-package-floats.md)）。
+- **パッケージの浮動小数点の精度**: 既に丸められた保存値は復元しない（[ADR 0196](decisions/0196-lossless-package-floats.md)）。
 - **素材とキャッシュの Git 除外**: 任意の Git パターンの正規化はしない（[ADR 0031](decisions/0031-content-addressed-store.md#除外規則の行単位の照合2026-10-29)）。
 - **素材の回収**: 保管庫の掃除はなく、Undo や削除で参照が消えた素材は残る（[ADR 0272](decisions/0272-staged-import-media.md)）。
 - **保存済み音声の有限性**: 保存済み PCM と外部音声の取込みは、NaN・無限大を含めば拒否する。
@@ -63,13 +63,13 @@
   停止中のズームで範囲外になった再生ヘッドは、次の再生・停止・位置移動まで表示しない（[ADR 0159](decisions/0159-playhead-follow.md)）。
   ページ送りの見え方とトグルの VoiceOver はユーザー確認待ち（UC-18）。
 - **開いた時の出力準備**: 準備が終わる前の再生は、その残りと準備中に足した FX の起動を待つ。
-  開いた出力は停止中もプラグインを処理し、その負荷は開いた時点から生じる（[ADR 0147](decisions/0147-output-prewarm-and-background-media.md)、[ADR 0333](decisions/0333-install-diff-graph-off-worker.md)）。
+  停止中のプラグイン処理（下のライブ停止）の負荷は、開いた時点から生じる（[ADR 0147](decisions/0147-output-prewarm-and-background-media.md)、[ADR 0333](decisions/0333-install-diff-graph-off-worker.md)）。
   実機の待ちと操作感は UC-19・69。
-- **ライブ停止**: 停止中も無音の入力でプラグインを処理し、余韻とプラグイン内の鍵盤の音を出力する。
-  開いた出力の停止中の処理負荷は残る（[ADR 0133](decisions/0133-stopped-plugin-processing-and-edit-input.md)）。実機と第三者プラグインの聴感はユーザー確認待ち（UC-25）。
+- **ライブ停止**: 停止中も無音の入力でプラグインを処理し、余韻とプラグイン内の鍵盤の音を出力する（[ADR 0133](decisions/0133-stopped-plugin-processing-and-edit-input.md)）。
+  実機と第三者プラグインの聴感はユーザー確認待ち（UC-25）。
 - **位置移動と準備の取消**: 位置移動・未発音の準備の取消とオフラインの停止では、以前の発音状態を消す（[ADR 0099](decisions/0099-transport-plugin-state.md)）。
-- **バス・ループ・ゲイン・メーター**: 暗黙のステレオ→モノ変換はエラーにする（[ADR 0095](decisions/0095-product-audio-buses-and-continuity.md)）。
-  ディスクストリーミング、Phase 3 のレンダリングキャッシュの生成本体、Ogg、プラグインのサムネイルは未実装（[ADR 0108](decisions/0108-phase1-loop-readiness.md)）。
+- **バス・ループ・ゲイン・メーター**: 暗黙のステレオ→モノ変換はエラーにし、モノの音源は等電力でステレオへ上げる（[ADR 0095](decisions/0095-product-audio-buses-and-continuity.md)、UC-72・[ADR 0337](decisions/0337-mono-instrument-on-stereo-source.md)）。
+  Phase 3 のレンダリングキャッシュの生成本体、Ogg、プラグインのサムネイルは未実装（[ADR 0108](decisions/0108-phase1-loop-readiness.md)）。
   クリップゲインは `0..=1_048_576`（音声クリップのみ）で、負の配置オフセットはファイル前の無音として扱う（[ADR 0109](decisions/0109-placement-bounds-and-plugin-capture.md)）。
   トラックメーターはフェーダー後の左右最大ピークで、LUFS やトゥルーピークではない（[ADR 0107](decisions/0107-mix-controls.md)）。
 - **Sine Pad と音源の選択**: 音源のないトラックのノートは無音で、旧プロジェクトへ暗黙の音源を補わない。
@@ -106,7 +106,7 @@
   計画生成は残る。閉じる時は起動中のヘルパーを止める（UC-70、[ADR 0334](decisions/0334-cancel-helper-starts-on-close.md)）。
   列の開閉と下部の積み方の実画面の操作感と VoiceOver はユーザー確認待ち（UC-26、[ADR 0146](decisions/0146-independent-editor-stack.md)）。
 - **デバイスチェインの表示**: フォルダとデバイス列の開閉は文書内の表示状態で、保存・Undo の対象外である（[ADR 0128](decisions/0128-folder-disclosure-and-row-projection.md)、[ADR 0137](decisions/0137-device-disclosure.md)）。
-  再オープン時はフォルダを展開に戻す。トラックの複製でオートメーションとルーティングは引き継がない（[ADR 0129](decisions/0129-track-duplication.md)）。
+  トラックの複製でオートメーションとルーティングは引き継がない（[ADR 0129](decisions/0129-track-duplication.md)）。
   狭い幅・低い行・深い字下げでヘッダの FX 名を隠す時は、下部とインスペクターで全チェインを扱う（[ADR 0139](decisions/0139-track-header-fx-names.md)）。
   インスペクターの FX 追加ボタンの実画面と VoiceOver はユーザー確認待ち（UC-27、[ADR 0165](decisions/0165-inspector-fx-add-and-arrange-note-pitch.md)）。
 - **隔離・Workgroup・キャッシュ**: AUv3 の二重隔離の回避、走査の Seatbelt、Workgroup ポートの 2 ms ポーリングの置換は未実装（[ADR 0111](decisions/0111-macos-helper-notices.md)）。

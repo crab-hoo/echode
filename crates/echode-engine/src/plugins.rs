@@ -224,7 +224,8 @@ impl std::ops::DerefMut for HostTracks {
 
 struct TrackRestore {
     key: u32,
-    devices: Vec<(u128, bool, usize)>,
+    /// Device, bypass, and the dry and promoted plane counts to put back.
+    devices: Vec<(u128, bool, usize, usize)>,
     frames: usize,
     events: usize,
     chase: usize,
@@ -270,6 +271,11 @@ struct Stage {
     /// Channels of the first output port. Those are the track's audio.
     main_outputs: usize,
     main_inputs: usize,
+    /// Two planes when this mono first instrument starts a stereo track source.
+    /// Its output enters both at equal power and placed audio keeps its own
+    /// channels, so no stereo source is folded to mono (ADR 0095, ADR 0337).
+    /// Empty for every other stage.
+    promoted: Vec<Vec<f32>>,
     routed: Vec<(Event, u32)>,
 }
 
@@ -286,6 +292,8 @@ impl Stage {
     fn rendered(&self) -> &[Vec<f32>] {
         if self.bypassed {
             &self.bypass_output
+        } else if !self.promoted.is_empty() {
+            &self.promoted
         } else {
             self.output.get(..self.main_outputs).unwrap_or(&self.output)
         }
@@ -294,6 +302,8 @@ impl Stage {
     fn rendered_mut(&mut self) -> &mut [Vec<f32>] {
         if self.bypassed {
             &mut self.bypass_output
+        } else if !self.promoted.is_empty() {
+            &mut self.promoted
         } else {
             self.main_output_mut()
         }
@@ -565,6 +575,7 @@ impl HostGraph {
                             output: stage.output.clone(),
                             main_outputs: stage.main_outputs,
                             main_inputs: stage.main_inputs,
+                            promoted: stage.promoted.clone(),
                             routed: Vec::with_capacity(stage.routed.capacity()),
                         })
                         .collect();
@@ -785,7 +796,14 @@ impl HostGraph {
                 devices: track
                     .stages
                     .iter()
-                    .map(|stage| (stage.device, stage.bypassed, stage.bypass_output.len()))
+                    .map(|stage| {
+                        (
+                            stage.device,
+                            stage.bypassed,
+                            stage.bypass_output.len(),
+                            stage.promoted.len(),
+                        )
+                    })
                     .collect(),
                 frames: track.inject.len(),
                 events: track.source_events.capacity(),
@@ -1330,7 +1348,8 @@ impl TrackHost {
         if stage.bypassed {
             return;
         }
-        let output = stage.main_output_mut();
+        // The planes the next stage and the track read, promoted or not.
+        let output = stage.rendered_mut();
         let frames = bounded(output, frames);
         let Some(first) = output
             .iter()
@@ -1364,10 +1383,10 @@ impl TrackHost {
 
     /// Adds placed audio onto the first instrument, once, before the next effect
     /// or the track output reads that buffer.
+    ///
+    /// A promoted mono instrument is rewritten from its own output every
+    /// block, so its planes never hold a previous block's audio.
     fn mix_injected(&mut self, stage_index: usize, frames: usize) {
-        if !self.inject_live {
-            return;
-        }
         let TrackHost {
             stages,
             inject,
@@ -1382,6 +1401,37 @@ impl TrackHost {
         if !stage.instrument {
             return;
         }
+        let live = std::mem::replace(inject_live, false);
+        if !stage.bypassed && !stage.promoted.is_empty() {
+            let silence: &[f32] = &[];
+            let source = if live {
+                Signal {
+                    left: inject,
+                    right: inject_stereo.then_some(&*inject_right),
+                }
+            } else {
+                Signal {
+                    left: silence,
+                    right: None,
+                }
+            };
+            let Stage {
+                output, promoted, ..
+            } = stage;
+            let mono = output.first().map_or(silence, Vec::as_slice);
+            let frames = bounded(promoted, frames);
+            for (channel, plane) in promoted.iter_mut().enumerate() {
+                for (frame, sample) in plane.iter_mut().take(frames).enumerate() {
+                    let dry = mono.get(frame).copied().unwrap_or(0.0);
+                    *sample =
+                        dry * std::f32::consts::FRAC_1_SQRT_2 + source.sample(channel, frame, true);
+                }
+            }
+            return;
+        }
+        if !live {
+            return;
+        }
         let output = stage.rendered_mut();
         let main = output.len();
         let frames = bounded(output, frames.min(inject.len()));
@@ -1394,7 +1444,6 @@ impl TrackHost {
                 *sample += source.sample(channel, frame, main == 2);
             }
         }
-        *inject_live = false;
     }
 
     fn hand_off(
@@ -1477,7 +1526,7 @@ fn restore_tracks(
             let stages = old
                 .devices
                 .into_iter()
-                .filter_map(|(id, bypassed, channels)| {
+                .filter_map(|(id, bypassed, channels, promoted)| {
                     // A restored state may have spawned another helper with the same
                     // device id. `kept` starts with the original process in that case.
                     let at = kept.iter().position(|stage| stage.device == id)?;
@@ -1486,6 +1535,9 @@ fn restore_tracks(
                     stage
                         .bypass_output
                         .resize_with(channels, || vec![0.0; old.frames]);
+                    stage
+                        .promoted
+                        .resize_with(promoted, || vec![0.0; old.frames]);
                     Some(stage)
                 })
                 .collect();
@@ -1634,6 +1686,7 @@ fn spawn_stage(
         output: (0..outputs).map(|_| vec![0.0; frames]).collect(),
         main_outputs: main_outputs.min(outputs),
         main_inputs: main_inputs.min(inputs),
+        promoted: Vec::new(),
         routed: Vec::with_capacity(event_cap.max(1)),
     }))
 }
@@ -1805,6 +1858,15 @@ fn validate_chain(stages: &mut [Stage], clip_stereo: bool) -> Result<(), Playbac
         for plane in &mut stage.bypass_output {
             plane.resize(frames, 0.0);
         }
+        // A mono first instrument on a stereo source enters the stereo bus
+        // at equal power, like any mono source (ADR 0095, ADR 0337).
+        let promote = index == 0 && stage.instrument && clip_stereo && stage.main_outputs == 1;
+        stage
+            .promoted
+            .resize_with(if promote { 2 } else { 0 }, || vec![0.0; frames]);
+        for plane in &mut stage.promoted {
+            plane.resize(frames, 0.0);
+        }
         if stage.bypassed {
             continue;
         }
@@ -1813,14 +1875,13 @@ fn validate_chain(stages: &mut [Stage], clip_stereo: bool) -> Result<(), Playbac
         if !(1..=2).contains(&stage.main_outputs)
             || stage.main_inputs > 2
             || (channels == 2 && stage.main_inputs == 1 && !(index == 0 && stage.instrument))
-            || (index == 0 && stage.instrument && clip_stereo && stage.main_outputs == 1)
         {
             return Err(PlaybackError::BusMapping {
                 device: stage.device,
                 clap_id: stage.clap_id.clone(),
             });
         }
-        channels = stage.main_outputs;
+        channels = if promote { 2 } else { stage.main_outputs };
     }
     Ok(())
 }

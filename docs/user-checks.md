@@ -58,6 +58,7 @@
 | UC-39 | ヘッダの音量・パンの VoiceOver の増減（1 dB・5%）を選択全体へ当てる | 画面・VO・聴感 | [ADR 0192](decisions/0192-selected-track-accessibility-steps.md) | 2026-10-28 |
 | UC-40 | ヘッダの値の操作の途中で文書を切り替えても、前の文書の操作が漏れない | 画面・VO | [ADR 0193](decisions/0193-header-mix-gesture-document-scope.md) | 2026-10-29 |
 | UC-49 | 入れ子のフォルダと外側の音源・音声を再生し、親のミュートで子孫が止まり、親のソロで子孫だけが聴こえる。子のミュート優先・複数ソロ・解除・親の付替えでも、不自然な段差がなく各行の保存値と操作対象を読み分けられる | 画面・VO・聴感 | [ADR 0244](decisions/0244-folder-mute-and-solo-gates.md) | 2026-11-03 |
+| UC-72 | Sine Pad（モノの音源）のトラックにステレオの音声を置いて再生し、音源と音声が左右とも鳴る。パンを中央から左右へ振った時の音源の音量の変わり方が不自然でない | 聴感 | [ADR 0337](decisions/0337-mono-instrument-on-stereo-source.md) | 2026-11-13 |
 
 ## D. ブラウザと試聴
 

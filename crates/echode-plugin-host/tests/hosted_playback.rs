@@ -1516,22 +1516,88 @@ fn contract_stereo_planes_survive_effects_and_instrument_injection() {
     }
 }
 
-#[test]
-fn a_rejected_stereo_to_mono_mapping_preserves_the_sounding_helper() {
-    let (project, track) = Project::new().add_track("mono instrument");
-    let project = project
-        .add_clap_device(track, Id::generate(), "dev.echode.test-mono")
-        .unwrap();
-    let route = PluginRoute {
-        clap_id: "dev.echode.test-mono".into(),
+fn mono_gain_route() -> PluginRoute {
+    PluginRoute {
+        clap_id: "dev.echode.test-monogain".into(),
         path: plugin_dylib(),
-        instrument: true,
+        instrument: false,
         fault: None,
         state: None,
-    };
+    }
+}
+
+fn stereo_clips(track: u128, left: f32, right: f32) -> echode_engine::ClipLoader {
+    Arc::new(move |_, _| {
+        Ok(vec![LoadedClip {
+            track,
+            start_sample: 0,
+            samples: Arc::from(vec![left; 1024]),
+            right: Some(Arc::from(vec![right; 1024])),
+            window: None,
+            gain: 1.0,
+            fade_in: 0,
+            fade_out: 0,
+        }])
+    })
+}
+
+/// ADR 0337: a mono first instrument on a stereo source enters the stereo bus
+/// at equal power and the placed audio keeps both of its channels. Before,
+/// the chain was refused, so a mono instrument could not play stereo audio.
+#[test]
+fn a_mono_instrument_enters_a_stereo_source_at_equal_power_under_rtsan() {
+    let half = std::f32::consts::FRAC_1_SQRT_2;
+    for effect in [false, true] {
+        let (project, track) = Project::new().add_track("mono instrument");
+        let mut project = project
+            .add_clap_device(track, Id::generate(), "dev.echode.test-mono")
+            .unwrap();
+        if effect {
+            project = project
+                .add_clap_device(track, Id::generate(), "dev.echode.test-gain")
+                .unwrap();
+        }
+        let mono = PluginRoute {
+            clap_id: "dev.echode.test-mono".into(),
+            path: plugin_dylib(),
+            instrument: true,
+            fault: None,
+            state: None,
+        };
+        let block = 64; // This test's scratch size, not an engine limit.
+        let (mut control, mut audio) = playback_with_plugins(
+            &project,
+            48_000,
+            block,
+            &host_bin(),
+            &[mono, effect_route(&plugin_dylib())],
+        )
+        .unwrap();
+        control.set_clip_loader(stereo_clips(track.raw(), 0.125, -0.25));
+        control.replace(&project).unwrap();
+        control.command(PlaybackCommand::Play).unwrap();
+        let gain = if effect { 2.0 } else { 1.0 };
+        for _ in 0..3 {
+            let (mut left, mut right) = (vec![0.0; block], vec![0.0; block]);
+            render_content(&mut audio, &mut left, &mut right);
+            assert!(!control.status().failed);
+            assert!(control.plugin_failure().is_none());
+            assert_close(&left, &vec![(0.25 * half + 0.125) * gain; block]);
+            assert_close(&right, &vec![(0.25 * half - 0.25) * gain; block]);
+            control.service();
+        }
+    }
+}
+
+#[test]
+fn a_rejected_stereo_to_mono_mapping_preserves_the_sounding_helper() {
+    let (project, track) = Project::new().add_track("mono effect");
+    let project = project
+        .add_clap_device(track, Id::generate(), "dev.echode.test-monogain")
+        .unwrap();
     let block = 64; // This test's scratch size, not an engine limit.
     let (mut control, mut audio) =
-        playback_with_plugins(&project, 48_000, block, &host_bin(), &[route]).unwrap();
+        playback_with_plugins(&project, 48_000, block, &host_bin(), &[mono_gain_route()]).unwrap();
     control.set_clip_loader(constant_clips(track.raw(), 0.125, 1024));
     control.replace(&project).unwrap();
     control.command(PlaybackCommand::Play).unwrap();
@@ -1545,20 +1611,9 @@ fn a_rejected_stereo_to_mono_mapping_preserves_the_sounding_helper() {
     assert!(
         before
             .iter()
-            .all(|sample| (*sample - 0.375 * std::f32::consts::FRAC_1_SQRT_2).abs() < 1.0e-5)
+            .all(|sample| (*sample - 0.25 * std::f32::consts::FRAC_1_SQRT_2).abs() < 1.0e-5)
     );
-    control.set_clip_loader(Arc::new(move |_, _| {
-        Ok(vec![LoadedClip {
-            track: track.raw(),
-            start_sample: 0,
-            samples: Arc::from(vec![0.125; 1024]),
-            right: Some(Arc::from(vec![-0.125; 1024])),
-            window: None,
-            gain: 1.0,
-            fade_in: 0,
-            fade_out: 0,
-        }])
-    }));
+    control.set_clip_loader(stereo_clips(track.raw(), 0.125, -0.125));
     let error = control
         .replace(&project)
         .expect_err("implicit stereo downmix was accepted");
@@ -1576,34 +1631,16 @@ fn a_rejected_stereo_to_mono_mapping_preserves_the_sounding_helper() {
 
 #[test]
 fn rejected_unbypass_preserves_the_stereo_dry_graph_under_rtsan() {
-    let (project, track) = Project::new().add_track("bypassed mono instrument");
+    let (project, track) = Project::new().add_track("bypassed mono effect");
     let device = Id::generate();
     let project = project
-        .add_clap_device(track, device, "dev.echode.test-mono")
+        .add_clap_device(track, device, "dev.echode.test-monogain")
         .unwrap();
     let bypassed = project.set_device_bypassed(device, true).unwrap();
-    let route = PluginRoute {
-        clap_id: "dev.echode.test-mono".into(),
-        path: plugin_dylib(),
-        instrument: true,
-        fault: None,
-        state: None,
-    };
     let block = 64; // Scratch for this regression, not an engine limit.
     let (mut control, mut audio) =
-        playback_with_plugins(&bypassed, 48_000, block, &host_bin(), &[route]).unwrap();
-    control.set_clip_loader(Arc::new(move |_, _| {
-        Ok(vec![LoadedClip {
-            track: track.raw(),
-            start_sample: 0,
-            samples: vec![0.125; 1024].into(),
-            right: Some(vec![-0.25; 1024].into()),
-            window: None,
-            gain: 1.0,
-            fade_in: 0,
-            fade_out: 0,
-        }])
-    }));
+        playback_with_plugins(&bypassed, 48_000, block, &host_bin(), &[mono_gain_route()]).unwrap();
+    control.set_clip_loader(stereo_clips(track.raw(), 0.125, -0.25));
     control.replace(&bypassed).unwrap();
     control.command(PlaybackCommand::Play).unwrap();
     let (mut left, mut right) = (vec![0.0; block], vec![0.0; block]);

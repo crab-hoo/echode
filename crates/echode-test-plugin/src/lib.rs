@@ -46,6 +46,9 @@ enum Role {
     Order,
     /// Gain and mode parameters, saved in its state. See [`params`].
     Params,
+    /// The gain effect with one mono input and output, for the refusal of a
+    /// stereo source folded into a mono input (ADR 0095).
+    MonoGain,
 }
 
 /// `declare_extensions` can run on another thread than `create_plugin`.
@@ -65,6 +68,7 @@ fn role_bits(role: Role) -> u8 {
         Role::State => 6,
         Role::Order => 7,
         Role::Params => 8,
+        Role::MonoGain => 9,
     }
 }
 
@@ -78,6 +82,7 @@ fn role_from_bits(bits: u8) -> Role {
         6 => Role::State,
         7 => Role::Order,
         8 => Role::Params,
+        9 => Role::MonoGain,
         _ => Role::Gain,
     }
 }
@@ -173,6 +178,7 @@ impl TestMain {
             Role::Gain | Role::Flip => (&[2], &[2]),
             Role::Instrument => (&[], &[2]),
             Role::Mono => (&[], &[1]),
+            Role::MonoGain => (&[1], &[1]),
             Role::Ports => (&[2], &[2, 1]),
             Role::NoPorts => (&[], &[]),
             Role::State | Role::Params => (&[2], &[2]),
@@ -838,6 +844,11 @@ impl TestFactory {
                 ),
                 described("dev.echode.test-mono", "Echode Test Mono", c"instrument"),
                 described(
+                    "dev.echode.test-monogain",
+                    "Echode Test Mono Gain",
+                    c"audio-effect",
+                ),
+                described(
                     "dev.echode.test-noports",
                     "Echode Test No Ports",
                     c"audio-effect",
@@ -877,6 +888,7 @@ fn role_of(id: &CStr) -> Option<Role> {
         b"dev.echode.test-gain" => Some(Role::Gain),
         b"dev.echode.test-instrument" => Some(Role::Instrument),
         b"dev.echode.test-mono" => Some(Role::Mono),
+        b"dev.echode.test-monogain" => Some(Role::MonoGain),
         b"dev.echode.test-noports" => Some(Role::NoPorts),
         b"dev.echode.test-ports" => Some(Role::Ports),
         b"dev.echode.test-state" => Some(Role::State),

@@ -54,7 +54,7 @@ fn plugin_dylib() -> PathBuf {
 #[test]
 fn scanning_reads_the_factory_descriptor() {
     let plugins = scan_descriptors(&plugin_dylib()).expect("scan");
-    assert_eq!(plugins.len(), 9);
+    assert_eq!(plugins.len(), 10);
     assert_eq!(plugins[0].id, "dev.echode.test-gain");
     assert_eq!(plugins[0].name, "Echode Test Gain");
     assert_eq!(plugins[0].vendor, "Echode");
@@ -173,6 +173,7 @@ fn the_helper_scans_a_bundle_and_a_second_refresh_uses_the_cache() {
             "dev.echode.test-gain",
             "dev.echode.test-instrument",
             "dev.echode.test-mono",
+            "dev.echode.test-monogain",
             "dev.echode.test-noports",
             "dev.echode.test-order",
             "dev.echode.test-params",
@@ -193,6 +194,7 @@ fn the_helper_scans_a_bundle_and_a_second_refresh_uses_the_cache() {
             "dev.echode.test-gain",
             "dev.echode.test-instrument",
             "dev.echode.test-mono",
+            "dev.echode.test-monogain",
             "dev.echode.test-noports",
             "dev.echode.test-order",
             "dev.echode.test-params",
@@ -212,6 +214,7 @@ fn the_helper_scans_a_bundle_and_a_second_refresh_uses_the_cache() {
             "dev.echode.test-gain",
             "dev.echode.test-instrument",
             "dev.echode.test-mono",
+            "dev.echode.test-monogain",
             "dev.echode.test-noports",
             "dev.echode.test-order",
             "dev.echode.test-params",
