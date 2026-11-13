@@ -81,6 +81,11 @@ impl Bus {
         }
     }
 
+    /// Each track's parent position, in plan order.
+    pub(super) fn parents(&self) -> &[Option<usize>] {
+        &self.parents
+    }
+
     pub(super) fn has_children(&self, position: usize) -> bool {
         self.children.get(position).is_some_and(|count| *count != 0)
     }

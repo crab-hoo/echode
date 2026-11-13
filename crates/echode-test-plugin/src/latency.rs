@@ -1,4 +1,5 @@
-//! Synthetic latency metadata, not an audio delay. One helper owns one instance.
+//! Latency metadata: synthetic for `latency`, the real length for `delay`.
+//! One helper owns one instance.
 use clack_plugin::extensions::prelude::*;
 use clap_sys::ext::latency::{CLAP_EXT_LATENCY, clap_host_latency, clap_plugin_latency};
 use clap_sys::plugin::clap_plugin;
@@ -26,6 +27,12 @@ pub(crate) fn activated(host: &HostMainThreadHandle<'_>) {
             }
         }
     }
+}
+
+/// A fixed latency for this activation, read on the activating thread.
+pub(crate) fn report(samples: u32) {
+    MAIN.with(|main| main.set(true));
+    SAMPLES.store(samples, Ordering::Relaxed);
 }
 
 #[derive(Clone, Copy)]

@@ -37,6 +37,8 @@ mod faders;
 use faders::{Routing, track_routing};
 #[path = "playback_bus.rs"]
 mod bus;
+use crate::compensation::{TrackLatency, compensate};
+use crate::delay::Delay;
 use bus::Bus;
 /// Clock providers consume device frames. External synchronization may supply
 /// another provider without making the UI timer advance the transport.
@@ -136,6 +138,9 @@ pub struct PlaybackStatus {
     /// Control has accepted a score whose prepared bank is not yet audible.
     pub pending_plan: bool,
     pub master_auto_mute: Option<MasterAutoMute>,
+    /// How far the adopted plan's master lags the timeline, in device frames,
+    /// after plugin delay compensation (ADR 0339).
+    pub latency_samples: u64,
 }
 
 struct Status {
@@ -155,6 +160,7 @@ struct Status {
     master_muted: AtomicBool,
     master_mute_peak: AtomicU32,
     master_mute_at: AtomicI64,
+    latency: AtomicU64,
 }
 
 struct Track {
@@ -180,6 +186,12 @@ struct Track {
     meter: Arc<TrackMeter>,
     cache: Option<CachedTrack>,
     clips: Vec<StoredClip>,
+    /// The track's placed audio, delayed to meet its first instrument and
+    /// its children before its next device (ADR 0339).
+    source_delay: Delay,
+    /// The track's output before its fader, delayed to meet its siblings at
+    /// its parent or at master (ADR 0339).
+    output_delay: Delay,
 }
 
 struct StoredClip {
@@ -332,6 +344,10 @@ struct Prepared {
     /// Set for the block once its post-fader peaks are stored. A callback
     /// publishes each meter once, after the block is mixed.
     meters_committed: bool,
+    /// How far master lags the timeline after delay compensation (ADR 0339).
+    latency: u64,
+    /// The metronome, delayed by `latency` so it stays with the music.
+    clicks_delay: Delay,
 }
 
 #[derive(Clone, Copy)]
@@ -466,6 +482,8 @@ impl Prepared {
                     sources.caches.get(&track.track).cloned()
                 },
                 clips,
+                source_delay: Delay::default(),
+                output_delay: Delay::default(),
             });
         }
         event_count = event_count
@@ -515,6 +533,8 @@ impl Prepared {
             mix_left: vec![0.0; frames],
             mix_right: vec![0.0; frames],
             meters_committed: false,
+            latency: 0,
+            clicks_delay: Delay::default(),
         })
     }
 
@@ -627,12 +647,16 @@ impl Prepared {
                 .map(|entry| entry.1);
             if let Some(old) = old_index.and_then(|index| previous.tracks.get_mut(index)) {
                 track.plugin_declick = old.plugin_declick;
+                // Audio already inside the compensation keeps its course (ADR 0339).
+                track.source_delay.carry(&mut old.source_delay);
+                track.output_delay.carry(&mut old.output_delay);
                 if playing {
                     track.fader.carry(old.fader);
                     track.own.carry(old.own);
                 }
             }
         }
+        self.clicks_delay.carry(&mut previous.clicks_delay);
         // Unchanged tracks take the previous cursor's voices without a search.
         // Retained helpers hold the inherited chase; only new helpers strike it.
         let start = self.released;
@@ -869,6 +893,16 @@ impl Prepared {
         Ok(())
     }
 
+    /// Silences the compensation's delay lines at a discontinuity that also
+    /// resets the plugins. O(1) per line.
+    fn clear_delays(&mut self) {
+        for track in &mut self.tracks {
+            track.source_delay.clear();
+            track.output_delay.clear();
+        }
+        self.clicks_delay.clear();
+    }
+
     fn queue_cleanup(&mut self, hosts: &mut HostGraph) -> Result<(), PlaybackError> {
         let events = self
             .events
@@ -905,6 +939,7 @@ impl Track {
             own,
             own_gain,
             own_gated,
+            source_delay,
             ..
         } = self;
         let plane = plane
@@ -940,6 +975,9 @@ impl Track {
             rate,
         )?;
         fade_stopped_source(clip_plane, clip_right, range.source_fade, rate);
+        // Late enough to meet the first instrument and the children; the gate
+        // below then acts on what is heard, as it does on the instrument.
+        source_delay.process(clip_plane, clip_stereo.then_some(&mut *clip_right));
         *stereo = *clip_stereo;
         if let Some(gains) = own_gain.get_mut(..frames)
             && own.fill(gains)
@@ -964,12 +1002,17 @@ impl Track {
     ) -> Result<(), PlaybackError> {
         let plane = self
             .plane
-            .get(..frames)
+            .get_mut(..frames)
             .ok_or(PlaybackError::BufferTooSmall)?;
         let plane_right = self
             .right
-            .get(..frames)
+            .get_mut(..frames)
             .ok_or(PlaybackError::BufferTooSmall)?;
+        // Aligned with its siblings before the fader, so the fader, the gates
+        // and the meter act on what is heard (ADR 0339).
+        self.output_delay
+            .process(plane, self.stereo.then_some(&mut *plane_right));
+        let (plane, plane_right) = (&*plane, &*plane_right);
         let peak = self.fader.add(
             Signal {
                 left: plane,
@@ -1522,6 +1565,51 @@ fn chain_of(project: &Project, prepared: &Prepared) -> Vec<TrackChain> {
         .collect()
 }
 
+/// Plans delay compensation for `prepared` from the helpers' reported latency
+/// and sizes its delay lines on this thread (ADR 0339). Returns the instrument
+/// delay of each hosted track for the audio graph, and what was planned.
+fn compensate_plan(
+    prepared: &mut Prepared,
+    hosts: &HostGraph,
+    frames: usize,
+) -> Result<(Vec<(u32, Delay)>, Compensated), PlaybackError> {
+    let reported = hosts.track_latencies();
+    let latency_of = |key: u32| {
+        reported
+            .binary_search_by_key(&key, |entry| entry.0)
+            .ok()
+            .and_then(|index| reported.get(index))
+            .map(|entry| entry.1)
+    };
+    let latencies: Vec<TrackLatency> = prepared
+        .tracks
+        .iter()
+        .map(|track| latency_of(track.key).unwrap_or_default())
+        .collect();
+    let plan = compensate(prepared.bus.parents(), &latencies)?;
+    let mut instruments = Vec::new();
+    for (track, delays) in prepared.tracks.iter_mut().zip(&plan.tracks) {
+        // Only placed audio passes the source line; children meet at theirs.
+        if !track.clips.is_empty() {
+            track.source_delay = Delay::new(delays.source, frames)?;
+        }
+        track.output_delay = Delay::new(delays.output, frames)?;
+        if hosts.starts_with_instrument(track.key) && delays.instrument != 0 {
+            instruments.push((track.key, Delay::new(delays.instrument, frames)?));
+        }
+    }
+    prepared.clicks_delay = Delay::new(plan.latency, frames)?;
+    prepared.latency = plan.latency;
+    Ok((
+        instruments,
+        Compensated {
+            reported: hosts.reported_latencies(),
+            latency: plan.latency,
+            tail: plan.tail,
+        },
+    ))
+}
+
 fn play_error(error: echode_realtime::PlayError) -> PlaybackError {
     match error {
         echode_realtime::PlayError::Time => PlaybackError::Time,
@@ -1610,8 +1698,20 @@ pub struct PlaybackControl {
     /// Plugin bytes saved on the control thread and not yet given to the document.
     plugin_saves: Vec<(u128, Vec<u8>)>,
     save_controls: Vec<(u128, echode_sandbox::PluginControl)>,
+    /// What the most recently published plan's delay compensation used.
+    compensated: Compensated,
     /// The audio thread's notes, logged on this thread (ADR 0322).
     audio_log: AudioLog,
+}
+
+/// What a published plan's delay compensation was planned from (ADR 0339).
+#[derive(Default)]
+struct Compensated {
+    /// Each hosted device's reported latency, in graph order, to notice a
+    /// change that a helper's restart reports later.
+    reported: Vec<(u128, u32)>,
+    latency: u64,
+    tail: u32,
 }
 
 impl Drop for PlaybackControl {
@@ -1766,7 +1866,13 @@ pub fn playback(
             cancel,
         )?;
         control.save_controls = control.hosts.save_controls();
-        audio.hosts = Box::new(control.hosts.audio_snapshot());
+        let (delays, compensated) = compensate_plan(&mut audio.current, &control.hosts, frames)?;
+        audio.hosts = Box::new(control.hosts.audio_snapshot(delays));
+        audio
+            .status
+            .latency
+            .store(compensated.latency, Ordering::Release);
+        control.compensated = compensated;
         control.chain = chain;
         control.routes = routes.to_vec();
         control.host_bin = host_bin.to_path_buf();
@@ -1823,6 +1929,7 @@ fn transport_pair(
         master_muted: AtomicBool::new(false),
         master_mute_peak: AtomicU32::new(0),
         master_mute_at: AtomicI64::new(0),
+        latency: AtomicU64::new(0),
     });
     let control = PlaybackControl {
         workgroup: None,
@@ -1864,6 +1971,7 @@ fn transport_pair(
         reserved_events,
         plugin_saves: Vec::new(),
         save_controls: Vec::new(),
+        compensated: Compensated::default(),
         audio_log,
     };
     let audio = PlaybackAudio {
@@ -1968,11 +2076,17 @@ impl PlaybackControl {
         self.published_plan.wrapping_sub(revision) <= u64::MAX / 2
     }
 
-    /// Declared finite device tails summed through each chain, before the fader.
+    /// Declared device tails summed along the longest path to master: a
+    /// child's tail continues through its parents' devices (ADR 0339).
+    /// `u32::MAX` is infinite. From the most recently published graph.
     pub fn tail_samples(&self) -> u32 {
-        self.preparing
-            .as_ref()
-            .map_or_else(|| self.hosts.tail_samples(), |job| job.tail_samples)
+        self.compensated.tail
+    }
+
+    /// How far master lags the timeline in the most recently published plan,
+    /// in device frames. An export drops this many frames first (ADR 0339).
+    pub fn latency_samples(&self) -> u64 {
+        self.compensated.latency
     }
 
     pub fn set_routes(&mut self, host_bin: &std::path::Path, routes: &[PluginRoute]) {
@@ -2140,7 +2254,7 @@ impl PlaybackControl {
     }
 
     fn reprepare(&mut self, restore_states: bool) -> Result<(), PlaybackError> {
-        self.service();
+        self.service_queues();
         if let Some(error) = self.take_preparation_error() {
             return Err(error);
         }
@@ -2344,6 +2458,16 @@ impl PlaybackControl {
 
     fn publish_graph(&mut self, mut pending: Pending) -> Result<(), PlaybackError> {
         self.save_controls = self.hosts.save_controls();
+        let (delays, compensated) =
+            match compensate_plan(&mut pending.prepared, &self.hosts, self.frames) {
+                Ok(planned) => planned,
+                Err(error) => {
+                    self.status
+                        .requested_plan
+                        .store(self.published_plan, Ordering::Release);
+                    return Err(error);
+                }
+            };
         // Place the cursor where the callback last stood, so adopting it only
         // advances over the notes since (R1). The callback checks the rule.
         let sample = self.status.sample.load(Ordering::SeqCst);
@@ -2364,7 +2488,7 @@ impl PlaybackControl {
         }
         let update = Update {
             prepared: pending.prepared,
-            hosts: Box::new(self.hosts.audio_snapshot()),
+            hosts: Box::new(self.hosts.audio_snapshot(delays)),
             revision: pending.revision,
             retime,
         };
@@ -2373,10 +2497,33 @@ impl PlaybackControl {
             .push(update)
             .map_err(|_| PlaybackError::BufferTooSmall)?;
         self.published_plan = pending.revision;
+        self.compensated = compensated;
         Ok(())
     }
 
     pub fn service(&mut self) {
+        self.service_queues();
+        self.follow_latency();
+    }
+
+    /// A helper that restarts may report another latency. The plan is
+    /// prepared again, as for a loop change, so every path stays aligned
+    /// (ADR 0339). A plan already on its way plans from the new value.
+    fn follow_latency(&mut self) {
+        if self.held.is_some()
+            || self.preparing.is_some()
+            || self.media.is_some()
+            || self.preparation_error.is_some()
+            || !self.hosts.latency_differs(&self.compensated.reported)
+        {
+            return;
+        }
+        if let Err(error) = self.reprepare(false) {
+            self.preparation_error = Some(error);
+        }
+    }
+
+    fn service_queues(&mut self) {
         while self.returns.pop().is_ok() {}
         while self.preview_returns.pop().is_ok() {}
         self.log_audio(false);
@@ -2536,6 +2683,7 @@ impl PlaybackControl {
                         at: self.status.master_mute_at.load(Ordering::SeqCst),
                     }
                 }),
+                latency_samples: self.status.latency.load(Ordering::Acquire),
             };
             if before == self.status.generation.load(Ordering::SeqCst) {
                 return value;
@@ -2788,11 +2936,14 @@ impl PlaybackAudio {
                             .ok_or(PlaybackError::Time),
                     );
                 }
-                next.hosts.carry(&self.hosts);
+                next.hosts.carry(&mut self.hosts);
                 next.hosts.activate_prepared();
                 std::mem::swap(&mut next.prepared, &mut self.current);
                 std::mem::swap(&mut next.hosts, &mut self.hosts);
                 self.current.meters_committed = false;
+                self.status
+                    .latency
+                    .store(self.current.latency, Ordering::Release);
                 faders_changed = true;
                 self.status
                     .applied_plan
@@ -2844,7 +2995,13 @@ impl PlaybackAudio {
                     let sample = self.current.sample_at(tick)?;
                     self.locate(sample)?;
                 }
-                QueuedCommand::SetMetronome(enabled) => self.metronome = enabled,
+                QueuedCommand::SetMetronome(enabled) => {
+                    self.metronome = enabled;
+                    if !enabled {
+                        // Clicks still inside the compensation are not heard later.
+                        self.current.clicks_delay.clear();
+                    }
+                }
                 QueuedCommand::ClearFaderPreview { after_plan } => {
                     self.clear_preview_after = Some(after_plan)
                 }
@@ -2889,6 +3046,10 @@ impl PlaybackAudio {
             return Ok(());
         }
         if self.reset_plugins {
+            // The compensation's lines hold audio from before the jump, as the
+            // plugins did; both start afresh (ADR 0339).
+            self.current.clear_delays();
+            self.hosts.clear_delays();
             if live || self.hosts.cleanup_pending() {
                 self.current.queue_cleanup(&mut self.hosts)?;
             } else {
@@ -2924,6 +3085,9 @@ impl PlaybackAudio {
                     },
                 )?;
                 self.count_misses();
+                if self.metronome {
+                    flush_clicks(self, left, right)?;
+                }
             } else {
                 let flushed = self.current.released != 0;
                 self.current.flush_releases(&mut self.hosts, deadline)?;
@@ -3254,23 +3418,46 @@ fn mix_metronome(
     )?;
     let clicks = audio
         .clicks
-        .get(..left.len())
+        .get_mut(..left.len())
         .ok_or(PlaybackError::BufferTooSmall)?;
-    for (index, ((sample_left, sample_right), click)) in left
-        .iter_mut()
-        .zip(right.iter_mut())
-        .zip(clicks)
-        .enumerate()
-    {
-        let gain = match (cutoff, audio.stop_fade_offset) {
-            (Some(_), Some(offset)) => crate::declick::stop_gain(
+    if let (Some(_), Some(offset)) = (cutoff, audio.stop_fade_offset) {
+        for (index, click) in clicks.iter_mut().enumerate() {
+            *click *= crate::declick::stop_gain(
                 u64::from(offset) + index as u64,
                 (audio.current.sample_rate / 200).max(2),
-            ),
-            _ => 1.0,
-        };
-        *sample_left += click * gain;
-        *sample_right += click * gain;
+            );
+        }
+    }
+    // With the music, which master hears after the compensation (ADR 0339).
+    audio.current.clicks_delay.process(clicks, None);
+    for ((sample_left, sample_right), click) in left.iter_mut().zip(right.iter_mut()).zip(&*clicks)
+    {
+        *sample_left += *click;
+        *sample_right += *click;
+    }
+    Ok(())
+}
+
+/// While stopped, clicks still inside the compensation play out, as the
+/// music's delayed tail does.
+fn flush_clicks(
+    audio: &mut PlaybackAudio,
+    left: &mut [f32],
+    right: &mut [f32],
+) -> Result<(), PlaybackError> {
+    if audio.current.clicks_delay.frames() == 0 {
+        return Ok(());
+    }
+    let clicks = audio
+        .clicks
+        .get_mut(..left.len())
+        .ok_or(PlaybackError::BufferTooSmall)?;
+    clicks.fill(0.0);
+    audio.current.clicks_delay.process(clicks, None);
+    for ((sample_left, sample_right), click) in left.iter_mut().zip(right.iter_mut()).zip(&*clicks)
+    {
+        *sample_left += *click;
+        *sample_right += *click;
     }
     Ok(())
 }

@@ -461,9 +461,9 @@ final class DeviceColumnView: NSView, NSDraggingSource {
         if search.stringValue != (state?.query ?? "") { search.stringValue = state?.query ?? "" }
         latency.isHidden = device.offline || state?.error != nil || state?.latencySamples == nil
         latency.stringValue = state?.latencySamples.map { String(format: text("Plugin latency samples"), $0) } ?? ""
-        latency.toolTip = text("Plugin latency uncompensated")
+        latency.toolTip = text("Plugin latency compensated")
         latency.setAccessibilityLabel(latency.stringValue + " " + device.title)
-        latency.setAccessibilityHelp(text("Plugin latency uncompensated"))
+        latency.setAccessibilityHelp(text("Plugin latency compensated"))
         // Offline devices keep settings but have no running plugin to read.
         let note: String? =
             if device.offline {

@@ -41,7 +41,7 @@ struct PluginLatencyTests {
             #expect(!column.latency.isHidden)
             #expect(column.latency.stringValue.contains(String(samples)))
             #expect(column.latency.accessibilityLabel()?.contains("Latency") == true)
-            #expect(column.latency.toolTip == text("Plugin latency uncompensated"))
+            #expect(column.latency.toolTip == text("Plugin latency compensated"))
             #expect(column.latency.frame.maxY <= column.search.frame.minY)
             refresh(collapsed: true)
             #expect(!column.latency.isHidden)

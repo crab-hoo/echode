@@ -208,8 +208,10 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
 
 先行分として、フォルダのミュート・ソロの子孫への反映（[ADR 0244](decisions/0244-folder-mute-and-solo-gates.md)）と、
 子の音を親のチェイン・音量・パンへ通すフォルダバス（[ADR 0338](decisions/0338-folder-bus.md)）を接続した。
-PDC・センド・サイドチェイン・ドラム用の MIDI 配布は未接続である。
-CLAP の遅延の取得とデバイス列の表示は接続済みだが、音の時刻は補正しない（[ADR 0246](decisions/0246-plugin-latency-reporting.md)）。
+PDC は、トラックとフォルダの合流点の遅延線で揃え、書出しはマスターの遅れの分を先頭から捨てる（[ADR 0339](decisions/0339-plugin-delay-compensation.md)）。
+バイパスした装置は遅延を保ち、実行中の遅延の変化は計画を作り直して追う。再生ヘッドの表示の補正は残る。
+センド・サイドチェイン・ドラム用の MIDI 配布は未接続で、合流は ADR 0339 の規則で揃える。
+CLAP の遅延の取得とデバイス列の表示は [ADR 0246](decisions/0246-plugin-latency-reporting.md) で接続した。
 フォルダバスは Reaper と同じ意味にし、センド・サイドチェインより先に FCA-06 の解決として実装した（[ADR 0277](decisions/0277-reaper-style-folder-bus.md)）。
 
 - フォルダの入れ子、センド／リターン、サイドチェーン、PDC（クリップ FX や重なる配置の合流を含む）を制御側の実行計画へ組み込む。循環の拒否、チャンネルの意味、加算順序、レイテンシ変更と計画交換を定義する。

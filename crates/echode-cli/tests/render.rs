@@ -748,6 +748,53 @@ fn audit_aud10_plugin_export_matches_playback_and_names_a_missing_plugin() {
     assert!(error.to_string().contains("plugin host"), "{error}");
 }
 
+/// ADR 0339: master lags the timeline by the compensated latency, and the
+/// export drops that many frames first. A track behind a delaying effect and
+/// a dry track both start at the file's first frame.
+#[test]
+fn a_compensated_export_starts_every_track_at_the_projects_start() {
+    let _lock = PLUGIN_ENV.lock().unwrap();
+    let directory = scratch();
+    std::fs::create_dir_all(&directory).unwrap();
+    let _env = PluginEnv::set(&directory.join("clap-scan.jsonl"));
+    write_plugin_cache(&directory.join("clap-scan.jsonl"), &plugin_dylib());
+    let source = directory.join("constant.wav");
+    write_wav(&source, 48_000, &vec![0.25f32; PLUGIN_FRAMES * 2]).unwrap();
+    let stored = echode_history::import_audio(&directory, &source).unwrap();
+    let audio = echode_model::AudioRef::try_new(
+        stored.hash,
+        stored.sample_rate,
+        stored.channels,
+        stored.frames,
+    )
+    .unwrap();
+    let (project, delayed) = Project::new().add_track("delayed");
+    let (project, dry) = project.add_track("dry");
+    let (first, second) = (Id::generate(), Id::generate());
+    let project = project
+        .place_audio(delayed, first, Id::generate(), Tick::new(0), audio.clone())
+        .unwrap()
+        .set_clip_fades(first, 0, 0)
+        .unwrap()
+        .place_audio(dry, second, Id::generate(), Tick::new(0), audio)
+        .unwrap()
+        .set_clip_fades(second, 0, 0)
+        .unwrap()
+        .add_clap_device(delayed, Id::from_raw(51), "dev.echode.test-gain")
+        .unwrap();
+    write_package(&directory, &project).unwrap();
+    // A pure delay of 64 frames that reports them as its latency.
+    let _fault = FaultFile::set("dev.echode.test-gain", "delay:64");
+    let wav = output_path("compensated.wav");
+    render_to_wav(&directory, &wav, 48_000, Some(PLUGIN_FRAMES as u32)).unwrap();
+    let exported = wav_lefts(&wav, PLUGIN_FRAMES);
+    assert!(
+        exported.iter().all(|sample| (*sample - 0.5).abs() < 1.0e-6),
+        "{exported:?}"
+    );
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
 #[test]
 fn audit_pro07_a_failed_plugin_does_not_leave_a_finished_wav() {
     let _lock = PLUGIN_ENV.lock().unwrap();

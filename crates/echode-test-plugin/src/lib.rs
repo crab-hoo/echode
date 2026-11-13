@@ -9,6 +9,8 @@
 //! block on, until a CLAP reset; afterwards it writes 0.5 again.
 //! `ECHODE_TEST_FAULT=large-state` saves the state byte repeated
 //! [`LARGE_STATE`] times and loads only that shape, marking itself dirty.
+//! `ECHODE_TEST_FAULT=delay:<frames>` is a real delay that reports its length
+//! as latency; see [`delay`].
 
 use std::ffi::{CStr, c_void};
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -28,6 +30,7 @@ use clap_sys::ext::state::{CLAP_EXT_STATE, clap_host_state, clap_plugin_state};
 use clap_sys::plugin::clap_plugin;
 use clap_sys::stream::{clap_istream, clap_ostream};
 
+mod delay;
 mod gui;
 mod latency;
 mod params;
@@ -129,7 +132,7 @@ impl Plugin for TestGain {
         if current_role() == Role::Order || fault_now() == Fault::TailLegacy {
             builder.register::<PluginNotePorts>();
         }
-        if fault_now() == Fault::Latency {
+        if matches!(fault_now(), Fault::Latency | Fault::Delay) {
             builder.register::<latency::PluginLatency>();
         }
     }
@@ -243,6 +246,8 @@ enum Fault {
     Nan,
     /// Saves and loads a state longer than one control frame's body.
     LargeState,
+    /// Delays its main audio by the latency it reports. See [`delay`].
+    Delay,
 }
 
 fn fault_code(text: &str) -> u8 {
@@ -265,6 +270,7 @@ fn fault_code(text: &str) -> u8 {
         "latency" => 16,
         "nan" => 17,
         "large-state" => 18,
+        _ if text.starts_with("delay:") => 19,
         _ => 0,
     }
 }
@@ -289,6 +295,7 @@ fn fault_from_code(code: u8) -> Fault {
         16 => Fault::Latency,
         17 => Fault::Nan,
         18 => Fault::LargeState,
+        19 => Fault::Delay,
         _ => Fault::None,
     }
 }
@@ -317,6 +324,9 @@ fn note_fault(plugin_id: &CStr) {
     }
     if let Some(path) = text.trim().strip_prefix("gui:") {
         gui::remote_at(path);
+    }
+    if let Some(lengths) = text.trim().strip_prefix("delay:") {
+        delay::configure(lengths);
     }
     FAULT_BITS.store(fault_code(text.trim()), Ordering::Relaxed);
 }
@@ -387,6 +397,8 @@ pub struct TestGainProcessor<'a> {
     /// For [`Fault::Nan`]: blocks processed, and whether a reset cleared it.
     nan_blocks: u32,
     nan_cleared: bool,
+    /// For [`Fault::Delay`].
+    delay: Option<delay::Line>,
 }
 
 impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
@@ -394,11 +406,16 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
         _host: HostAudioProcessorHandle<'a>,
         main_thread: &TestMain,
         _shared: &'a (),
-        _audio_config: PluginAudioConfiguration,
+        audio_config: PluginAudioConfiguration,
     ) -> Result<Self, PluginError> {
         if fault_now() == Fault::Latency {
             latency::activated(&main_thread.host);
         }
+        let delay = (fault_now() == Fault::Delay).then(|| {
+            let frames = delay::activated();
+            latency::report(frames);
+            delay::Line::new(frames, audio_config.max_frames_count)
+        });
         let fault = fault_now();
         if fault == Fault::Activate {
             return Err(PluginError::Message("activate refused"));
@@ -431,11 +448,15 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
             process_gate_ready: false,
             nan_blocks: 0,
             nan_cleared: false,
+            delay,
         })
     }
 
     fn reset(&mut self) {
         self.onset = Onset::default();
+        if let Some(line) = &mut self.delay {
+            line.reset();
+        }
         self.nan_cleared = self.nan_blocks > 1;
         if !self.reset_gate_used
             && let Some(gate) = &mut self.reset_gate
@@ -486,6 +507,15 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
             Fault::SlowProcess => std::thread::sleep(std::time::Duration::from_millis(20)),
             Fault::Callback => self.host.request_callback(),
             Fault::Restart | Fault::Latency => self.host.request_restart(),
+            Fault::Delay => {
+                if let Some(line) = &mut self.delay {
+                    line.process(&mut audio, events.input)?;
+                }
+                if delay::restart_due() {
+                    self.host.request_restart();
+                }
+                return Ok(ProcessStatus::Continue);
+            }
             Fault::Onset => {
                 let initial = self.onset;
                 let mut channel = 0usize;

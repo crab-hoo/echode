@@ -517,14 +517,14 @@
     },
     "Plugin latency samples": {
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Latency: %u samples · no PDC" } },
-        "ja": { "stringUnit": { "state": "translated", "value": "遅延: %u サンプル（未補正）" } }
+        "en": { "stringUnit": { "state": "translated", "value": "Latency: %u samples" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "遅延: %u サンプル" } }
       }
     },
-    "Plugin latency uncompensated": {
+    "Plugin latency compensated": {
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Reported at the output sample rate. Delay compensation is not yet applied." } },
-        "ja": { "stringUnit": { "state": "translated", "value": "出力サンプルレートでの報告値です。遅延補正はまだ適用されません。" } }
+        "en": { "stringUnit": { "state": "translated", "value": "Reported at the output sample rate. Playback and export delay the other tracks by the same amount to keep them aligned." } },
+        "ja": { "stringUnit": { "state": "translated", "value": "出力サンプルレートでの報告値です。再生と書出しでは、ほかのトラックを同じだけ遅らせて揃えます。" } }
       }
     },
     "No editable parameters": {

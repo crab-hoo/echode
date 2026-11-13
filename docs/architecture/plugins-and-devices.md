@@ -18,8 +18,9 @@ CLAP、VST3、AU の違いを 1 つのインターフェース（サンプル位
 
 CLAP の遅延は有効化の直後にメインスレッドで読み、初回のポート情報と再起動通知で親へ送る。
 `clap_host_latency.changed` は有効化中の通知だけを受け、毎回の有効化後の問合せで反映する。
-親の保持値と活動通知をデバイス列へ運び、出力レートのサンプル数と未補正を表示する。
-値は保存・Undo の対象外で、PDC とほかの主要なホスト拡張は残る（[ADR 0246](../decisions/0246-plugin-latency-reporting.md)）。
+親の保持値と活動通知をデバイス列へ運び、出力レートのサンプル数を表示する。
+値は保存・Undo の対象外で、ほかの主要なホスト拡張は残る（[ADR 0246](../decisions/0246-plugin-latency-reporting.md)）。
+再生と書出しは、報告値で合流点を揃える（[ADR 0339](../decisions/0339-plugin-delay-compensation.md)）。
 
 ### 9.2 プロセスの分け方
 

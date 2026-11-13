@@ -445,6 +445,10 @@ fn render_with_plugins(
         load_placed_clips(&package, project, rate)
     }));
     control.replace(project).map_err(CliError::from)?;
+    // Master lags the timeline by the compensated latency. The frames before
+    // it are dropped, so the file starts at the project's start (ADR 0339).
+    let mut skip =
+        usize::try_from(control.latency_samples()).map_err(|_| CliError::ExportLengthOverflow)?;
     control
         .command(PlaybackCommand::Play)
         .map_err(CliError::from)?;
@@ -457,7 +461,7 @@ fn render_with_plugins(
     let mut rendered = 0usize;
     while rendered < total {
         cancellation.check()?;
-        let count = (total - rendered).min(block);
+        let count = (total - rendered).saturating_add(skip).min(block);
         audio.render_until(
             &mut left[..count],
             &mut right[..count],
@@ -470,9 +474,12 @@ fn render_with_plugins(
         if control.status().failed {
             return Err(CliError::PluginPlaybackFailed);
         }
-        for index in 0..count {
-            let left = left.get(index).copied().unwrap_or(0.0);
-            let right = right.get(index).copied().unwrap_or(0.0);
+        let dropped = skip.min(count);
+        skip -= dropped;
+        let kept = count - dropped;
+        for index in 0..kept {
+            let left = left.get(dropped + index).copied().unwrap_or(0.0);
+            let right = right.get(dropped + index).copied().unwrap_or(0.0);
             if let Some(slot) = interleaved.get_mut(index * 2) {
                 *slot = left;
             }
@@ -480,11 +487,13 @@ fn render_with_plugins(
                 *slot = right;
             }
         }
-        let samples = count.saturating_mul(2);
-        wav.write_block(interleaved.get(..samples).unwrap_or(&[]))?;
+        if kept != 0 {
+            let samples = kept.saturating_mul(2);
+            wav.write_block(interleaved.get(..samples).unwrap_or(&[]))?;
+        }
         control.service();
-        rendered += count;
-        progress.advance(count as u32);
+        rendered += kept;
+        progress.advance(kept as u32);
     }
     progress.finalizing();
     wav.finish_cancellable(cancellation)

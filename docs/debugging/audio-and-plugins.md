@@ -528,13 +528,17 @@ I/O は `CliIoOperation` とパス・元の errno、引数は `ArgumentError` �
 
 ### プラグインの遅延表示が更新されない・音がずれる
 
-値は出力レートのサンプル数で、PDC はまだ行わない。値が正しく表示されても他トラックと音がずれるのは未補正の制約である。
+値は出力レートのサンプル数で、再生と書出しはこの値で合流点を揃える（[ADR 0339](../decisions/0339-plugin-delay-compensation.md)）。
 未取得・オフライン・一覧取得失敗は値を隠し、拡張または `get` がないプラグインは 0 と報告する。
+音がずれる時は、まず `PlaybackStatus::latency_samples`（採用した計画のマスターの遅れ）と `PlaybackControl::latency_samples` を、報告値の和と比べる。
+報告値どおりに揃っていて耳でずれるなら、プラグインの報告値が実際の遅れと違う。報告値を変えた再起動の後に古ければ、`service` が計画を作り直したか（`follow_latency`）を調べる。
+フォルダでは、子の到着・自分の配置音声・最初の音源が出会う時刻を `compensation.rs` の計算で確かめる。オフラインの装置は 0 として扱う。
+書出しの先頭がずれる時は、`render_with_plugins` が公開した計画の遅れの分を捨てたかを見る。テスト用 CLAP の `delay:<frames>` は報告値と同じだけ実際に遅らせる。
 `device.parameters` の `latency_samples` と、活動列の同名フィールドを比べる。
 初回が 0 のままなら `threads.rs::query_latency` と `Ports`、再起動後だけ古ければ `PluginRestarted` の受信と親の保持を調べる。
 親の値が新しければ、Swift の文書 ID・デバイス ID と `DeviceParameterState` を調べる。
 `hosted_playback/latency.rs` は 256 → 512 → 0 を別プロセスで報告させる。`PluginLatencyTests` は機器なしで表示と旧文書の拒否を確認する。
-第三者の設定・出力レート・報告値・再起動前後を記録し、補正済みとは扱わない（[ADR 0246](../decisions/0246-plugin-latency-reporting.md)、UC-51）。
+第三者の設定・出力レート・報告値・再起動前後を記録する（[ADR 0246](../decisions/0246-plugin-latency-reporting.md)、UC-51・74）。
 
 ### パラメーター一覧が出ない・値が音に反映しない・Undo で音が戻らない
 

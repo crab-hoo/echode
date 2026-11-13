@@ -77,7 +77,8 @@
 - **クリップゲイン**: 実機の操作感・聴感は未確認（UC-48、[ADR 0241](decisions/0241-unscaled-placement-pcm.md)）。
 - **規模・ミックスと履歴（FCA-05〜07・19）**: モデル ID の線形探索と履歴のメモリ予算は残る（[ADR 0274](decisions/0274-reused-track-plans.md)）。
   ノートの編集の 1 段は触れた run だけを持つ（1 万ノートで約 13 KB）。多くのノートを変える編集はその分を持ち、総量の予算はない（[ADR 0287](decisions/0287-shared-note-runs.md)）。
-  子は親の FX・音量・パンを通り、遅延は未補正。ループとミックスの聴感は UC-47・49・73、遅延表示は UC-51（[ADR 0246](decisions/0246-plugin-latency-reporting.md)、[ADR 0338](decisions/0338-folder-bus.md)）。
+  子は親の FX・音量・パンを通る（UC-47・49・73、[ADR 0338](decisions/0338-folder-bus.md)）。
+  PDC は最も遅い経路に揃え、再生ヘッドは未補正（UC-51・74、[ADR 0339](decisions/0339-plugin-delay-compensation.md)）。
 - **長い素材**: 全体を復号して 1 コピーを常駐させ、逐次読込みはない（[ADR 0273](decisions/0273-shared-source-clip-windows.md)）。
 
 ### プラグイン・デバイスビュー

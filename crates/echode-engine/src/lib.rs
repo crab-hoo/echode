@@ -25,7 +25,9 @@ mod audition;
 mod builtin;
 mod bypass;
 mod clock;
+mod compensation;
 mod declick;
+mod delay;
 mod device;
 mod error;
 #[cfg(feature = "spike")]

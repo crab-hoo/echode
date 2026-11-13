@@ -20,6 +20,8 @@ use echode_sandbox::{
 };
 
 use crate::PlaybackError;
+use crate::compensation::TrackLatency;
+use crate::delay::Delay;
 use crate::plugin_state::{PluginState, holds};
 
 /// Control-thread factory for a fresh send right on each live helper launch.
@@ -175,6 +177,9 @@ struct TrackHost {
     chase_scratch: Vec<Event>,
     /// Set by the first stage of this block that returned a non-finite sample.
     fault: Option<StageFault>,
+    /// The first instrument's output, delayed to meet the track's placed
+    /// audio and children (ADR 0339). Empty in the control thread's graph.
+    instrument_delay: Delay,
 }
 
 /// Live tracks in chain order, and an index by key rebuilt with every change
@@ -570,7 +575,10 @@ impl HostGraph {
     }
 
     /// Allocate an audio-owned bank using the already prepared process endpoints.
-    pub(crate) fn audio_snapshot(&self) -> Self {
+    /// `instrument_delays` gives each hosted track's first-instrument delay by
+    /// key (ADR 0339).
+    pub(crate) fn audio_snapshot(&self, mut instrument_delays: Vec<(u32, Delay)>) -> Self {
+        instrument_delays.sort_unstable_by_key(|entry| entry.0);
         let mut graph = Self::empty();
         graph.fan = self.fan.clone();
         graph.tracks = HostTracks::new(
@@ -604,13 +612,20 @@ impl HostGraph {
                             routed: Vec::with_capacity(stage.routed.capacity()),
                         })
                         .collect();
-                    track_host(
+                    let mut host = track_host(
                         track.key,
                         stages,
                         track.inject.len(),
                         track.source_events.capacity(),
                         track.chased_ons.capacity(),
-                    )
+                    );
+                    if let Ok(index) =
+                        instrument_delays.binary_search_by_key(&track.key, |entry| entry.0)
+                        && let Some(entry) = instrument_delays.get_mut(index)
+                    {
+                        host.instrument_delay = std::mem::take(&mut entry.1);
+                    }
+                    host
                 })
                 .collect(),
         );
@@ -631,8 +646,14 @@ impl HostGraph {
         graph
     }
 
-    /// Callback boundary only. Preserve DSP ownership and chase/reset receipts.
-    pub(crate) fn carry(&mut self, old: &Self) {
+    /// Callback boundary only. Preserve DSP ownership and chase/reset receipts,
+    /// and continue each track's compensation (ADR 0339).
+    pub(crate) fn carry(&mut self, old: &mut Self) {
+        for track in self.tracks.iter_mut() {
+            if let Some(previous) = old.tracks.by_key_mut(track.key) {
+                track.instrument_delay.carry(&mut previous.instrument_delay);
+            }
+        }
         for stage in self.tracks.iter_mut().flat_map(|track| &mut track.stages) {
             let previous = old
                 .stage_index
@@ -725,20 +746,76 @@ impl HostGraph {
         Ok(())
     }
 
-    pub(crate) fn tail_samples(&self) -> u32 {
-        self.tracks
+    /// Each hosted track's reported device latency and declared tails, sorted
+    /// by key (ADR 0339). Control only: reading a tail locks the helper.
+    pub(crate) fn track_latencies(&self) -> Vec<(u32, TrackLatency)> {
+        let mut latencies: Vec<_> = self
+            .tracks
             .iter()
             .map(|track| {
-                track
-                    .stages
-                    .iter()
-                    .filter(|stage| !stage.bypassed)
-                    .fold(0u32, |sum, stage| {
-                        sum.saturating_add(stage.instance.host().tail_samples())
-                    })
+                let mut latency = TrackLatency::default();
+                for (index, stage) in track.stages.iter().enumerate() {
+                    let frames = u64::from(stage.instance.control.latency_samples());
+                    if index == 0 && stage.instrument {
+                        latency.instrument = frames;
+                    } else {
+                        latency.chain = latency.chain.saturating_add(frames);
+                        if stage.bypassed {
+                            latency.bypassed = latency.bypassed.saturating_add(frames);
+                        }
+                    }
+                    if !stage.bypassed {
+                        latency.tail = latency
+                            .tail
+                            .saturating_add(stage.instance.host().tail_samples());
+                    }
+                }
+                (track.key, latency)
             })
-            .max()
-            .unwrap_or(0)
+            .collect();
+        latencies.sort_unstable_by_key(|entry| entry.0);
+        latencies
+    }
+
+    /// Each device's reported latency, in graph order.
+    pub(crate) fn reported_latencies(&self) -> Vec<(u128, u32)> {
+        self.tracks
+            .iter()
+            .flat_map(|track| &track.stages)
+            .map(|stage| (stage.device, stage.instance.control.latency_samples()))
+            .collect()
+    }
+
+    /// A helper reported a latency other than `reported`, which
+    /// [`Self::reported_latencies`] returned for the same graph.
+    pub(crate) fn latency_differs(&self, reported: &[(u128, u32)]) -> bool {
+        let mut stages = self.tracks.iter().flat_map(|track| &track.stages);
+        let mut reported = reported.iter();
+        loop {
+            match (stages.next(), reported.next()) {
+                (None, None) => return false,
+                (Some(stage), Some(&(device, latency)))
+                    if stage.device == device
+                        && stage.instance.control.latency_samples() == latency => {}
+                _ => return true,
+            }
+        }
+    }
+
+    /// The track's first device is an instrument, which hears no input.
+    pub(crate) fn starts_with_instrument(&self, key: u32) -> bool {
+        self.tracks
+            .by_key(key)
+            .and_then(|track| track.stages.first())
+            .is_some_and(|stage| stage.instrument)
+    }
+
+    /// Silences every instrument's compensation at a discontinuity that also
+    /// resets the plugins. O(1) per track.
+    pub(crate) fn clear_delays(&mut self) {
+        for track in self.tracks.iter_mut() {
+            track.instrument_delay.clear();
+        }
     }
 
     /// Devices whose recorded states still matched when a graph was submitted.
@@ -1517,6 +1594,7 @@ impl TrackHost {
             inject_live,
             own,
             own_live,
+            instrument_delay,
             ..
         } = self;
         let Some(stage) = stages.get_mut(stage_index) else {
@@ -1524,6 +1602,9 @@ impl TrackHost {
         };
         if !stage.instrument {
             return;
+        }
+        if stage_index == 0 {
+            delay_instrument(stage, instrument_delay, frames);
         }
         let live = std::mem::replace(inject_live, false);
         // The track's own instrument, before its clips and children join it.
@@ -1645,6 +1726,7 @@ fn track_host(
         chase_order: vec![0; chase.max(1)],
         chase_scratch: vec![Event::note_off(0, 0, 0, 0); chase.max(1)],
         fault: None,
+        instrument_delay: Delay::default(),
     }
 }
 
@@ -1942,6 +2024,35 @@ fn poll_stage(stage: &mut Stage, generation: u64, frames: usize) -> Poll {
             };
             Poll::Failed(reason)
         }
+    }
+}
+
+/// Delays the first instrument's own output, before its gate and before the
+/// placed audio and children join it (ADR 0339). A promoted mono instrument
+/// is delayed in its mono plane, which the promotion then reads.
+fn delay_instrument(stage: &mut Stage, delay: &mut Delay, frames: usize) {
+    if delay.frames() == 0 {
+        return;
+    }
+    let planes = if !stage.bypassed && !stage.promoted.is_empty() {
+        let main = stage.output.len().min(1);
+        stage.output.get_mut(..main).unwrap_or_default()
+    } else {
+        stage.rendered_mut()
+    };
+    let frames = bounded(planes, frames);
+    match planes {
+        [left, right, ..] => {
+            if let (Some(left), Some(right)) = (left.get_mut(..frames), right.get_mut(..frames)) {
+                delay.process(left, Some(right));
+            }
+        }
+        [left] => {
+            if let Some(left) = left.get_mut(..frames) {
+                delay.process(left, None);
+            }
+        }
+        [] => {}
     }
 }
 

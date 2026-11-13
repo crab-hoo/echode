@@ -62,6 +62,9 @@ pub enum PlaybackError {
     /// An offline render met an online plugin device. Only the isolated
     /// plugin host renders those.
     NeedsPluginHost,
+    /// Delay compensation for this many frames overflowed or could not be
+    /// reserved, so the plan that needs it was not prepared (ADR 0339).
+    Latency(u64),
 }
 
 impl fmt::Display for PlaybackError {
@@ -102,6 +105,12 @@ impl fmt::Display for PlaybackError {
             Self::NoRunningPlugin => "the device has no running plugin",
             Self::TransportBusy => "cached sources require an idle transport",
             Self::NeedsPluginHost => "device rendering requires the isolated plugin host",
+            Self::Latency(frames) => {
+                return write!(
+                    formatter,
+                    "plugin delay compensation of {frames} samples cannot be prepared"
+                );
+            }
         };
         formatter.write_str(message)
     }

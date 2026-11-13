@@ -15,7 +15,6 @@ pub(super) struct GraphPreparation {
     cancel: Arc<AtomicBool>,
     pub(super) restore_states: bool,
     pub(super) event_caps: Vec<usize>,
-    pub(super) tail_samples: u32,
 }
 
 impl GraphPreparation {
@@ -29,7 +28,6 @@ impl GraphPreparation {
     ) -> Result<Self, PlaybackError> {
         let restore_states = pending.restore_states;
         let event_caps = hosts.track_event_caps();
-        let tail_samples = hosts.tail_samples();
         let preserve = hosts.matching_states(&pending.chain, &pending.routes);
         let cancel = Arc::new(AtomicBool::new(false));
         let stop = Arc::clone(&cancel);
@@ -66,7 +64,6 @@ impl GraphPreparation {
             cancel,
             restore_states,
             event_caps,
-            tail_samples,
         })
     }
 
