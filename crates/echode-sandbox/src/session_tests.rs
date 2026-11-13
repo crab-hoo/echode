@@ -177,3 +177,37 @@ fn stderr_keeps_the_tail() {
     assert!(slot.len() <= 64 * 1024 + 3);
     assert!(slot.chars().all(|ch| ch == 'a'));
 }
+
+/// DIA-04 (docs/reviews/2026-11-13-detailed-implementation-audit.md): a
+/// background save the helper refuses as busy "did not start and changed
+/// nothing, so a later one can succeed". The poller drops the dirty mark with
+/// the refusal, logs nothing and never asks again, so the plugin's change
+/// stays out of the project until the plugin marks itself dirty once more.
+#[test]
+#[ignore = "DIA-04: a refused background save drops the dirty mark and is not asked again"]
+fn audit_dia04_a_busy_refusal_keeps_the_plugins_change_waiting_for_a_save() {
+    let (parent, mut helper) = Socket::pair().unwrap();
+    let mut control = PluginControl::new(parent);
+    let wait = Duration::from_secs(5);
+    helper.send(&ControlMessage::Dirty).unwrap();
+    // The poll that reads the notice asks for the save.
+    assert!(control.poll_state_save().is_none());
+    let (id, request) = helper.recv_tagged(wait).unwrap();
+    assert!(matches!(request, ControlMessage::SaveRequest));
+    helper
+        .send_tagged(id, &ControlMessage::StateRejected(Refusal::Busy))
+        .unwrap();
+    // The poll that reads the refusal, then as many as two seconds of worker turns.
+    let mut asked_again = false;
+    for _ in 0..100 {
+        assert!(control.poll_state_save().is_none());
+        if let Ok(Some((_, ControlMessage::SaveRequest))) = helper.try_recv_tagged() {
+            asked_again = true;
+            break;
+        }
+    }
+    assert!(
+        asked_again,
+        "the change is still only in the plugin and no save was asked for again"
+    );
+}

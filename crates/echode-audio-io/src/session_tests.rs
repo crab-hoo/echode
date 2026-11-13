@@ -1108,3 +1108,45 @@ fn a_live_plugin_edit_survives_only_updates_that_keep_its_recorded_state() {
         assert!(session.live_edits_kept_by(&next).is_empty());
     }
 }
+
+/// DIA-03 (docs/reviews/2026-11-13-detailed-implementation-audit.md): after a
+/// device change whose inventory cannot be read, every service turn reads it
+/// again and logs the failure again. The worker services 50 times a second.
+#[test]
+#[ignore = "DIA-03: a failed inventory read is retried and logged on every service turn"]
+fn audit_dia03_a_failed_inventory_read_is_not_retried_on_every_service_turn() {
+    struct Unreadable(AtomicU64);
+    impl Outputs for Unreadable {
+        fn refresh(
+            &self,
+            _epoch: &Arc<AtomicU64>,
+        ) -> Result<(Inventory, Option<hardware::Notifications>), AudioError> {
+            if self.0.fetch_add(1, Ordering::AcqRel) == 0 {
+                Ok((Inventory::default(), None))
+            } else {
+                Err(crate::HardwareFault::SampleRate.into())
+            }
+        }
+        fn claim(&self, _device: OutputDevice) -> Result<crate::stream::Claim, AudioError> {
+            Err(AudioError::NoOutputDevice)
+        }
+        fn register(&self, _stream: &mut OutputStream) -> Result<(), AudioError> {
+            Ok(())
+        }
+    }
+    let outputs = Arc::new(Unreadable(AtomicU64::new(0)));
+    let mut session = Session::new(Arc::new(Project::new()));
+    session.outputs = Arc::clone(&outputs) as Arc<dyn Outputs>;
+    session.perform(AudioCommand::Refresh).unwrap();
+    // A device arrives whose properties cannot be read (IQA-06).
+    session.hardware_epoch.fetch_add(1, Ordering::AcqRel);
+    for _ in 0..100 {
+        session.service();
+    }
+    assert!(session.state().error.is_some());
+    let reads = outputs.0.load(Ordering::Acquire) - 1;
+    assert!(
+        reads <= 3,
+        "100 service turns in a row read the inventory {reads} times"
+    );
+}

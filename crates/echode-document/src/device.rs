@@ -485,6 +485,45 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    /// DIA-02 (docs/reviews/2026-11-13-detailed-implementation-audit.md): a
+    /// commit that fails leaves the device counted as edited. The app does not
+    /// commit again, so the plugin's later saves wait for an edit that never
+    /// ends and are dropped when the document closes.
+    #[test]
+    #[ignore = "DIA-02: a failed commit keeps holding the device's background saves"]
+    fn audit_dia02_a_failed_commit_does_not_hold_later_background_saves() {
+        let dir = std::env::temp_dir().join(format!("echode-document-device-{}", Id::generate()));
+        let (project, track) = echode_model::Project::new().add_track("fx");
+        let device = Id::from_raw(0xD4);
+        let project = project
+            .add_clap_device(track, device, "org.example.fx")
+            .unwrap();
+        echode_history::write_package(&dir, &project).unwrap();
+        let host = DocumentHost::open(&dir).unwrap();
+        let mut audio = Session::new(host.snapshot());
+        let mut saves = crate::saves::PluginSaves::default();
+        // A value change in the device view started the edit.
+        saves.editing.insert(device.raw());
+        // The store cannot be written, so recording the captured bytes fails.
+        std::fs::write(dir.join("media"), b"not a directory").unwrap();
+        let failed = commit(&host, &mut audio, &mut saves.editing, device, b"edited");
+        std::fs::remove_file(dir.join("media")).unwrap();
+        assert!(failed.is_err(), "the commit was expected to fail");
+        // The plugin then saves on its own, as after any change.
+        saves.add(vec![(device.raw(), b"later".to_vec())]);
+        let mut offered = false;
+        saves.record(|_, _| {
+            offered = true;
+            true
+        });
+        drop(host);
+        let _ = std::fs::remove_dir_all(dir);
+        assert!(
+            offered,
+            "the save waits for a commit the app never sends again"
+        );
+    }
+
     #[test]
     fn only_changes_a_commit_records_defer_background_saves() {
         use echode_audio_io::{ParamEvent, ParamEventKind};
