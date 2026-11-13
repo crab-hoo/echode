@@ -120,15 +120,19 @@ AudioToolbox の失敗は `MediaError` の操作別の変種で、`Property` は
 編集を繰り返した後の親の ID 表は `plan_tests::audit_fca19` で確認する。
 現在の計画から消えた対応は解放するが、ヘルパーの予約容量・保持中の旧計画・Undo とジャーナルは別の寿命を持つ（[ADR 0267](../decisions/0267-current-playback-id-mappings.md)）。
 
-### フォルダのミュート・ソロと子の音が一致しない
+### フォルダのミュート・ソロ・親の音量と子の音が一致しない
 
 各行の保存値は自身の値であり、親の操作で子のパラメーターは変わらない。
-対象と祖先のミュート、対象と祖先のソロ、全体のソロの有無を分けて記録し、`Track::parent` の部分木と照合する。
-祖先のミュートは子のソロより優先する。親のソロは子孫を開くが、子だけのソロは兄弟や親自身の素材を開かない。
-実効フェーダーの解決は `playback_faders.rs::track_faders`、交換後の補間は `FaderState::carry`、メーターは各トラック自身のフェーダー後を見る。
-`cargo test -q -p echode-engine --test block_size folder_mix::` で入れ子・複数ソロ・親の付替え・5 ms の補間・左右・キャッシュを機器なしで照合する。
-親の音量・パン・FX が子へ効かないのは、未実装のフォルダバスの境界である（[ADR 0244](../decisions/0244-folder-mute-and-solo-gates.md)、[ADR 0277](../decisions/0277-reaper-style-folder-bus.md)）。
-実機だけで起きる段差は、機器・バッファ長・切替順・プラグインと取りこぼし数を UC-49 へ記録する。
+子の音は親の配置音声に足され、親のチェイン・音量・パンを通ってマスターへ行く（[ADR 0338](../decisions/0338-folder-bus.md)）。
+対象と祖先のミュート、対象と祖先のソロ、ミュートされていないソロの子孫、全体のソロの有無を分けて記録し、`Track::parent` の部分木と照合する。
+祖先のミュートは子のソロより優先する。親のソロは子孫を開く。子だけのソロは親のフェーダーを開くが、兄弟と親自身の素材（配置音声と最初の音源）は閉じる。
+ゲートと親の位置は `playback_faders.rs::track_routing`、親子のリンクと処理の順は `playback_bus.rs`、ブロックの手順は `playback.rs` の `Block` にある。
+交換後の補間は `FaderState::carry` と `GateRamp::carry`。入れ子の変化では経路上の補間が掛け合わさる。親のメーターは子を含むフェーダー後である。
+`cargo test -q -p echode-engine --test block_size folder_` で入れ子・複数ソロ・親の付替え・親の音量とバランス・子だけのソロ・5 ms の補間・左右・キャッシュを機器なしで照合する。
+親の FX が子を処理しない時は `cargo test -q -p echode-plugin-host --test hosted_playback a_parent_chain` で実ヘルパーを通す。
+親が子を持った途端に `bus mapping` で再生できない時は、親の最初のエフェクトのメイン入力がモノである（親の素材はステレオ、[ADR 0337](../decisions/0337-mono-instrument-on-stereo-source.md)）。
+子のヘルパーが遅いと、その祖先は同じ期限まで待ち、期限の後は出来事だけ届けて取りこぼす。フォルダごと途切れる時は、子の取りこぼしのログ（`engine-deadline-log`）を先に見る。
+実機だけで起きる段差は、機器・バッファ長・切替順・プラグインと取りこぼし数を UC-49・73 へ記録する。
 
 ## プラグイン
 

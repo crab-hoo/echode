@@ -126,6 +126,26 @@ pub(crate) struct Applied {
     pub(crate) fault: Option<StageFault>,
 }
 
+/// What [`HostGraph::submit`] did with a track's block.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Submitted {
+    /// No helper processes this track. The caller keeps its source.
+    Unhosted,
+    /// A helper is processing it. [`HostGraph::progress`] reports the end.
+    Pending,
+    /// The block already ended, heard through bypasses or missed at submission.
+    Done,
+}
+
+/// What [`HostGraph::progress`] saw.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Progress {
+    /// At least one track finished, or none was pending.
+    Finished,
+    /// The deadline passed. Every pending track was abandoned and reported.
+    Late,
+}
+
 struct TrackHost {
     key: u32,
     stages: Vec<Stage>,
@@ -142,6 +162,11 @@ struct TrackHost {
     inject_right: Vec<f32>,
     inject_stereo: bool,
     inject_live: bool,
+    /// Gains for the first instrument's own output, applied before placed
+    /// audio and children are added. Live only for a block whose track gates
+    /// its own audio (ADR 0338).
+    own: Vec<f32>,
+    own_live: bool,
     /// This block's events, copied once so each stage can keep or skip note-ons.
     source_events: Vec<Event>,
     /// Note-ons retained helpers already hold. Only a new helper receives them.
@@ -908,11 +933,12 @@ impl HostGraph {
 
     /// Copies this track's input and publishes the first stage. Does not wait.
     ///
-    /// `source` contains placed audio. `clips` is the placed
-    /// audio alone. The first instrument ignores `source` and receives notes;
-    /// `clips` is added to that instrument's output. A track with no helper is
-    /// left idle so the caller keeps `source`. `events` and `chased_ons` are
-    /// this track's alone; the caller groups the block's events once.
+    /// `source` contains placed audio. `clips` is the placed audio alone,
+    /// with the children's bus on a parent. The first instrument ignores
+    /// `source` and receives notes; `clips` is added to that instrument's
+    /// output. `own`, when given, scales that instrument's output first. A track
+    /// with no helper is left idle so the caller keeps `source`. `events` and
+    /// `chased_ons` are this track's alone; the caller groups them once.
     pub(crate) fn submit(
         &mut self,
         key: u32,
@@ -920,27 +946,80 @@ impl HostGraph {
         clips: Signal<'_>,
         events: &[Event],
         chased_ons: &[Event],
-    ) -> bool {
+        own: Option<&[f32]>,
+    ) -> Submitted {
         let Some(track) = self.tracks.by_key_mut(key) else {
-            return false;
+            return Submitted::Unhosted;
         };
         track.heard = false;
         track.stage = 0;
         track.run = Run::Idle;
         track.fault = None;
         if track.stages.is_empty() || source.left.is_empty() {
-            return false;
+            return Submitted::Unhosted;
         }
         let frames = source.left.len();
         let report = &mut self.report;
         track.remember(report, events, chased_ons);
         track.arm_inject(clips, frames);
+        track.arm_own(own, frames);
         track.prepare_input(report, 0, source, frames);
         if !track.submit_stage(report, 0, frames) {
             track.miss(report, MISS_SUBMIT);
             track.frames = frames;
         }
-        true
+        if track.run == Run::Pending {
+            Submitted::Pending
+        } else {
+            Submitted::Done
+        }
+    }
+
+    /// The fan counter to pass to the first [`HostGraph::progress`] of a block.
+    pub(crate) fn fan_seen(&self) -> u64 {
+        self.fan.as_ref().map(|fan| fan.load()).unwrap_or(0)
+    }
+
+    /// Waits until a submitted track finishes its block or `deadline` passes.
+    ///
+    /// Each track whose block ends here, heard or missed, is pushed to
+    /// `finished` once. A helper that finished a stage is kept, and its next
+    /// stage is submitted and polled here. At the deadline every pending track
+    /// is abandoned and pushed. `seen` is the fan counter the caller last saw.
+    pub(crate) fn progress(
+        &mut self,
+        finished: &mut Vec<u32>,
+        seen: &mut u64,
+        deadline: Instant,
+    ) -> Progress {
+        loop {
+            self.poll_pass(Some(&mut *finished));
+            if !finished.is_empty() || !self.tracks.iter().any(|track| track.run == Run::Pending) {
+                return Progress::Finished;
+            }
+            if Instant::now() >= deadline {
+                self.abandon_pending(Some(finished));
+                return Progress::Late;
+            }
+            let Some(fan) = &self.fan else {
+                self.abandon_pending(Some(finished));
+                return Progress::Late;
+            };
+            let _ = fan.wait_until(*seen, deadline);
+            *seen = fan.load();
+        }
+    }
+
+    /// Gives up on a track submitted after the block's deadline (ADR 0338).
+    /// Its helper still receives the events, so no note is lost, but the
+    /// block is missed like any other late answer.
+    pub(crate) fn abandon_track(&mut self, key: u32) {
+        let report = &mut self.report;
+        if let Some(track) = self.tracks.by_key_mut(key)
+            && track.run == Run::Pending
+        {
+            track.abandon(report);
+        }
     }
 
     /// Collects every track submitted for this callback.
@@ -950,42 +1029,53 @@ impl HostGraph {
     /// is kept, and its next stage is submitted and polled in this same collect.
     /// Leaving that stage pending would keep the dry track audio.
     pub(crate) fn collect(&mut self, deadline: Instant) {
-        let mut seen = self.fan.as_ref().map(|fan| fan.load()).unwrap_or(0);
+        let mut seen = self.fan_seen();
         loop {
-            for track in self.tracks.iter_mut() {
-                if track.run != Run::Pending {
-                    continue;
-                }
-                match track.poll() {
-                    Poll::Ready => track.advance(&mut self.report),
-                    Poll::Failed(reason) => {
-                        if let Some(stage) = track.stages.get_mut(track.stage)
-                            && stage.chase_pending
-                        {
-                            stage.chase_pending = false;
-                            stage.needs_restart = true;
-                            stage.instance.restart.store(true, Ordering::Release);
-                        }
-                        track.miss(&mut self.report, reason);
-                    }
-                    Poll::Pending => {}
-                }
-            }
+            self.poll_pass(None);
             // `advance` may have submitted the next stage. That stage is pending
             // even though this pass did not observe it waiting.
             if !self.tracks.iter().any(|track| track.run == Run::Pending) {
                 return;
             }
             if Instant::now() >= deadline {
-                self.abandon_pending();
+                self.abandon_pending(None);
                 return;
             }
             let Some(fan) = &self.fan else {
-                self.abandon_pending();
+                self.abandon_pending(None);
                 return;
             };
             let _ = fan.wait_until(seen, deadline);
             seen = fan.load();
+        }
+    }
+
+    /// Polls every pending track once. A track whose block ended in this pass
+    /// is pushed to `finished`, when given.
+    fn poll_pass(&mut self, mut finished: Option<&mut Vec<u32>>) {
+        for track in self.tracks.iter_mut() {
+            if track.run != Run::Pending {
+                continue;
+            }
+            match track.poll() {
+                Poll::Ready => track.advance(&mut self.report),
+                Poll::Failed(reason) => {
+                    if let Some(stage) = track.stages.get_mut(track.stage)
+                        && stage.chase_pending
+                    {
+                        stage.chase_pending = false;
+                        stage.needs_restart = true;
+                        stage.instance.restart.store(true, Ordering::Release);
+                    }
+                    track.miss(&mut self.report, reason);
+                }
+                Poll::Pending => continue,
+            }
+            if track.run != Run::Pending
+                && let Some(finished) = finished.as_deref_mut()
+            {
+                push_finished(finished, track.key, &mut self.report);
+            }
         }
     }
 
@@ -1073,23 +1163,27 @@ impl HostGraph {
         }
     }
 
-    fn abandon_pending(&mut self) {
+    fn abandon_pending(&mut self, mut finished: Option<&mut Vec<u32>>) {
         for track in self.tracks.iter_mut() {
             if track.run != Run::Pending {
                 continue;
             }
-            // A plugin that already refused or exited is not a deadline miss,
-            // even when this callback has used up its block time.
-            if let Poll::Failed(reason) = track.poll() {
-                track.miss(&mut self.report, reason);
-                continue;
+            track.abandon(&mut self.report);
+            if let Some(finished) = finished.as_deref_mut() {
+                push_finished(finished, track.key, &mut self.report);
             }
-            let generation = track.generation;
-            if let Some(stage) = track.stages.get_mut(track.stage) {
-                stage.host.abandon(generation);
-            }
-            track.miss(&mut self.report, MISS_DEADLINE);
         }
+    }
+}
+
+/// The caller reserves one place per planned track and clears the list
+/// before each pass, and a track ends once per block, so this never grows
+/// the vector. A full list is reported as lost events rather than allocating.
+fn push_finished(finished: &mut Vec<u32>, key: u32, report: &mut BlockReport) {
+    if finished.len() < finished.capacity() {
+        finished.push(key);
+    } else {
+        report.dropped_events = true;
     }
 }
 
@@ -1101,6 +1195,34 @@ impl TrackHost {
     fn miss(&mut self, report: &mut BlockReport, reason: u8) {
         report.note_miss(self.stages.get(self.stage), reason);
         self.run = Run::Missed;
+    }
+
+    /// Stops waiting for the stage in flight. A plugin that already refused
+    /// or exited is not a deadline miss, even after the block's time is up.
+    fn abandon(&mut self, report: &mut BlockReport) {
+        if let Poll::Failed(reason) = self.poll() {
+            self.miss(report, reason);
+            return;
+        }
+        let generation = self.generation;
+        if let Some(stage) = self.stages.get_mut(self.stage) {
+            stage.host.abandon(generation);
+        }
+        self.miss(report, MISS_DEADLINE);
+    }
+
+    /// Keeps this block's gains for the first instrument's own output.
+    fn arm_own(&mut self, gains: Option<&[f32]>, frames: usize) {
+        let instrument = self.stages.first().is_some_and(|stage| stage.instrument);
+        self.own_live = false;
+        let Some(gains) = gains.filter(|_| instrument) else {
+            return;
+        };
+        let frames = frames.min(self.own.len());
+        for (gain, source) in self.own.iter_mut().take(frames).zip(gains) {
+            *gain = *source;
+        }
+        self.own_live = true;
     }
 
     /// Polls the stage in flight. A stage that does not exist cannot answer.
@@ -1393,6 +1515,8 @@ impl TrackHost {
             inject_right,
             inject_stereo,
             inject_live,
+            own,
+            own_live,
             ..
         } = self;
         let Some(stage) = stages.get_mut(stage_index) else {
@@ -1402,6 +1526,9 @@ impl TrackHost {
             return;
         }
         let live = std::mem::replace(inject_live, false);
+        // The track's own instrument, before its clips and children join it.
+        let gate = std::mem::replace(own_live, false).then_some(own.as_slice());
+        let gain = |frame: usize| gate.map_or(1.0, |gate| gate.get(frame).copied().unwrap_or(1.0));
         if !stage.bypassed && !stage.promoted.is_empty() {
             let silence: &[f32] = &[];
             let source = if live {
@@ -1422,17 +1549,24 @@ impl TrackHost {
             let frames = bounded(promoted, frames);
             for (channel, plane) in promoted.iter_mut().enumerate() {
                 for (frame, sample) in plane.iter_mut().take(frames).enumerate() {
-                    let dry = mono.get(frame).copied().unwrap_or(0.0);
+                    let dry = mono.get(frame).copied().unwrap_or(0.0) * gain(frame);
                     *sample =
                         dry * std::f32::consts::FRAC_1_SQRT_2 + source.sample(channel, frame, true);
                 }
             }
             return;
         }
+        let output = stage.rendered_mut();
+        if gate.is_some() {
+            for plane in output.iter_mut() {
+                for (frame, sample) in plane.iter_mut().take(frames).enumerate() {
+                    *sample *= gain(frame);
+                }
+            }
+        }
         if !live {
             return;
         }
-        let output = stage.rendered_mut();
         let main = output.len();
         let frames = bounded(output, frames.min(inject.len()));
         let source = Signal {
@@ -1504,6 +1638,8 @@ fn track_host(
         inject_right: vec![0.0; frames],
         inject_stereo: false,
         inject_live: false,
+        own: vec![1.0; frames],
+        own_live: false,
         source_events: Vec::with_capacity(events.max(1)),
         chased_ons: Vec::with_capacity(chase.max(1)),
         chase_order: vec![0; chase.max(1)],

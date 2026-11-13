@@ -102,6 +102,7 @@
 
 - ステレオ・ループ・フェーダー補間: [ADR 0095](../decisions/0095-product-audio-buses-and-continuity.md)、[ADR 0108](../decisions/0108-phase1-loop-readiness.md)。
   モノの最初の音源をステレオの素材のトラックで等電力のステレオにする: [ADR 0337](../decisions/0337-mono-instrument-on-stereo-source.md)。
+  子の音を親トラックのバスへ通す・子から始める処理の順・親自身の音のゲート: [ADR 0338](../decisions/0338-folder-bus.md)（FCA-06）。
 - 再生準備の取消・排他グラフ・停止減衰・非ブロック後片付け: [ADR 0097](../decisions/0097-cancellable-retained-transport.md)、[ADR 0101](../decisions/0101-live-output-discontinuities.md)、[ADR 0102](../decisions/0102-exclusive-audio-graph.md)、[ADR 0103](../decisions/0103-live-stop-waveform.md)、[ADR 0104](../decisions/0104-stop-output-diagnostics.md)、[ADR 0105](../decisions/0105-nonblocking-stop-cleanup.md)。
 - 停止中のプラグイン処理・自然な余韻・編集時の全体暗転の解消: [ADR 0133](../decisions/0133-stopped-plugin-processing-and-edit-input.md)。
 - 実機計測の完走条件: [ADR 0096](../decisions/0096-measurement-completion.md)。

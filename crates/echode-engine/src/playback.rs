@@ -13,9 +13,10 @@ use echode_model::{Meter, Project};
 use echode_realtime::{Cursor, Event, Plan, Span, TempoIndex, sort_events};
 use rtrb::{Consumer, Producer, RingBuffer};
 
-use crate::mix::{FaderState, Signal};
+use crate::mix::{FaderState, GateRamp, Signal};
 use crate::plugins::{
-    ChainDevice, HostGraph, PluginRoute, PluginWorkgroup, TrackChain, collect_deadline,
+    ChainDevice, HostGraph, PluginRoute, PluginWorkgroup, Progress, Submitted, TrackChain,
+    collect_deadline,
 };
 use crate::realtime::ForbidAlloc;
 use crate::sequence::render_metronome_index_before;
@@ -33,7 +34,10 @@ mod preparation;
 use preparation::GraphPreparation;
 #[path = "playback_faders.rs"]
 mod faders;
-use faders::track_faders;
+use faders::{Routing, track_routing};
+#[path = "playback_bus.rs"]
+mod bus;
+use bus::Bus;
 /// Clock providers consume device frames. External synchronization may supply
 /// another provider without making the UI timer advance the transport.
 pub trait ClockSource: Send {
@@ -165,6 +169,14 @@ struct Track {
     plugin_declick: crate::PluginDeclick,
     fader: FaderState,
     base_fader: TrackFader,
+    /// Gate on the track's own placed audio and first instrument. Only a
+    /// parent that passes a soloed child closes it (ADR 0338).
+    own: GateRamp,
+    /// One gain per frame for that gate. Every track has one: a parent that
+    /// loses its children while gated still ramps its own audio back in.
+    own_gain: Vec<f32>,
+    /// `own_gain` holds this block's gains, so the source is gated.
+    own_gated: bool,
     meter: Arc<TrackMeter>,
     cache: Option<CachedTrack>,
     clips: Vec<StoredClip>,
@@ -251,6 +263,8 @@ fn window_sample(plane: &[f32], window: ClipWindow, index: usize) -> f32 {
 
 /// A ready device-output plane, before the track fader. The provider owns
 /// rendering/provenance/invalidation; the engine only selects and reads it.
+/// A track with children never reads one: its output depends on the
+/// children's bus, which a single plane cannot stand for (ADR 0338).
 #[derive(Clone, Debug)]
 pub struct CachedTrack {
     pub track: u128,
@@ -307,6 +321,12 @@ struct Prepared {
     loop_start: Option<i64>,
     loop_end: Option<i64>,
     demands: Vec<TrackEventDemand>,
+    /// Which tracks feed which bus, and this block's start order.
+    bus: Bus,
+    /// One bus's sum of its children's post-fader audio. One bus is summed
+    /// at a time, so every parent shares these.
+    bus_left: Vec<f64>,
+    bus_right: Vec<f64>,
     mix_left: Vec<f64>,
     mix_right: Vec<f64>,
     /// Set for the block once its post-fader peaks are stored. A callback
@@ -375,7 +395,8 @@ impl Prepared {
             )
             .ok_or(PlaybackError::Time)?;
         let tempo = crate::plan::tempo_index(project.tempo())?;
-        let faders = track_faders(project, &plan)?;
+        let Routing { gates, parents } = track_routing(project, &plan)?;
+        let bus = Bus::new(parents);
         // Group the clips once, in loaded order, rather than filtering per track.
         let mut placed = HashMap::<u128, Vec<StoredClip>>::new();
         for clip in loaded {
@@ -394,10 +415,12 @@ impl Prepared {
         let mut event_count = 1usize;
         let mut chase_count = 0usize;
         let mut demands = Vec::with_capacity(plan.tracks.len());
-        for (track, fader) in plan.tracks.iter().zip(faders) {
+        for (position, (track, gate)) in plan.tracks.iter().zip(gates).enumerate() {
             let mut clips = placed.remove(&track.track).unwrap_or_default();
             clips.sort_by_key(|clip| clip.start_sample);
-            let clip_stereo = clips.iter().any(|clip| clip.right.is_some());
+            // A parent's source includes its children's panned, stereo bus.
+            let parent = bus.has_children(position);
+            let clip_stereo = parent || clips.iter().any(|clip| clip.right.is_some());
             let demand = match ids.demand(track.track, loop_bounds, frames) {
                 Some((events, chase)) => TrackEventDemand {
                     key: track.track_key,
@@ -432,9 +455,16 @@ impl Prepared {
                 clip_stereo,
                 stereo: clip_stereo,
                 plugin_declick: crate::PluginDeclick::new(rate),
-                fader: FaderState::new(fader, rate),
-                base_fader: fader,
-                cache: sources.caches.get(&track.track).cloned(),
+                fader: FaderState::new(gate.fader, rate),
+                base_fader: gate.fader,
+                own: GateRamp::new(gate.own, rate),
+                own_gain: vec![1.0; frames],
+                own_gated: false,
+                cache: if parent {
+                    None
+                } else {
+                    sources.caches.get(&track.track).cloned()
+                },
                 clips,
             });
         }
@@ -479,6 +509,9 @@ impl Prepared {
             loop_start: loop_bounds.map(|(start, _)| start),
             loop_end: loop_bounds.map(|(_, end)| end),
             demands,
+            bus,
+            bus_left: vec![0.0; frames],
+            bus_right: vec![0.0; frames],
             mix_left: vec![0.0; frames],
             mix_right: vec![0.0; frames],
             meters_committed: false,
@@ -596,6 +629,7 @@ impl Prepared {
                 track.plugin_declick = old.plugin_declick;
                 if playing {
                     track.fader.carry(old.fader);
+                    track.own.carry(old.own);
                 }
             }
         }
@@ -706,127 +740,64 @@ impl Prepared {
         ) {
             return Err(PlaybackError::BufferTooSmall);
         }
-        for (position, track) in self.tracks.iter_mut().enumerate() {
-            let frames = left.len();
-            let Track {
-                key,
-                plane,
-                right,
-                clip_plane,
-                clip_right,
-                clip_stereo,
-                stereo,
-                clips,
-                cache,
-                ..
-            } = track;
-            let plane = plane
-                .get_mut(..frames)
-                .ok_or(PlaybackError::BufferTooSmall)?;
-            let clip_plane = clip_plane
-                .get_mut(..frames)
-                .ok_or(PlaybackError::BufferTooSmall)?;
-            let right = right
-                .get_mut(..frames)
-                .ok_or(PlaybackError::BufferTooSmall)?;
-            let clip_right = clip_right
-                .get_mut(..frames)
-                .ok_or(PlaybackError::BufferTooSmall)?;
-            plane.fill(0.0);
-            right.fill(0.0);
-            clip_plane.fill(0.0);
-            clip_right.fill(0.0);
-            if let Some(cache) = cache {
-                read_cached_track(cache, spans, plane, right, range)?;
-                fade_stopped_source(plane, right, range.source_fade, self.sample_rate);
-                *stereo = cache.right.is_some();
-                continue;
-            }
-            let filtered = track_events(&self.filtered, &self.event_ends, position)
-                .ok_or(PlaybackError::BufferTooSmall)?;
-            let chased = track_events(&self.chased_grouped, &self.chased_ends, position)
-                .ok_or(PlaybackError::BufferTooSmall)?;
-            add_stored_clips(
-                clips,
-                spans,
-                clip_plane,
-                clip_right,
-                *clip_stereo,
-                range,
-                self.sample_rate,
-            )?;
-            fade_stopped_source(clip_plane, clip_right, range.source_fade, self.sample_rate);
-            *stereo = *clip_stereo;
-            plane.copy_from_slice(clip_plane);
-            right.copy_from_slice(clip_right);
-            hosts.submit(
-                *key,
-                Signal {
-                    left: plane,
-                    right: stereo.then_some(&*right),
-                },
-                Signal {
-                    left: clip_plane,
-                    right: clip_stereo.then_some(&*clip_right),
-                },
-                filtered,
-                chased,
-            );
+        let frames = left.len();
+        let rate = self.sample_rate;
+        for track in &mut self.tracks {
+            track.prepare_source(spans, range, rate, frames)?;
         }
-        if hosts.dropped_events() {
-            return Err(PlaybackError::BufferTooSmall);
-        }
-        hosts.collect(collect_deadline(deadline, left.len(), self.sample_rate));
         // One store after the block, including plugin completion. A decay written
         // before this point is what the UI samples for the whole callback.
         self.meters_committed = true;
-        let mix_left = self
-            .mix_left
-            .get_mut(..left.len())
+        let Prepared {
+            tracks,
+            bus,
+            filtered,
+            event_ends,
+            chased_grouped,
+            chased_ends,
+            track_indices,
+            bus_left,
+            bus_right,
+            mix_left,
+            mix_right,
+            ..
+        } = self;
+        let mut block = Block {
+            tracks,
+            bus,
+            hosts: &mut *hosts,
+            events: filtered,
+            event_ends,
+            chased: chased_grouped,
+            chased_ends,
+            bus_left,
+            bus_right,
+            spans,
+            range,
+            frames,
+            late: false,
+            running: 0,
+        };
+        block.run(track_indices, collect_deadline(deadline, frames, rate))?;
+        let mix_left = mix_left
+            .get_mut(..frames)
             .ok_or(PlaybackError::BufferTooSmall)?;
-        let mix_right = self
-            .mix_right
-            .get_mut(..right.len())
+        let mix_right = mix_right
+            .get_mut(..frames)
             .ok_or(PlaybackError::BufferTooSmall)?;
         mix_left.fill(0.0);
         mix_right.fill(0.0);
-        for track in &mut self.tracks {
-            let plane = track
-                .plane
-                .get_mut(..left.len())
-                .ok_or(PlaybackError::BufferTooSmall)?;
-            let track_right = track
-                .right
-                .get_mut(..right.len())
-                .ok_or(PlaybackError::BufferTooSmall)?;
-            if track.cache.is_none()
-                && let Some(applied) = hosts.apply(
-                    track.key,
-                    plane,
-                    track_right,
-                    &mut track.plugin_declick,
-                    track.meter.auto_muted(),
-                )
-            {
-                track.stereo = applied.stereo;
-                if let Some(fault) = applied.fault {
-                    track.meter.set_auto_mute(AutoMute {
-                        device: fault.device,
-                        at: block_sample(spans, range.started_before, fault.frame),
-                    });
-                }
-            } else {
-                track.plugin_declick.reset();
-            }
-            let peak = track.fader.add(
-                Signal {
-                    left: plane,
-                    right: track.stereo.then_some(&*track_right),
-                },
-                mix_left,
-                mix_right,
-            );
-            track.meter.publish(peak, range.meter_release);
+        // Top-level tracks in plan order: a project without folders sums
+        // exactly as it did before buses (ADR 0338).
+        let Block { tracks, bus, .. } = block;
+        for root in bus.roots() {
+            tracks
+                .get_mut(root)
+                .ok_or(PlaybackError::BufferTooSmall)?
+                .mix_into(mix_left, mix_right, frames, range.meter_release)?;
+        }
+        if hosts.dropped_events() {
+            return Err(PlaybackError::BufferTooSmall);
         }
         for ((left, right), (l, r)) in left
             .iter_mut()
@@ -891,6 +862,7 @@ impl Prepared {
                 },
                 filtered,
                 &[],
+                None,
             );
         }
         hosts.collect(collect_deadline(deadline, frames, self.sample_rate));
@@ -906,6 +878,343 @@ impl Prepared {
             return Err(PlaybackError::BufferTooSmall);
         }
         self.released = 0;
+        Ok(())
+    }
+}
+
+impl Track {
+    /// Clears the planes and writes the track's own audio for the block:
+    /// a cache into the output planes, or placed audio into the clip planes,
+    /// gated when the track only passes a soloed child (ADR 0338).
+    fn prepare_source(
+        &mut self,
+        spans: &[Span],
+        range: RenderRange,
+        rate: u32,
+        frames: usize,
+    ) -> Result<(), PlaybackError> {
+        let Track {
+            plane,
+            right,
+            clip_plane,
+            clip_right,
+            clip_stereo,
+            stereo,
+            clips,
+            cache,
+            own,
+            own_gain,
+            own_gated,
+            ..
+        } = self;
+        let plane = plane
+            .get_mut(..frames)
+            .ok_or(PlaybackError::BufferTooSmall)?;
+        let right = right
+            .get_mut(..frames)
+            .ok_or(PlaybackError::BufferTooSmall)?;
+        let clip_plane = clip_plane
+            .get_mut(..frames)
+            .ok_or(PlaybackError::BufferTooSmall)?;
+        let clip_right = clip_right
+            .get_mut(..frames)
+            .ok_or(PlaybackError::BufferTooSmall)?;
+        plane.fill(0.0);
+        right.fill(0.0);
+        clip_plane.fill(0.0);
+        clip_right.fill(0.0);
+        *own_gated = false;
+        if let Some(cache) = cache {
+            read_cached_track(cache, spans, plane, right, range)?;
+            fade_stopped_source(plane, right, range.source_fade, rate);
+            *stereo = cache.right.is_some();
+            return Ok(());
+        }
+        add_stored_clips(
+            clips,
+            spans,
+            clip_plane,
+            clip_right,
+            *clip_stereo,
+            range,
+            rate,
+        )?;
+        fade_stopped_source(clip_plane, clip_right, range.source_fade, rate);
+        *stereo = *clip_stereo;
+        if let Some(gains) = own_gain.get_mut(..frames)
+            && own.fill(gains)
+        {
+            *own_gated = true;
+            for ((left, right), gain) in clip_plane.iter_mut().zip(clip_right).zip(gains) {
+                *left *= *gain;
+                *right *= *gain;
+            }
+        }
+        Ok(())
+    }
+
+    /// Adds this track's block through its fader and publishes its meter.
+    /// Called once per block, by the parent's bus or by the master.
+    fn mix_into(
+        &mut self,
+        left: &mut [f64],
+        right: &mut [f64],
+        frames: usize,
+        release: f32,
+    ) -> Result<(), PlaybackError> {
+        let plane = self
+            .plane
+            .get(..frames)
+            .ok_or(PlaybackError::BufferTooSmall)?;
+        let plane_right = self
+            .right
+            .get(..frames)
+            .ok_or(PlaybackError::BufferTooSmall)?;
+        let peak = self.fader.add(
+            Signal {
+                left: plane,
+                right: self.stereo.then_some(plane_right),
+            },
+            left,
+            right,
+        );
+        self.meter.publish(peak, release);
+        Ok(())
+    }
+}
+
+/// One block's tracks, started children first (ADR 0338).
+///
+/// Every track without children starts at once, so every helper runs in
+/// parallel as before. A parent starts when its last child has its output:
+/// its children's post-fader sum joins its clips, then its own chain runs.
+/// After the deadline a parent is still submitted, so its helper hears the
+/// block's events, and then abandoned like any late helper.
+struct Block<'a> {
+    tracks: &'a mut [Track],
+    bus: &'a mut Bus,
+    hosts: &'a mut HostGraph,
+    events: &'a [Event],
+    event_ends: &'a [usize],
+    chased: &'a [Event],
+    chased_ends: &'a [usize],
+    bus_left: &'a mut [f64],
+    bus_right: &'a mut [f64],
+    spans: &'a [Span],
+    range: RenderRange,
+    frames: usize,
+    late: bool,
+    running: usize,
+}
+
+impl Block<'_> {
+    fn run(&mut self, indices: &[(u32, usize)], deadline: Instant) -> Result<(), PlaybackError> {
+        self.bus.begin();
+        for position in 0..self.tracks.len() {
+            if !self.bus.has_children(position) {
+                self.start(position)?;
+            }
+        }
+        self.start_ready()?;
+        let mut seen = self.hosts.fan_seen();
+        while self.running > 0 {
+            self.bus.finished.clear();
+            if self
+                .hosts
+                .progress(&mut self.bus.finished, &mut seen, deadline)
+                == Progress::Late
+            {
+                self.late = true;
+            }
+            if self.bus.finished.is_empty() {
+                // Nothing was pending although a track was counted as running.
+                break;
+            }
+            let mut index = 0;
+            while let Some(&key) = self.bus.finished.get(index) {
+                index += 1;
+                let Some(position) = indices
+                    .binary_search_by_key(&key, |entry| entry.0)
+                    .ok()
+                    .and_then(|found| indices.get(found))
+                    .map(|entry| entry.1)
+                else {
+                    continue;
+                };
+                self.running = self.running.saturating_sub(1);
+                self.finish(position)?;
+            }
+            self.start_ready()?;
+        }
+        if self.running != 0 || !self.bus.complete() {
+            return Err(PlaybackError::BufferTooSmall);
+        }
+        Ok(())
+    }
+
+    fn start_ready(&mut self) -> Result<(), PlaybackError> {
+        while let Some(position) = self.bus.next_ready() {
+            self.start(position)?;
+        }
+        Ok(())
+    }
+
+    fn start(&mut self, position: usize) -> Result<(), PlaybackError> {
+        self.bus.note_started();
+        if self.bus.has_children(position) {
+            self.sum_children(position)?;
+        }
+        let frames = self.frames;
+        let track = self
+            .tracks
+            .get_mut(position)
+            .ok_or(PlaybackError::BufferTooSmall)?;
+        let submitted = if track.cache.is_some() {
+            Submitted::Unhosted
+        } else {
+            let Track {
+                key,
+                plane,
+                right,
+                clip_plane,
+                clip_right,
+                clip_stereo,
+                stereo,
+                own_gain,
+                own_gated,
+                ..
+            } = track;
+            let plane = plane
+                .get_mut(..frames)
+                .ok_or(PlaybackError::BufferTooSmall)?;
+            let right = right
+                .get_mut(..frames)
+                .ok_or(PlaybackError::BufferTooSmall)?;
+            let clip_plane = clip_plane
+                .get(..frames)
+                .ok_or(PlaybackError::BufferTooSmall)?;
+            let clip_right = clip_right
+                .get(..frames)
+                .ok_or(PlaybackError::BufferTooSmall)?;
+            plane.copy_from_slice(clip_plane);
+            right.copy_from_slice(clip_right);
+            *stereo = *clip_stereo;
+            let events = track_events(self.events, self.event_ends, position)
+                .ok_or(PlaybackError::BufferTooSmall)?;
+            let chased = track_events(self.chased, self.chased_ends, position)
+                .ok_or(PlaybackError::BufferTooSmall)?;
+            let own = if *own_gated {
+                own_gain.get(..frames)
+            } else {
+                None
+            };
+            let submitted = self.hosts.submit(
+                *key,
+                Signal {
+                    left: plane,
+                    right: stereo.then_some(&*right),
+                },
+                Signal {
+                    left: clip_plane,
+                    right: clip_stereo.then_some(clip_right),
+                },
+                events,
+                chased,
+                own,
+            );
+            if self.late && submitted == Submitted::Pending {
+                self.hosts.abandon_track(*key);
+                Submitted::Done
+            } else {
+                submitted
+            }
+        };
+        if submitted == Submitted::Pending {
+            self.running = self.running.saturating_add(1);
+            Ok(())
+        } else {
+            self.finish(position)
+        }
+    }
+
+    /// Adds each child's post-fader block to the parent's clip planes, in
+    /// plan order, and publishes the children's meters.
+    fn sum_children(&mut self, position: usize) -> Result<(), PlaybackError> {
+        let frames = self.frames;
+        let release = self.range.meter_release;
+        let sum_left = self
+            .bus_left
+            .get_mut(..frames)
+            .ok_or(PlaybackError::BufferTooSmall)?;
+        let sum_right = self
+            .bus_right
+            .get_mut(..frames)
+            .ok_or(PlaybackError::BufferTooSmall)?;
+        sum_left.fill(0.0);
+        sum_right.fill(0.0);
+        for child in self.bus.children_of(position) {
+            self.tracks
+                .get_mut(child)
+                .ok_or(PlaybackError::BufferTooSmall)?
+                .mix_into(sum_left, sum_right, frames, release)?;
+        }
+        let parent = self
+            .tracks
+            .get_mut(position)
+            .ok_or(PlaybackError::BufferTooSmall)?;
+        let clip_plane = parent
+            .clip_plane
+            .get_mut(..frames)
+            .ok_or(PlaybackError::BufferTooSmall)?;
+        let clip_right = parent
+            .clip_right
+            .get_mut(..frames)
+            .ok_or(PlaybackError::BufferTooSmall)?;
+        for (sample, sum) in clip_plane.iter_mut().zip(sum_left.iter()) {
+            *sample = finite_f32(f64::from(*sample) + *sum);
+        }
+        for (sample, sum) in clip_right.iter_mut().zip(sum_right.iter()) {
+            *sample = finite_f32(f64::from(*sample) + *sum);
+        }
+        Ok(())
+    }
+
+    /// Takes the track's helper output, or keeps its source, and lets its
+    /// parent start once every sibling is done.
+    fn finish(&mut self, position: usize) -> Result<(), PlaybackError> {
+        let frames = self.frames;
+        let track = self
+            .tracks
+            .get_mut(position)
+            .ok_or(PlaybackError::BufferTooSmall)?;
+        let plane = track
+            .plane
+            .get_mut(..frames)
+            .ok_or(PlaybackError::BufferTooSmall)?;
+        let track_right = track
+            .right
+            .get_mut(..frames)
+            .ok_or(PlaybackError::BufferTooSmall)?;
+        if track.cache.is_none()
+            && let Some(applied) = self.hosts.apply(
+                track.key,
+                plane,
+                track_right,
+                &mut track.plugin_declick,
+                track.meter.auto_muted(),
+            )
+        {
+            track.stereo = applied.stereo;
+            if let Some(fault) = applied.fault {
+                track.meter.set_auto_mute(AutoMute {
+                    device: fault.device,
+                    at: block_sample(self.spans, self.range.started_before, fault.frame),
+                });
+            }
+        } else {
+            track.plugin_declick.reset();
+        }
+        self.bus.finish(position);
         Ok(())
     }
 }

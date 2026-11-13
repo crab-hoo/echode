@@ -132,8 +132,8 @@ fn loudest(project: &Project, child: Id) -> f32 {
     peak
 }
 
-/// FCA-06: folder mute gates every descendant, and folder solo opens its subtree.
-/// Audio still mixes directly to master until folder buses arrive in P2-03.
+/// FCA-06: folder mute gates every descendant, folder solo opens its subtree,
+/// and the child's audio goes through the folder's fader (ADR 0338).
 #[test]
 fn audit_fca06_a_folder_mute_and_solo_reach_its_children() {
     let (project, folder) = Project::new().add_track("folder");
@@ -158,5 +158,13 @@ fn audit_fca06_a_folder_mute_and_solo_reach_its_children() {
     assert!(
         loudest(&soloed, child) > 0.1,
         "soloing the folder silenced its child"
+    );
+
+    let quieter = project
+        .set_parameter(mixer_parameter(&project, folder, ParamKey::Gain), 0.5)
+        .unwrap();
+    assert!(
+        (loudest(&quieter, child) * 2.0 - loudest(&project, child)).abs() < 1.0e-6,
+        "the folder's gain did not reach its child"
     );
 }

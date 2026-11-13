@@ -9,6 +9,8 @@
 mod clip_gain;
 #[path = "block_size/clip_window.rs"]
 mod clip_window;
+#[path = "block_size/folder_bus.rs"]
+mod folder_bus;
 #[path = "block_size/folder_mix.rs"]
 mod folder_mix;
 #[path = "block_size/master_guard.rs"]

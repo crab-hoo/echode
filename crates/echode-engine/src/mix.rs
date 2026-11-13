@@ -117,6 +117,68 @@ impl FaderState {
     }
 }
 
+/// A 0 or 1 gain that moves over the fader's 5 ms, for a track's own audio.
+///
+/// A parent that only passes a soloed child keeps its fader open and closes
+/// this, so its own placed audio and instrument fall silent while the child
+/// still goes through its effects and fader (ADR 0244, ADR 0338). It uses the
+/// same dasp interpolation and frame count as [`FaderState`].
+#[derive(Clone, Copy)]
+pub(crate) struct GateRamp {
+    current: [f32; 1],
+    start: [f32; 1],
+    target: [f32; 1],
+    elapsed: u32,
+    frames: u32,
+}
+
+impl GateRamp {
+    pub(crate) fn new(open: bool, rate: u32) -> Self {
+        let target = [if open { 1.0 } else { 0.0 }];
+        // The fader's frame count, so both ramps of a gated parent end together.
+        let frames = fader_ramp_frames(rate);
+        Self {
+            current: target,
+            start: target,
+            target,
+            elapsed: 0,
+            frames,
+        }
+    }
+
+    /// Continues `previous` toward this gate's target, like [`FaderState::carry`].
+    pub(crate) fn carry(&mut self, previous: Self) {
+        let target = self.target;
+        *self = previous;
+        if self.target != target {
+            self.start = self.current;
+            self.target = target;
+            self.elapsed = 0;
+        }
+    }
+
+    /// Writes one gain per frame and advances the ramp. Returns false, and
+    /// writes nothing, when every gain of the block is 1.
+    pub(crate) fn fill(&mut self, gains: &mut [f32]) -> bool {
+        if self.current == [1.0] && self.target == [1.0] {
+            return false;
+        }
+        for gain in gains {
+            if self.current != self.target {
+                self.elapsed = self.elapsed.saturating_add(1).min(self.frames);
+                self.current = if self.elapsed == self.frames {
+                    self.target
+                } else {
+                    Linear::new(self.start, self.target)
+                        .interpolate(f64::from(self.elapsed) / f64::from(self.frames))
+                };
+            }
+            *gain = self.current[0];
+        }
+        true
+    }
+}
+
 fn fader_ramp_frames(rate: u32) -> u32 {
     // Fader response is independent of the audio-clip loop seam policy.
     (u64::from(rate) * 5 / 1_000).max(1) as u32

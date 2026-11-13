@@ -1589,6 +1589,141 @@ fn a_mono_instrument_enters_a_stereo_source_at_equal_power_under_rtsan() {
     }
 }
 
+/// ADR 0338: a parent's chain processes its children's post-fader audio,
+/// its mono instrument is promoted beside them, and a parent that only passes
+/// a soloed child gates its own instrument but still runs the child through
+/// its effect.
+#[test]
+fn a_parent_chain_processes_its_children_under_rtsan() {
+    let half = std::f32::consts::FRAC_1_SQRT_2;
+    let mono = PluginRoute {
+        clap_id: "dev.echode.test-mono".into(),
+        path: plugin_dylib(),
+        instrument: true,
+        fault: None,
+        state: None,
+    };
+    let (folder, parent) = Project::new().add_track("folder");
+    let (folder, child) = folder.add_child(parent, "child").unwrap();
+    let effect_only = folder
+        .add_clap_device(parent, Id::generate(), "dev.echode.test-gain")
+        .unwrap();
+    let instrument = folder
+        .add_clap_device(parent, Id::generate(), "dev.echode.test-mono")
+        .unwrap()
+        .add_clap_device(parent, Id::generate(), "dev.echode.test-gain")
+        .unwrap();
+    let solo = {
+        let mixer = instrument
+            .tracks()
+            .iter()
+            .find(|track| track.id == child)
+            .unwrap()
+            .devices
+            .iter()
+            .find(|device| device.kind == echode_model::DeviceKind::Mixer)
+            .unwrap()
+            .parameters
+            .iter()
+            .find(|parameter| parameter.key == echode_model::ParamKey::Solo)
+            .unwrap()
+            .id;
+        instrument.set_parameter(mixer, 1.0).unwrap()
+    };
+    let cases = [
+        (effect_only, (0.25, -0.5)),
+        (
+            instrument,
+            ((0.25 * half + 0.125) * 2.0, (0.25 * half - 0.25) * 2.0),
+        ),
+        (solo, (0.25, -0.5)),
+    ];
+    for (project, (left, right)) in cases {
+        let block = 64; // This test's scratch size, not an engine limit.
+        let (mut control, mut audio) = playback_with_plugins(
+            &project,
+            48_000,
+            block,
+            &host_bin(),
+            &[mono.clone(), effect_route(&plugin_dylib())],
+        )
+        .unwrap();
+        control.set_clip_loader(stereo_clips(child.raw(), 0.125, -0.25));
+        control.replace(&project).unwrap();
+        control.command(PlaybackCommand::Play).unwrap();
+        let (mut heard_left, mut heard_right) = (vec![0.0; block], vec![0.0; block]);
+        for _ in 0..3 {
+            render_content(&mut audio, &mut heard_left, &mut heard_right);
+            assert!(!control.status().failed);
+            assert!(control.plugin_failure().is_none());
+            assert_close(&heard_left, &vec![left; block]);
+            assert_close(&heard_right, &vec![right; block]);
+            control.service();
+        }
+    }
+}
+
+/// A child whose helper hangs keeps its folder waiting only until the block's
+/// one deadline. The folder is then submitted late and abandoned, and a track
+/// outside the folder still plays (ADR 0338, AUD-07).
+#[test]
+fn a_hung_child_costs_its_folder_one_deadline_and_spares_other_tracks() {
+    let note = NoteDraft {
+        pitch: 64,
+        velocity: 100,
+        start: Tick::new(0),
+        length: Tick::quarters(2).unwrap(),
+    };
+    let (project, live) = Project::new().add_track("live");
+    let project = project.insert_note(live, note).unwrap().0;
+    let project = with_sine(project, live)
+        .add_clap_device(live, Id::from_raw(90), "dev.echode.test-gain")
+        .unwrap();
+    let (project, folder) = project.add_track("folder");
+    let (project, hung) = project.add_child(folder, "hung").unwrap();
+    let project = project
+        .add_clap_device(folder, Id::from_raw(91), "dev.echode.test-gain")
+        .unwrap()
+        .add_clap_device(hung, Id::from_raw(92), "dev.echode.test-gain")
+        .unwrap();
+    let path = plugin_dylib();
+    let mut routes = vec![effect_route(&path), effect_route(&path)];
+    routes.push(PluginRoute {
+        fault: Some("hang".into()),
+        ..effect_route(&path)
+    });
+    let (dry_project, dry_track) = Project::new().add_track("live");
+    let dry_project = with_sine(
+        dry_project.insert_note(dry_track, note).unwrap().0,
+        dry_track,
+    );
+    let dry = render(&dry_project, None, 2048, 1);
+    let expected: Vec<_> = dry.iter().map(|sample| sample * 2.0).collect();
+    assert!(expected.iter().any(|sample| *sample != 0.0));
+
+    let (mut control, mut audio) =
+        playback_with_plugins(&project, 48_000, 2048, &host_bin(), &routes).unwrap();
+    control.command(PlaybackCommand::Play).unwrap();
+    let (mut left, mut right) = (vec![0.0; 2048], vec![0.0; 2048]);
+    let started = Instant::now();
+    audio.render(&mut left, &mut right);
+    let elapsed = started.elapsed();
+    // One 42.7 ms block. Waiting again for the folder after the child's
+    // deadline would at least double it; 150 ms only separates the outcomes.
+    assert!(
+        elapsed < Duration::from_millis(150),
+        "the folder waited past the block: {elapsed:?}"
+    );
+    for (heard, expected) in left.iter().zip(&expected) {
+        assert!(
+            (heard - expected).abs() < 1.0e-4,
+            "{heard} != {expected}; the hung folder reached master or dropped the live track"
+        );
+    }
+    assert!(!control.status().failed);
+    assert!(control.status().plugin_missed_blocks > 0);
+}
+
 #[test]
 fn a_rejected_stereo_to_mono_mapping_preserves_the_sounding_helper() {
     let (project, track) = Project::new().add_track("mono effect");

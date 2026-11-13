@@ -1,4 +1,8 @@
 //! Folder gates are prepared off the callback, then use ordinary track ramps.
+//!
+//! A child reaches master through every ancestor's fader (ADR 0338), so a
+//! child's sample is its level times the gains along its path. Each fader
+//! that changes ramps linearly over 5 ms; nested changes multiply.
 use std::sync::Arc;
 
 use echode_engine::{
@@ -9,10 +13,12 @@ use echode_model::{DeviceKind, Id, ParamKey, Project};
 use super::BLOCKS;
 
 // Five tracks, these signal levels and this duration bound only this regression.
-const LEVELS: [f32; 5] = [1.0 / 64.0, 2.0 / 64.0, 4.0 / 64.0, 8.0 / 64.0, 16.0 / 64.0];
-const SECTION: usize = 1027;
+pub(super) const LEVELS: [f32; 5] = [1.0 / 64.0, 2.0 / 64.0, 4.0 / 64.0, 8.0 / 64.0, 16.0 / 64.0];
+pub(super) const SECTION: usize = 1027;
+/// The fixture's parents: root, inner (root), leaf (inner), peer (root), outside.
+pub(super) const TREE: [Option<usize>; 5] = [None, Some(0), Some(1), Some(0), None];
 
-fn fixture() -> (Project, [Id; 5]) {
+pub(super) fn fixture() -> (Project, [Id; 5]) {
     let (project, root) = Project::new().add_track("folder");
     let (project, inner) = project.add_child(root, "nested folder").unwrap();
     let (project, leaf) = project.add_child(inner, "nested source").unwrap();
@@ -22,6 +28,10 @@ fn fixture() -> (Project, [Id; 5]) {
 }
 
 fn set(project: &Project, track: Id, key: ParamKey, value: bool) -> Project {
+    set_value(project, track, key, f32::from(value))
+}
+
+pub(super) fn set_value(project: &Project, track: Id, key: ParamKey, value: f32) -> Project {
     let parameter = project
         .tracks()
         .iter()
@@ -36,10 +46,10 @@ fn set(project: &Project, track: Id, key: ParamKey, value: bool) -> Project {
         .find(|parameter| parameter.key == key)
         .unwrap()
         .id;
-    project.set_parameter(parameter, f32::from(value)).unwrap()
+    project.set_parameter(parameter, value).unwrap()
 }
 
-fn clips(ids: [Id; 5], frames: usize) -> Vec<LoadedClip> {
+pub(super) fn clips(ids: [Id; 5], frames: usize) -> Vec<LoadedClip> {
     ids.into_iter()
         .zip(LEVELS)
         .map(|(track, level)| LoadedClip {
@@ -60,6 +70,57 @@ fn sum(audible: [bool; 5]) -> f32 {
         .into_iter()
         .zip(audible)
         .filter_map(|(level, audible)| audible.then_some(level))
+        .sum()
+}
+
+/// What a track's meter shows at rest: every heard level on its bus. A track
+/// whose fader is closed has nothing heard below it.
+fn bus_sum(audible: [bool; 5], track: usize) -> f32 {
+    (0..5)
+        .filter(|&source| {
+            let mut at = Some(source);
+            while let Some(current) = at {
+                if current == track {
+                    return audible[source];
+                }
+                at = TREE[current];
+            }
+            false
+        })
+        .map(|source| LEVELS[source])
+        .sum()
+}
+
+/// One fixture state: each track's parent, fader gain, whether its fader is
+/// open, and whether its own audio is heard.
+#[derive(Clone, Copy)]
+pub(super) struct State {
+    pub(super) parents: [Option<usize>; 5],
+    pub(super) gains: [f32; 5],
+    pub(super) open: [bool; 5],
+    pub(super) own: [bool; 5],
+}
+
+/// The left sample `fraction` of the way through the 5 ms ramps from
+/// `before` to `after`, built from each track's level and the gates on its
+/// path, independently of the engine's bus code.
+pub(super) fn ramped(before: State, after: State, fraction: f64) -> f64 {
+    let lerp = |from: bool, to: bool| {
+        let (from, to) = (f64::from(u8::from(from)), f64::from(u8::from(to)));
+        from + (to - from) * fraction
+    };
+    (0..5)
+        .map(|source| {
+            let mut sample =
+                f64::from(LEVELS[source]) * lerp(before.own[source], after.own[source]);
+            let mut at = Some(source);
+            while let Some(track) = at {
+                sample *=
+                    f64::from(after.gains[track]) * lerp(before.open[track], after.open[track]);
+                at = after.parents[track];
+            }
+            sample
+        })
         .sum()
 }
 
@@ -119,13 +180,13 @@ fn nested_folder_gates_match_offline_audio_and_post_fader_meters_under_rtsan() {
                         heard.extend_from_slice(&[left, right]);
                     }
                 }
-                for ((id, level), audible) in ids.into_iter().zip(LEVELS).zip(audible) {
+                for (index, id) in ids.into_iter().enumerate() {
                     let meter = control
                         .meters()
                         .into_iter()
                         .find(|meter| meter.track == id.raw())
                         .unwrap();
-                    assert_eq!(meter.peak(), if audible { level } else { 0.0 });
+                    assert_eq!(meter.peak(), bus_sum(audible, index), "track {index}");
                 }
                 let mut offline = Vec::new();
                 render_offline_blocks_with_clips(
@@ -154,17 +215,33 @@ fn live_folder_edits_and_reparenting_ramp_independently_of_block_size_under_rtsa
     let nested_mute = set(&solo, inner, ParamKey::Mute, true);
     let detached = solo.set_parent(leaf, None).unwrap();
     let restored = detached.set_parent(leaf, Some(inner)).unwrap();
+    let state = |parents, open| State {
+        parents,
+        gains: [1.0; 5],
+        open,
+        own: [true; 5],
+    };
+    // A fader closes when its own path is silent, so a muted folder closes its
+    // children too, and their audio fades through both ramps at once.
     let cases = [
-        (project.clone(), [true; 5]),
+        (project.clone(), state(TREE, [true; 5])),
         (
             set(&project, root, ParamKey::Mute, true),
-            [false, false, false, false, true],
+            state(TREE, [false, false, false, false, true]),
         ),
-        (solo, [true, true, true, true, false]),
-        (nested_mute, [true, false, false, true, false]),
-        (detached, [true, true, false, true, false]),
-        (restored, [true, true, true, true, false]),
-        (project, [true; 5]),
+        (solo, state(TREE, [true, true, true, true, false])),
+        (nested_mute, state(TREE, [true, false, false, true, false])),
+        // The detached leaf is a top-level track outside the solo. Its fader
+        // was already closed under the muted folder, so it never plays alone.
+        (
+            detached,
+            state(
+                [None, Some(0), None, Some(0), None],
+                [true, true, false, true, false],
+            ),
+        ),
+        (restored, state(TREE, [true, true, true, true, false])),
+        (project, state(TREE, [true; 5])),
     ];
     let loaded = clips(ids, SECTION * cases.len());
     for rate in [48_000, 96_000] {
@@ -184,12 +261,11 @@ fn live_folder_edits_and_reparenting_ramp_independently_of_block_size_under_rtsa
             let mut left = vec![0.0; block as usize];
             let mut right = left.clone();
             let mut heard = Vec::new();
-            let mut previous = sum(cases[0].1);
-            for (index, (case, audible)) in cases.iter().enumerate() {
+            let mut previous = cases[0].1;
+            for (index, (case, target)) in cases.iter().enumerate() {
                 if index != 0 {
                     control.replace(case).unwrap();
                 }
-                let target = sum(*audible);
                 for offset in (0..SECTION).step_by(block as usize) {
                     let count = (block as usize).min(SECTION - offset);
                     audio.render(&mut left[..count], &mut right[..count]);
@@ -197,10 +273,10 @@ fn live_folder_edits_and_reparenting_ramp_independently_of_block_size_under_rtsa
                     for (frame, (&left, &right)) in left.iter().zip(&right).take(count).enumerate()
                     {
                         let ramp = rate as usize * 5 / 1000;
-                        let fraction = ((offset + frame + 1) as f32 / ramp as f32).min(1.0);
-                        let expected = previous + (target - previous) * fraction;
+                        let fraction = ((offset + frame + 1) as f64 / ramp as f64).min(1.0);
+                        let expected = ramped(previous, *target, fraction);
                         assert!(
-                            (left - expected).abs() < 1.0e-7,
+                            (f64::from(left) - expected).abs() < 1.0e-6,
                             "section {index}, frame {}, block {block}: {left} != {expected}",
                             offset + frame
                         );
@@ -208,7 +284,7 @@ fn live_folder_edits_and_reparenting_ramp_independently_of_block_size_under_rtsa
                         heard.push((left, right));
                     }
                 }
-                previous = target;
+                previous = *target;
             }
             assert!(!control.status().failed);
             if let Some(reference) = &reference {
