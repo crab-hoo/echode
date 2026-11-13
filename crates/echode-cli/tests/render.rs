@@ -795,6 +795,68 @@ fn a_compensated_export_starts_every_track_at_the_projects_start() {
     let _ = std::fs::remove_dir_all(&directory);
 }
 
+/// PCA-01: a helper that restarts with another latency during an export is
+/// followed by a new plan, but the export keeps the frames it decided to drop
+/// before the restart. Everything after the restart then lands late by the
+/// difference, here 48 - 16 = 32 frames.
+#[test]
+#[ignore = "PCA-01: an export does not follow a latency that changes while it renders"]
+fn audit_pca01_an_export_stays_aligned_when_a_plugin_restarts_with_another_latency() {
+    let _lock = PLUGIN_ENV.lock().unwrap();
+    let directory = scratch();
+    std::fs::create_dir_all(&directory).unwrap();
+    let _env = PluginEnv::set(&directory.join("clap-scan.jsonl"));
+    write_plugin_cache(&directory.join("clap-scan.jsonl"), &plugin_dylib());
+    // Two seconds, so the restart is long over before the frames checked below.
+    let frames = 96_000usize;
+    let ramp = |frame: usize| 0.25 * frame as f32 / frames as f32;
+    let source = directory.join("ramp.wav");
+    let interleaved: Vec<f32> = (0..frames)
+        .flat_map(|frame| [ramp(frame), ramp(frame)])
+        .collect();
+    write_wav(&source, 48_000, &interleaved).unwrap();
+    let stored = echode_history::import_audio(&directory, &source).unwrap();
+    let audio = echode_model::AudioRef::try_new(
+        stored.hash,
+        stored.sample_rate,
+        stored.channels,
+        stored.frames,
+    )
+    .unwrap();
+    let (project, delayed) = Project::new().add_track("delayed");
+    let (project, dry) = project.add_track("dry");
+    let (first, second) = (Id::generate(), Id::generate());
+    let project = project
+        .place_audio(delayed, first, Id::generate(), Tick::new(0), audio.clone())
+        .unwrap()
+        .set_clip_fades(first, 0, 0)
+        .unwrap()
+        .place_audio(dry, second, Id::generate(), Tick::new(0), audio)
+        .unwrap()
+        .set_clip_fades(second, 0, 0)
+        .unwrap()
+        .add_clap_device(delayed, Id::from_raw(52), "dev.echode.test-gain")
+        .unwrap();
+    write_package(&directory, &project).unwrap();
+    // Reports 16 frames, asks for a restart after its first block, then
+    // delays and reports 48.
+    let _fault = FaultFile::set("dev.echode.test-gain", "delay:16:48");
+    let wav = output_path("restarted-latency.wav");
+    render_to_wav(&directory, &wav, 48_000, Some(frames as u32)).unwrap();
+    let exported = wav_lefts(&wav, frames);
+    for frame in [frames - 4_800, frames - 1] {
+        let heard = exported[frame];
+        let expected = 2.0 * ramp(frame);
+        assert!(
+            (heard - expected).abs() < 1.0e-5,
+            "frame {frame}: heard {heard}, expected {expected}, \
+             32 frames late would be {}",
+            2.0 * ramp(frame - 32)
+        );
+    }
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
 #[test]
 fn audit_pro07_a_failed_plugin_does_not_leave_a_finished_wav() {
     let _lock = PLUGIN_ENV.lock().unwrap();
