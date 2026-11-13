@@ -29,6 +29,8 @@ mod event_capacity;
 mod latency;
 #[path = "hosted_playback/note_edges.rs"]
 mod note_edges;
+#[path = "hosted_playback/overflow.rs"]
+mod overflow;
 #[path = "hosted_playback/plugin_gui.rs"]
 mod plugin_gui;
 #[path = "hosted_playback/recorded_states.rs"]

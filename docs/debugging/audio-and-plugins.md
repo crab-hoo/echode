@@ -161,6 +161,10 @@ AudioToolbox の失敗は `MediaError` の操作別の変種で、`Property` は
 自動ミュートを確かめる（[ADR 0282](../decisions/0282-plugin-nan-and-master-auto-mute.md)）。
 `AudioState` の `auto_muted_tracks` は NaN・無限大を返した装置と標本、`master_auto_mute` は +18 dBFS を超えた値と標本を示す。
 再生の開始で解除し、そのトラックのプラグインをリセットする。書出しでは `plugin_failure` が `PluginBlockFailureReason::NonFinite` を返し、表示は `returned a NaN or an infinity` になる。
+記録がないのに無音の時は、有限の値の積か和が f32 を超えて 0 になった可能性がある（フェーダー、フォルダバス、マスター）。
+素材とプラグインの出力に 1e31 を超える値がないかを見る。再生し直しても親トラックが戻らない時は、PDC の遅延線に残った NaN を疑う。
+どちらも未修正で、再現は `audit_nfa*` にある（[監査](../reviews/2026-11-13-finite-overflow-audit.md)）。
+試験用プラグインの `huge` は有限の 2.0e38 を、`nan` は NaN を書く。
 
 ### 音源なしのノート・Sine Pad が鳴らない
 

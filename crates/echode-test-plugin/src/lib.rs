@@ -7,6 +7,7 @@
 //! a test releases it. The connection is created during activation, off RT.
 //! `ECHODE_TEST_FAULT=nan` writes 0.5, then NaN from frame 10 of its second
 //! block on, until a CLAP reset; afterwards it writes 0.5 again.
+//! `ECHODE_TEST_FAULT=huge` writes a finite 2.0e38 to every output.
 //! `ECHODE_TEST_FAULT=large-state` saves the state byte repeated
 //! [`LARGE_STATE`] times and loads only that shape, marking itself dirty.
 //! `ECHODE_TEST_FAULT=delay:<frames>` is a real delay that reports its length
@@ -248,6 +249,9 @@ enum Fault {
     LargeState,
     /// Delays its main audio by the latency it reports. See [`delay`].
     Delay,
+    /// Writes a finite 2.0e38 to every output: far too loud, but neither a
+    /// NaN nor an infinity.
+    Huge,
 }
 
 fn fault_code(text: &str) -> u8 {
@@ -270,6 +274,7 @@ fn fault_code(text: &str) -> u8 {
         "latency" => 16,
         "nan" => 17,
         "large-state" => 18,
+        "huge" => 20,
         _ if text.starts_with("delay:") => 19,
         _ => 0,
     }
@@ -296,6 +301,7 @@ fn fault_from_code(code: u8) -> Fault {
         17 => Fault::Nan,
         18 => Fault::LargeState,
         19 => Fault::Delay,
+        20 => Fault::Huge,
         _ => Fault::None,
     }
 }
@@ -683,6 +689,22 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
                             ChannelPair::OutputOnly(buffer) => buffer.fill(value),
                             ChannelPair::InputOutput(_, output) => output.fill(value),
                             ChannelPair::InPlace(buffer) => buffer.fill(value),
+                        }
+                    }
+                }
+                return Ok(ProcessStatus::Continue);
+            }
+            Fault::Huge => {
+                for mut port_pair in &mut audio {
+                    let Some(channel_pairs) = port_pair.channels()?.into_f32() else {
+                        continue;
+                    };
+                    for channel_pair in channel_pairs {
+                        match channel_pair {
+                            ChannelPair::InputOnly(_) => {}
+                            ChannelPair::OutputOnly(buffer)
+                            | ChannelPair::InputOutput(_, buffer)
+                            | ChannelPair::InPlace(buffer) => buffer.fill(2.0e38),
                         }
                     }
                 }

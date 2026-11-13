@@ -857,6 +857,49 @@ fn audit_pca01_an_export_stays_aligned_when_a_plugin_restarts_with_another_laten
     let _ = std::fs::remove_dir_all(&directory);
 }
 
+/// NFA-02, through the product path: a float file is imported because every
+/// sample is finite, here 2.0e38. Placed on two tracks, the master sum is
+/// not an `f32`, and the export succeeds with a silent file.
+#[test]
+#[ignore = "NFA-02: a master sum past f32::MAX is exported as silence"]
+fn audit_nfa02_an_export_of_an_imported_file_does_not_replace_its_overflow_with_silence() {
+    let directory = scratch();
+    std::fs::create_dir_all(&directory).unwrap();
+    // A tenth of a second bounds this regression only.
+    let frames = 4_800usize;
+    let source = directory.join("loud.wav");
+    write_wav(&source, 48_000, &vec![2.0e38f32; frames * 2]).unwrap();
+    let stored = echode_history::import_audio(&directory, &source).unwrap();
+    let audio = echode_model::AudioRef::try_new(
+        stored.hash,
+        stored.sample_rate,
+        stored.channels,
+        stored.frames,
+    )
+    .unwrap();
+    let (project, first) = Project::new().add_track("first");
+    let (project, second) = project.add_track("second");
+    let (one, two) = (Id::generate(), Id::generate());
+    let project = project
+        .place_audio(first, one, Id::generate(), Tick::new(0), audio.clone())
+        .unwrap()
+        .set_clip_fades(one, 0, 0)
+        .unwrap()
+        .place_audio(second, two, Id::generate(), Tick::new(0), audio)
+        .unwrap()
+        .set_clip_fades(two, 0, 0)
+        .unwrap();
+    write_package(&directory, &project).unwrap();
+    let wav = output_path("overflowed-master.wav");
+    let result = render_to_wav(&directory, &wav, 48_000, Some(frames as u32));
+    let silent = result.is_ok() && wav_lefts(&wav, frames).iter().all(|sample| *sample == 0.0);
+    let _ = std::fs::remove_dir_all(&directory);
+    assert!(
+        !silent,
+        "the export succeeded and every sample of the file is 0"
+    );
+}
+
 #[test]
 fn audit_pro07_a_failed_plugin_does_not_leave_a_finished_wav() {
     let _lock = PLUGIN_ENV.lock().unwrap();
