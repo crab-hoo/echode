@@ -282,6 +282,14 @@ Undo と Redo は段ごとに編集前の版を持ち、段数の上限はない
 警告または C ABI の `historyReport.recovery` の `tip`・`base`・`applied_seq` で、先端からの後退を確認する。
 `DocumentHost::recovered_label` は従来どおり、オープン時の基点と復旧済み連番を返す。
 先端が読めない原因は、オブジェクトの破損と、不変条件を破ったモデルのコミット（読込みで拒否される）を区別する。
+読めない Git 参照は `GitOperation::FindReference`、既存リポジトリを開けない時は `GitOperation::Open` と元の原因を返し、作業ツリーへ落ちずに拒否する。
+参照が無くても `.git/echode-commit-chain` が在れば `DocumentError::MissingAutosaveReference`、シンボリック参照なら `SymbolicAutosaveReference` で拒否する。
+`.git` や参照を削除して新規文書として開き直さない。
+原本を保全し、参照・チェーン・設定と残るオブジェクトをコピー上で照合する（[ADR 0350](../decisions/0350-unreadable-history-is-not-empty.md)）。
+`tests/audit_quality.rs` は、安全な拒否・ファイルのバイト保持・破損を戻した後の編集と履歴の保持を検査する。
+詳細な原因の Swift への伝達は IQA-03 が未対応で、Rust の拒否と画面の汎用エラーを区別する。
+プロセスロックの回帰の `the holder exited before it owned the package` は、子の終了コードと stderr でオープン失敗の原因を確認する。
+新規文書は復旧結果から初回保存の要否を決める。自動保存スレッドの起動後に未完成の Git を読み直さない。
 破損ジャーナルは `journal seq <連番> violates model invariants: <理由>` でオープンを拒否する（[ADR 0180](../decisions/0180-journal-replay-invariants.md)）。
 適用自体の失敗は `journal seq <連番> cannot apply changes: <理由>` と区別する。
 `tests/parameter_ownership.rs` は、未列挙のパラメーターを復元時に捨てる経路を調べ、適用後の不変条件検査だけでは発見できない消失を検査する。

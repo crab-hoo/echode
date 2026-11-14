@@ -143,16 +143,14 @@ impl Drop for Autosave {
 }
 
 fn open_or_init(directory: &Path) -> Result<Repository, PackageError> {
-    match gix::open(directory) {
-        Ok(repo) => Ok(repo),
-        Err(_) => {
-            gix::init(directory).map_err(|error| PackageError::git(GitOperation::Init, error))
-        }
+    match crate::document::open_repository(directory)? {
+        Some(repo) => Ok(repo),
+        None => gix::init(directory).map_err(|error| PackageError::git(GitOperation::Init, error)),
     }
 }
 
 /// The commit the next save builds on, as recovery found it.
-fn tip(directory: &Path) -> Option<ObjectId> {
+fn tip(directory: &Path) -> Result<Option<ObjectId>, PackageError> {
     crate::document::autosave_tip(directory)
 }
 
@@ -186,8 +184,12 @@ fn follow_chain(repo: &Repository, parent: Option<ObjectId>) -> Result<(), Packa
 }
 
 fn worker(directory: PathBuf, incoming: Receiver<Request>) {
-    let mut repo = match open_or_init(&directory) {
-        Ok(repo) => repo,
+    let initialized = open_or_init(&directory).and_then(|repo| {
+        let parents: Vec<_> = tip(&directory)?.into_iter().collect();
+        Ok((repo, parents))
+    });
+    let (mut repo, mut parents) = match initialized {
+        Ok(initialized) => initialized,
         Err(error) => {
             let error = error.into_shared();
             while let Ok(request) = incoming.recv() {
@@ -199,10 +201,6 @@ fn worker(directory: PathBuf, incoming: Receiver<Request>) {
             return;
         }
     };
-    let mut parents = Vec::new();
-    if let Some(id) = tip(&directory) {
-        parents.push(id);
-    }
     let mut cache = None;
     while let Ok(request) = incoming.recv() {
         match request {
@@ -250,7 +248,7 @@ fn worker(directory: PathBuf, incoming: Receiver<Request>) {
 }
 
 fn list_revisions(repo: &Repository, directory: &Path) -> Result<Vec<SavedRevision>, PackageError> {
-    let Some(mut current) = tip(directory) else {
+    let Some(mut current) = tip(directory)? else {
         return Ok(Vec::new());
     };
     let mut seen = HashSet::new();

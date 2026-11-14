@@ -11,6 +11,24 @@ use super::{AUTOSAVE_REF, assemble, commit_message, io_error, parse_header};
 use crate::error::{GitOperation, PackageError};
 use crate::package_io::Directory;
 
+/// A repository is new only when its metadata directory is absent. Preserve
+/// every error opening existing metadata instead of trying to initialize it.
+pub(crate) fn open_repository(
+    directory: &std::path::Path,
+) -> Result<Option<Repository>, PackageError> {
+    let root = Directory::open(directory).map_err(|error| io_error(directory, error))?;
+    if root
+        .optional_child(".git")
+        .map_err(|error| io_error(&directory.join(".git"), error))?
+        .is_none()
+    {
+        return Ok(None);
+    }
+    gix::open(directory)
+        .map(Some)
+        .map_err(|error| PackageError::git(GitOperation::Open, error))
+}
+
 pub(crate) fn read_commit(repo: &Repository, revision: ObjectId) -> Result<Project, PackageError> {
     let commit = repo
         .find_commit(revision)

@@ -13,6 +13,8 @@ pub enum DocumentError {
     Stopped,
     NoReadableCommit,
     UnfinishedWorktree,
+    MissingAutosaveReference,
+    SymbolicAutosaveReference,
     RecoveryConfirmationRequired(RecoveryNotice),
     RecoveryMismatch,
     InvalidRevision,
@@ -26,6 +28,12 @@ impl fmt::Display for DocumentError {
             Self::NoReadableCommit => f.write_str("no readable commit"),
             Self::UnfinishedWorktree => {
                 f.write_str("worktree save is unfinished and there is no commit")
+            }
+            Self::MissingAutosaveReference => {
+                f.write_str("autosave reference is missing but a commit chain exists; preserve the package before repairing its history")
+            }
+            Self::SymbolicAutosaveReference => {
+                f.write_str("autosave reference must name a commit, not another reference")
             }
             Self::RecoveryConfirmationRequired(notice) => {
                 f.write_str("recovery confirmation required: ")?;

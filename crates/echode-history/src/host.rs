@@ -15,7 +15,7 @@ use serde_json::{Map, Value};
 
 use crate::autosave::{Autosave, PendingAutosave, SavedRevision};
 use crate::document::{
-    PackageError, append_journal, autosave_tip, compact_journal, next_journal_seq, repair_journal,
+    PackageError, append_journal, compact_journal, next_journal_seq, repair_journal,
 };
 use crate::imports::StagedImports;
 
@@ -195,13 +195,16 @@ impl DocumentHost {
         let mut base_revision = recovered.base_revision;
         let applied_seq = recovered.applied_seq;
         let project = recovered.project;
+        let next_seq = next_journal_seq(&directory)?.max(applied_seq.saturating_add(1));
         let snapshot = Arc::new(Mutex::new(Arc::new(project.clone())));
         let autosave = Autosave::create(&directory)?;
         // A confirmed edit is journaled before it returns. The first autosave
         // can still die with `save.pending` and no tip, and then recover
         // refuses the worktree. Commit the recovered project first, so a later
         // kill always has a tip to replay onto. That new commit is the base.
-        if autosave_tip(&directory).is_none() {
+        // Recovery is authoritative. Probing the repository again here would
+        // race the autosave worker while it creates the initial Git metadata.
+        if base_revision.is_empty() {
             let id = autosave
                 .save(Arc::new(project.clone()), applied_seq)?
                 .wait()?;
@@ -215,13 +218,7 @@ impl DocumentHost {
             .name("echode-document".to_string())
             .spawn(move || {
                 worker(
-                    owned,
-                    project,
-                    autosave,
-                    published,
-                    incoming,
-                    pending,
-                    applied_seq,
+                    owned, project, autosave, published, incoming, pending, next_seq,
                 )
             })
             .map_err(PackageError::from)?;
@@ -452,12 +449,9 @@ fn worker(
     snapshot: Arc<Mutex<Arc<Project>>>,
     incoming: Receiver<Request>,
     recovery_pending: Arc<AtomicBool>,
-    applied_seq: u64,
+    mut next_seq: u64,
 ) {
     let mut session = Session::open(project);
-    let mut next_seq = next_journal_seq(&directory)
-        .unwrap_or(1)
-        .max(applied_seq.saturating_add(1));
     let mut inflight: Vec<(u64, PendingAutosave)> = Vec::new();
     let mut halted = false;
     while let Ok(request) = incoming.recv() {

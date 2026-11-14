@@ -32,7 +32,7 @@
   失われた編集は復元しない。警告の実画面・VoiceOver はユーザー確認待ち（UC-30）。
   消失済みの過去の完全ログ・画像は復元していない（[証拠の保全](evidence/README.md)）。
 - **プロジェクトの開始**: 前回プロジェクトの復元に失敗した後の実画面の操作はユーザー確認待ち（UC-31）。
-  最初に Git の初期化が失敗した理由は未確定である（[ADR 0121](decisions/0121-startup-recovery-and-errno-validation.md)）。
+  読めない Git の参照・設定は、原本を保って開くことを拒否する（[ADR 0350](decisions/0350-unreadable-history-is-not-empty.md)）。
 - **パッケージの浮動小数点の精度**: 既に丸められた保存値は復元しない（[ADR 0196](decisions/0196-lossless-package-floats.md)）。
 - **素材とキャッシュの Git 除外**: 任意の Git パターンの正規化はしない（[ADR 0031](decisions/0031-content-addressed-store.md#除外規則の行単位の照合2026-10-29)）。
 - **素材の回収**: 保管庫の掃除はなく、Undo や削除で参照が消えた素材は残る（[ADR 0272](decisions/0272-staged-import-media.md)）。

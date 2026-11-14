@@ -20,6 +20,11 @@ fn contract_failed_initial_autosave_returns_and_releases_the_package() {
     const CHILD: &str = "ECHODE_FAILED_INITIAL_AUTOSAVE";
     if let Some(directory) = std::env::var_os(CHILD) {
         let directory = std::path::PathBuf::from(directory);
+        // Exercise the autosave worker's failed-start shutdown even though the
+        // document now rejects invalid existing metadata before starting it.
+        let autosave = Autosave::create(&directory).unwrap();
+        assert!(autosave.revisions().is_err());
+        drop(autosave);
         let error = DocumentHost::open(&directory)
             .err()
             .expect("invalid Git metadata must fail");
@@ -205,7 +210,7 @@ fn audit_aud01_another_process_cannot_open_and_a_forced_exit_keeps_the_edit() {
         .arg("--nocapture")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
         .spawn()
         .unwrap();
     let mut stdout = child.stdout.take().unwrap();
@@ -213,7 +218,14 @@ fn audit_aud01_another_process_cannot_open_and_a_forced_exit_keeps_the_edit() {
     let mut buffer = [0u8; 64];
     while !seen.contains("holding") {
         let read = std::io::Read::read(&mut stdout, &mut buffer).unwrap();
-        assert!(read > 0, "the holder exited before it owned the package");
+        if read == 0 {
+            let output = child.wait_with_output().unwrap();
+            panic!(
+                "the holder exited before it owned the package: {}; {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
         seen.push_str(&String::from_utf8_lossy(&buffer[..read]));
     }
     let rejected = DocumentHost::open(&directory);

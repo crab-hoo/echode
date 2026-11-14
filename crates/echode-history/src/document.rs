@@ -15,7 +15,7 @@ use std::path::PathBuf;
 #[cfg(test)]
 use std::sync::Mutex;
 
-use crate::error::{DocumentError, JournalError};
+use crate::error::{DocumentError, GitOperation, JournalError};
 use crate::package_io::Directory;
 use echode_model::{ContentMetadata, Id, Project, ProjectMetadata, Track};
 use gix::ObjectId;
@@ -29,7 +29,7 @@ mod git;
 mod parse;
 #[path = "document_track.rs"]
 mod track_json;
-pub(crate) use git::{commit_tree, read_commit};
+pub(crate) use git::{commit_tree, open_repository, read_commit};
 use parse::{SCHEMA, assemble, parse_header};
 
 /// Autosave commits land here until a project has more than one alternate.
@@ -334,7 +334,7 @@ pub(crate) fn recover_labeled(directory: &Path) -> Result<Recovered, PackageErro
     open_package(directory)?;
     let records = read_log(directory)?;
     let pending = save_pending(directory);
-    let tip = autosave_tip(directory);
+    let tip = autosave_tip(directory)?;
     if let Some(id) = tip {
         let Some((commit, project, seq)) = first_readable_commit(directory, id)? else {
             return Err(PackageError::Document(DocumentError::NoReadableCommit));
@@ -700,23 +700,24 @@ pub(crate) fn next_journal_seq(directory: &Path) -> Result<u64, PackageError> {
         .map(|line| line.seq)
         .max()
         .unwrap_or(0);
-    Ok(disk.max(tip_journal_seq(directory)).saturating_add(1))
+    Ok(disk.max(tip_journal_seq(directory)?).saturating_add(1))
 }
 
-fn tip_journal_seq(directory: &Path) -> u64 {
-    let Some(id) = autosave_tip(directory) else {
-        return 0;
+fn tip_journal_seq(directory: &Path) -> Result<u64, PackageError> {
+    let Some(id) = autosave_tip(directory)? else {
+        return Ok(0);
     };
-    let Ok(repo) = gix::open(directory) else {
-        return 0;
-    };
+    let repo =
+        gix::open(directory).map_err(|error| PackageError::git(GitOperation::Open, error))?;
+    // Recovery can deliberately use an older readable commit and hold edits
+    // for consent. Its applied sequence is also a floor for the next number.
     let Ok(commit) = repo.find_commit(id) else {
-        return 0;
+        return Ok(0);
     };
     let Ok(message) = commit.message_raw() else {
-        return 0;
+        return Ok(0);
     };
-    journal_seq_of(&String::from_utf8_lossy(message))
+    Ok(journal_seq_of(&String::from_utf8_lossy(message)))
 }
 
 fn read_log(directory: &Path) -> Result<Vec<echode_actions::JournalLine>, PackageError> {
@@ -873,13 +874,38 @@ fn first_readable_commit(
 }
 
 /// The autosave tip: the ref, or a newer commit the chain records on top of
-/// it. Every commit syncs its chain line, while the ref's update can be lost
-/// with the drive's cache. Recovery then goes on from the newest commit
-/// instead of hiding it behind an older ref (XCA-02).
-pub(crate) fn autosave_tip(directory: &Path) -> Option<ObjectId> {
-    let repo = gix::open(directory).ok()?;
-    let reference = repo.try_find_reference(AUTOSAVE_REF).ok()??.id().detach();
-    Some(chained_descendant(directory, reference).unwrap_or(reference))
+/// it. An unreadable ref is not evidence of an unsaved package (IQA-01).
+/// Only an absent repository, or an absent ref without a chain, has no tip.
+pub(crate) fn autosave_tip(directory: &Path) -> Result<Option<ObjectId>, PackageError> {
+    let Some(repo) = open_repository(directory)? else {
+        return Ok(None);
+    };
+    let reference = repo
+        .try_find_reference(AUTOSAVE_REF)
+        .map_err(|error| PackageError::git(GitOperation::FindReference, error))?;
+    let Some(reference) = reference else {
+        let path = repo.git_dir().join("echode-commit-chain");
+        let git = Directory::open(repo.git_dir()).map_err(|error| io_error(&path, error))?;
+        if git
+            .has_file("echode-commit-chain")
+            .map_err(|error| io_error(&path, error))?
+        {
+            return Err(PackageError::Document(
+                DocumentError::MissingAutosaveReference,
+            ));
+        }
+        return Ok(None);
+    };
+    let reference = reference
+        .target()
+        .try_id()
+        .ok_or(PackageError::Document(
+            DocumentError::SymbolicAutosaveReference,
+        ))?
+        .to_owned();
+    Ok(Some(
+        chained_descendant(directory, reference).unwrap_or(reference),
+    ))
 }
 
 /// The chain's newest commit, when the chain leads from it back to `tip`.

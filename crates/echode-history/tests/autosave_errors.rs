@@ -60,7 +60,7 @@ fn save_replies_retain_the_storage_cause() {
 }
 
 #[test]
-fn initialization_failure_reaches_later_requests_with_its_git_cause() {
+fn repository_open_failure_reaches_later_requests_with_its_git_cause() {
     let fixture = Fixture::new();
     fs::create_dir(fixture.0.join(".git")).unwrap();
     fs::write(fixture.0.join(".git/config"), b"not a config").unwrap();
@@ -69,12 +69,12 @@ fn initialization_failure_reaches_later_requests_with_its_git_cause() {
         let error = autosave.revisions().unwrap_err();
         assert!(
             cause::<gix::Error>(&error).is_some(),
-            "autosave initialization lost its Git cause: {error:?}"
+            "autosave repository open lost its Git cause: {error:?}"
         );
         assert!(matches!(
             error.original(),
             PackageError::Git {
-                operation: GitOperation::Init,
+                operation: GitOperation::Open,
                 ..
             }
         ));
