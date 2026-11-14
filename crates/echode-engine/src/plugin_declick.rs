@@ -25,12 +25,44 @@ impl PluginDeclick {
         }
     }
 
-    /// Forget the previous helper when a track no longer has a hosted chain.
+    /// Forgets every previous block, as a new concealment would start.
     pub fn reset(&mut self) {
         self.last = [0.0; 2];
         self.from = [0.0; 2];
         self.remaining = 0;
         self.missed = false;
+    }
+
+    /// Plays the planes up to frame `silent`, concealing them if `missed`,
+    /// and fades out like a miss from there. The one rule for a track's fault
+    /// or auto-mute, with or without a helper (ADR 0282). `None` when
+    /// `silent` is past either plane.
+    pub(crate) fn conceal(
+        &mut self,
+        left: &mut [f32],
+        right: &mut [f32],
+        silent: usize,
+        missed: bool,
+    ) -> Option<()> {
+        let (left_heard, left_faded) = left.split_at_mut_checked(silent)?;
+        let (right_heard, right_faded) = right.split_at_mut_checked(silent)?;
+        self.process(left_heard, right_heard, missed);
+        self.process(left_faded, right_faded, true);
+        Some(())
+    }
+
+    /// Still faded out, or fading: the next heard block must cross back in.
+    pub(crate) fn concealing(&self) -> bool {
+        self.missed || self.remaining > 0
+    }
+
+    /// Remembers the last frame of planes heard as they are, as
+    /// [`Self::process`] would without a transition, so a fault in the next
+    /// block fades from the value last heard whatever the block length. O(1).
+    pub(crate) fn follow(&mut self, left: &[f32], right: &[f32]) {
+        if let (Some(left), Some(right)) = (left.last(), right.last()) {
+            self.last = [finite(*left), finite(*right)];
+        }
     }
 
     /// Process two equally sized output planes. Mono callers duplicate the plane.

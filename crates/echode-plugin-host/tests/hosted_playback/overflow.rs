@@ -144,6 +144,66 @@ fn audit_nfa05_an_instrument_is_not_blamed_for_the_sum_with_its_tracks_clip() {
     }
 }
 
+/// NFA-03 through a real helper: two children at 2.0e38 sum past their
+/// parent's `f32` bus from sample 11. The parent's first device, an effect or
+/// an instrument that the sum joins, never receives the infinity and is not
+/// blamed; the parent auto-mutes there without a device, and the export is
+/// refused naming it. Shapes and block lengths bound this test only.
+#[test]
+fn a_folder_bus_overflow_mutes_a_hosted_parent_without_blaming_its_devices() {
+    for (clap_id, instrument) in [
+        ("dev.echode.test-gain", false),
+        ("dev.echode.test-instrument", true),
+    ] {
+        for frames in [1, 7, FRAMES] {
+            let (project, folder) = Project::new().add_track("hosted folder");
+            let (project, first) = project.add_child(folder, "first").unwrap();
+            let (project, second) = project.add_child(folder, "second").unwrap();
+            let project = project
+                .add_clap_device(folder, Id::generate(), clap_id)
+                .unwrap();
+            let routes = [route(clap_id, instrument, None)];
+            let (mut control, mut audio) =
+                playback_with_plugins(&project, RATE, frames, &host_bin(), &routes).unwrap();
+            let clips: Vec<_> = [first, second]
+                .into_iter()
+                .map(|child| {
+                    let mut clip = constant(child, 2.0e38, 1.0);
+                    clip.start_sample = 11;
+                    clip
+                })
+                .collect();
+            control.set_clip_loader(Arc::new(move |_, _| Ok(clips.clone())));
+            control.replace(&project).unwrap();
+            control.command(PlaybackCommand::Play).unwrap();
+            let (mut left, mut right) = (vec![0.0; frames], vec![0.0; frames]);
+            for _ in 0..(512 / frames + 2) {
+                block(&mut audio, &mut left, &mut right);
+                control.service();
+                assert!(left.iter().chain(&right).all(|sample| sample.is_finite()));
+            }
+            let mute = auto_mute(&control, folder).expect("the folder's bus auto-mutes it");
+            assert_eq!(mute.device, None, "{clap_id}: a device was named");
+            assert_eq!(
+                mute.at, 11,
+                "{clap_id}: the fault depends on the block length"
+            );
+            assert_eq!(
+                control.render_failure(),
+                Some(echode_engine::RenderFailure::NonFiniteMix {
+                    track: folder.raw(),
+                    at: 11
+                })
+            );
+            assert!(control.plugin_failure().is_none(), "{clap_id} was blamed");
+            assert!(auto_mute(&control, first).is_none());
+            assert!(control.status().master_auto_mute.is_none());
+            assert!(!control.status().failed);
+            assert!(left.iter().chain(&right).all(|sample| *sample == 0.0));
+        }
+    }
+}
+
 /// NFA-04: the engine accepts a clip whose gain overflows its samples
 /// (`echode-audio-io` refuses it first). On a track whose first device is an
 /// effect, the infinity is that effect's input, and the effect is then named

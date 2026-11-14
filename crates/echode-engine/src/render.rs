@@ -63,6 +63,10 @@ pub fn render_span_frames(project: &Project, sample_rate: u32) -> Result<u32, Pl
 #[derive(Debug)]
 pub enum OfflineError<E> {
     Playback(PlaybackError),
+    /// The block could not be used, as [`crate::PlaybackControl::render_failure`]
+    /// reports it: a sum that is not a finite `f32` (NFA-02, NFA-03). The
+    /// block was not passed on.
+    Render(crate::RenderFailure),
     Write(E),
 }
 
@@ -70,6 +74,7 @@ impl<E: std::fmt::Display> std::fmt::Display for OfflineError<E> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Playback(error) => write!(formatter, "{error}"),
+            Self::Render(error) => write!(formatter, "{error}"),
             Self::Write(error) => write!(formatter, "{error}"),
         }
     }
@@ -102,6 +107,7 @@ pub fn render_offline(
     })
     .map_err(|error| match error {
         OfflineError::Playback(error) => error,
+        OfflineError::Render(error) => PlaybackError::Render(error),
         OfflineError::Write(error) => error,
     })
 }
@@ -174,6 +180,9 @@ pub fn render_offline_blocks_with_clips<E>(
         audio
             .render_checked(left, right, std::time::Instant::now())
             .map_err(OfflineError::Playback)?;
+        if let Some(failure) = control.render_failure() {
+            return Err(OfflineError::Render(failure));
+        }
         for (pair, (left, right)) in interleaved
             .chunks_exact_mut(2)
             .zip(left.iter().zip(&*right))

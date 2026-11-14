@@ -99,7 +99,8 @@ pub struct AudioState {
     /// Tracks muted after a non-finite device output or host mix. Not the
     /// tracks' own mute: starting playback clears it (ADR 0282).
     pub auto_muted_tracks: Vec<TrackAutoMute>,
-    /// The output muted the master because it ran past +18 dBFS (ADR 0282).
+    /// The output muted the master because it ran past +18 dBFS or its sum
+    /// was not a finite `f32` (ADR 0282, NFA-02).
     pub master_auto_mute: Option<MasterAutoMute>,
 }
 
@@ -116,9 +117,20 @@ pub struct TrackAutoMute {
 /// Why the output muted the master by itself.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct MasterAutoMute {
-    /// The first amplitude past the guard. `None` for a NaN.
+    /// The first amplitude past the guard. `None` for a NaN. A sum past the
+    /// `f32` range reads `f32::MAX`, as the track meter does: JSON has no
+    /// infinity, and `null` would claim a NaN.
     pub peak: Option<f32>,
     pub sample: i64,
+}
+
+impl MasterAutoMute {
+    fn reported(mute: echode_engine::MasterAutoMute) -> Self {
+        Self {
+            peak: (!mute.peak.is_nan()).then_some(mute.peak.min(f32::MAX)),
+            sample: mute.at,
+        }
+    }
 }
 
 /// A device view's way to its running plugin.
@@ -765,10 +777,7 @@ impl Session {
             }),
             master_auto_mute: status
                 .and_then(|status| status.master_auto_mute)
-                .map(|mute| MasterAutoMute {
-                    peak: (!mute.peak.is_nan()).then_some(mute.peak),
-                    sample: mute.at,
-                }),
+                .map(MasterAutoMute::reported),
         }
     }
 

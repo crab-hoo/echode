@@ -977,10 +977,12 @@ fn a_host_mix_overflow_refuses_export_without_blaming_a_plugin_or_replacing_the_
 }
 
 /// NFA-02, through the product path: a float file is imported because every
-/// sample is finite, here 2.0e38. Placed on two tracks, the master sum is
-/// not an `f32`, and the export succeeds with a silent file.
+/// sample is finite, here 2.0e38. Placed on two tracks, the master sum is not
+/// an `f32`. The export used to succeed with a silent file. NFA-08: the
+/// refusals of PCM and of normalization never saw the value either. Every
+/// format, normalized or not, now refuses it at its first sample with the
+/// same typed failure, and keeps the existing output.
 #[test]
-#[ignore = "NFA-02: a master sum past f32::MAX is exported as silence"]
 fn audit_nfa02_an_export_of_an_imported_file_does_not_replace_its_overflow_with_silence() {
     let directory = scratch();
     std::fs::create_dir_all(&directory).unwrap();
@@ -1010,13 +1012,41 @@ fn audit_nfa02_an_export_of_an_imported_file_does_not_replace_its_overflow_with_
         .unwrap();
     write_package(&directory, &project).unwrap();
     let wav = output_path("overflowed-master.wav");
-    let result = render_to_wav(&directory, &wav, 48_000, Some(frames as u32));
-    let silent = result.is_ok() && wav_lefts(&wav, frames).iter().all(|sample| *sample == 0.0);
+    let original = b"keep the existing output";
+    std::fs::write(&wav, original).unwrap();
+    let refused = |error: echode_cli::CliError, case: &str| {
+        assert!(
+            matches!(
+                error,
+                echode_cli::CliError::RenderBlock(echode_engine::RenderFailure::NonFiniteMaster {
+                    at: 0
+                })
+            ),
+            "{case}: unexpected export result: {error}"
+        );
+        assert!(error.to_string().contains("master: audio sum produced"));
+        assert_eq!(std::fs::read(&wav).unwrap(), original, "{case}");
+    };
+    let error = render_to_wav(&directory, &wav, 48_000, Some(frames as u32)).unwrap_err();
+    refused(error, "render_to_wav");
+    let length = frames.to_string();
+    for format in ["float32", "pcm16", "pcm24"] {
+        for normalize in [None, Some("-1")] {
+            let mut args = vec![
+                "render",
+                directory.to_str().unwrap(),
+                wav.to_str().unwrap(),
+                "--frames",
+                &length,
+                "--format",
+                format,
+            ];
+            args.extend(normalize.iter().flat_map(|db| ["--normalize-peak-db", db]));
+            let error = echode_cli::run(&args).unwrap_err();
+            refused(error, &format!("{format}, normalized to {normalize:?}"));
+        }
+    }
     let _ = std::fs::remove_dir_all(&directory);
-    assert!(
-        !silent,
-        "the export succeeded and every sample of the file is 0"
-    );
 }
 
 #[test]

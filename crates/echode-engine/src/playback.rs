@@ -15,8 +15,8 @@ use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::mix::{FaderState, GateRamp, Signal};
 use crate::plugins::{
-    BlockEvents, ChainDevice, HostGraph, PluginRoute, PluginWorkgroup, Progress, Submitted,
-    TrackChain, collect_deadline,
+    BlockEvents, ChainDevice, HostGraph, PluginRoute, PluginWorkgroup, Progress, StageFault,
+    Submitted, TrackChain, collect_deadline,
 };
 use crate::realtime::ForbidAlloc;
 use crate::sequence::render_metronome_index_before;
@@ -109,11 +109,14 @@ pub enum PlaybackCommand {
     },
 }
 
-/// Why a device output muted the master by itself (ADR 0282). Starting
-/// playback clears it. Offline rendering never sets it.
+/// Why the output muted the master by itself (ADR 0282). Starting playback
+/// clears it. A device output sets it past [`MASTER_GUARD_DBFS`]; offline
+/// rendering has no level limit and sets it only for a NaN or an infinity,
+/// which [`PlaybackControl::render_failure`] refuses (NFA-02).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MasterAutoMute {
-    /// The first sample past [`MASTER_GUARD_DBFS`], or a NaN.
+    /// The first sample past the limit: a level, a NaN, or an infinity where
+    /// the master's `f64` sum passed `f32::MAX`.
     pub peak: f32,
     /// Its sample: the block's start plus its frame. A loop within the block
     /// is not unwound; the value only tells the user where it happened.
@@ -184,6 +187,9 @@ struct Track {
     own_gain: Vec<f32>,
     /// `own_gain` holds this block's gains, so the source is gated.
     own_gated: bool,
+    /// The block frame from which this parent's children summed past what its
+    /// `f32` clip planes hold. Set before its chain runs, read when it ends.
+    bus_fault: Option<usize>,
     meter: Arc<TrackMeter>,
     cache: Option<CachedTrack>,
     clips: Vec<StoredClip>,
@@ -479,6 +485,7 @@ impl Prepared {
                 own: GateRamp::new(gate.own, rate),
                 own_gain: vec![1.0; frames],
                 own_gated: false,
+                bus_fault: None,
                 cache: if parent {
                     None
                 } else {
@@ -838,13 +845,15 @@ impl Prepared {
         if hosts.dropped_events() {
             return Err(PlaybackError::BufferTooSmall);
         }
+        // Narrowed as it is: a sum past `f32::MAX` becomes an infinity, which
+        // the master's guard mutes from that sample and an export refuses (NFA-02).
         for ((left, right), (l, r)) in left
             .iter_mut()
             .zip(right)
             .zip(mix_left.iter().zip(mix_right.iter()))
         {
-            *left = finite_f32(*l);
-            *right = finite_f32(*r);
+            *left = *l as f32;
+            *right = *r as f32;
         }
         self.plugin_holds |= range.started_before.is_none();
         Ok(())
@@ -959,6 +968,7 @@ impl Track {
             own,
             own_gain,
             own_gated,
+            bus_fault,
             source_delay,
             ..
         } = self;
@@ -979,6 +989,7 @@ impl Track {
         clip_plane.fill(0.0);
         clip_right.fill(0.0);
         *own_gated = false;
+        *bus_fault = None;
         if let Some(cache) = cache {
             read_cached_track(cache, spans, plane, right, range)?;
             fade_stopped_source(plane, right, range.source_fade, rate);
@@ -1206,6 +1217,11 @@ impl Block<'_> {
 
     /// Adds each child's post-fader block to the parent's clip planes, in
     /// plan order, and publishes the children's meters.
+    ///
+    /// The planes stay `f32`, the form the parent's plugins receive. A sum
+    /// that is not a finite `f32` is the parent's fault, by the rule the
+    /// master uses (NFA-03): the planes are 0 from that frame, so no plugin
+    /// receives it, and [`Self::finish`] auto-mutes the parent there.
     fn sum_children(&mut self, position: usize) -> Result<(), PlaybackError> {
         let frames = self.frames;
         let release = self.range.meter_release;
@@ -1238,10 +1254,19 @@ impl Block<'_> {
             .get_mut(..frames)
             .ok_or(PlaybackError::BufferTooSmall)?;
         for (sample, sum) in clip_plane.iter_mut().zip(sum_left.iter()) {
-            *sample = finite_f32(f64::from(*sample) + *sum);
+            *sample = (f64::from(*sample) + *sum) as f32;
         }
         for (sample, sum) in clip_right.iter_mut().zip(sum_right.iter()) {
-            *sample = finite_f32(f64::from(*sample) + *sum);
+            *sample = (f64::from(*sample) + *sum) as f32;
+        }
+        parent.bus_fault =
+            crate::output_guard::first_nonfinite(clip_plane, clip_right).map(|(frame, _)| frame);
+        if let Some(frame) = parent.bus_fault {
+            for plane in [clip_plane, clip_right] {
+                if let Some(rest) = plane.get_mut(frame..) {
+                    rest.fill(0.0);
+                }
+            }
         }
         Ok(())
     }
@@ -1262,24 +1287,42 @@ impl Block<'_> {
             .right
             .get_mut(..frames)
             .ok_or(PlaybackError::BufferTooSmall)?;
-        if track.cache.is_none()
+        let bus_fault = track.bus_fault.map(|frame| StageFault {
+            device: None,
+            frame,
+        });
+        // Heard up to here: none of an auto-muted track, a faulted bus up to its fault.
+        let heard = if track.meter.auto_muted() {
+            0
+        } else {
+            bus_fault.map_or(frames, |fault| fault.frame.min(frames))
+        };
+        let fault = if track.cache.is_none()
             && let Some(applied) = self.hosts.apply(
                 track.key,
                 plane,
                 track_right,
                 &mut track.plugin_declick,
-                track.meter.auto_muted(),
-            )
-        {
+                heard,
+            ) {
             track.stereo = applied.stereo;
-            if let Some(fault) = applied.fault {
-                track.meter.set_auto_mute(AutoMute {
-                    device: fault.device,
-                    at: block_sample(self.spans, self.range.started_before, fault.frame),
-                });
-            }
+            earliest(applied.fault, bus_fault)
+        } else if heard < frames || track.plugin_declick.concealing() {
+            // A track without a helper fades out and back in as a hosted one
+            // does: its fault can only be its bus's (NFA-03).
+            track
+                .plugin_declick
+                .conceal(plane, track_right, heard, false);
+            bus_fault
         } else {
-            track.plugin_declick.reset();
+            track.plugin_declick.follow(plane, track_right);
+            None
+        };
+        if let Some(fault) = fault {
+            track.meter.set_auto_mute(AutoMute {
+                device: fault.device,
+                at: block_sample(self.spans, self.range.started_before, fault.frame),
+            });
         }
         self.bus.finish(position);
         Ok(())
@@ -1333,6 +1376,15 @@ fn group_events(
     true
 }
 
+/// The first of a helper's fault and a bus's in the same block. A tie keeps
+/// the helper's, which can name a device.
+fn earliest(helper: Option<StageFault>, bus: Option<StageFault>) -> Option<StageFault> {
+    match (helper, bus) {
+        (Some(helper), Some(bus)) if bus.frame < helper.frame => Some(bus),
+        (helper, bus) => helper.or(bus),
+    }
+}
+
 /// The project sample of block frame `frame`: from the span that holds it
 /// while playing, or the held position while stopped.
 fn block_sample(spans: &[Span], held: Option<i64>, frame: usize) -> i64 {
@@ -1364,11 +1416,6 @@ fn fade_stopped_source(left: &mut [f32], right: &mut [f32], offset: Option<u32>,
         *left *= gain;
         *right *= gain;
     }
-}
-
-fn finite_f32(sample: f64) -> f32 {
-    let sample = sample as f32;
-    if sample.is_finite() { sample } else { 0.0 }
 }
 
 fn read_cached_track(
@@ -2732,8 +2779,9 @@ impl PlaybackControl {
         self.hosts.export_failure()
     }
 
-    /// A plugin failure or a non-finite host mix. Reads the same latched mute
-    /// that live playback publishes, so an overflow cannot become a silent export.
+    /// A plugin failure, or a non-finite host mix of a track or of the master.
+    /// Reads the same latched mutes that live playback publishes, so an
+    /// overflow cannot become a silent export (NFA-02).
     pub fn render_failure(&self) -> Option<crate::RenderFailure> {
         for meter in self.meters.values() {
             if let Some(mute) = meter.auto_mute()
@@ -2745,7 +2793,14 @@ impl PlaybackControl {
                 });
             }
         }
-        self.plugin_failure().map(crate::RenderFailure::Plugin)
+        if let Some(failure) = self.plugin_failure() {
+            return Some(crate::RenderFailure::Plugin(failure));
+        }
+        // A level past the guard is a device's fault only; the export keeps it.
+        self.status()
+            .master_auto_mute
+            .filter(|mute| !mute.peak.is_finite())
+            .map(|mute| crate::RenderFailure::NonFiniteMaster { at: mute.at })
     }
 
     pub fn status(&self) -> PlaybackStatus {
@@ -2919,9 +2974,7 @@ impl PlaybackAudio {
         self.current.meters_committed = false;
         let start = self.clock.position();
         let result = self.step(left, right, deadline, enabled, live, release);
-        if self.guard_output {
-            self.guard_master(left, right, start);
-        }
+        self.guard_master(left, right, start);
         self.live_processed |= live && self.current.meters_committed;
         if !self.current.meters_committed {
             for track in &self.current.tracks {
@@ -3253,13 +3306,21 @@ impl PlaybackAudio {
         self.master_mute = None;
     }
 
-    /// Mutes the device output from its first sample past the guard, or a NaN,
-    /// and keeps it muted (ADR 0282). The values are not limited.
+    /// Mutes the output from its first faulty sample and keeps it muted
+    /// (ADR 0282). A device output faults past the guard or on a NaN. An
+    /// export has no level limit: it faults only where the master's sum is not
+    /// a finite `f32`, and [`PlaybackControl::render_failure`] refuses it
+    /// (NFA-02). The values are not limited.
     fn guard_master(&mut self, left: &mut [f32], right: &mut [f32], start: i64) {
         let from = if self.master_mute.is_some() {
             0
         } else {
-            let Some((first, peak)) = crate::output_guard::first_fault(left, right) else {
+            let fault = if self.guard_output {
+                crate::output_guard::first_fault(left, right)
+            } else {
+                crate::output_guard::first_nonfinite(left, right)
+            };
+            let Some((first, peak)) = fault else {
                 return;
             };
             self.master_mute = Some(MasterAutoMute {

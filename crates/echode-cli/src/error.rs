@@ -37,6 +37,9 @@ pub enum CliError {
     NonFinitePcm {
         bits: u16,
     },
+    /// The last defense of a float file: the product render refuses a
+    /// non-finite mix first, as [`CliError::RenderBlock`] (NFA-08).
+    NonFiniteFloat,
     NonFiniteNormalized,
     /// Fault injection before publication; there is no underlying OS error.
     WavWriteFailed,
@@ -157,6 +160,7 @@ impl fmt::Display for CliError {
             Self::NonFinitePcm { bits } => {
                 return write!(f, "non-finite sample in PCM{bits} export");
             }
+            Self::NonFiniteFloat => "non-finite sample in float32 export",
             Self::NonFiniteNormalized => "non-finite sample in peak-normalized export",
             Self::WavWriteFailed => "wav write failed",
             Self::WavFlushFailed => "wav flush failed",

@@ -155,3 +155,56 @@ fn two_tracks_sum_and_a_bad_fader_is_rejected() {
         PlaybackError::BufferTooSmall
     ));
 }
+
+/// NFA-01: the product keeps its `f32` rounding while it fits, and only a
+/// product past `f32::MAX` reaches the bus in `f64`, never as 0.
+#[test]
+fn a_fader_keeps_finite_products_and_hands_on_one_past_the_f32_range() {
+    let fader = TrackFader {
+        gain: 0.7,
+        pan: 0.3,
+        ..TrackFader::unity()
+    };
+    let mut state = FaderState::new(fader, 48_000);
+    // Values whose f32 product and exact product round differently in a sum.
+    // These four frames, and the two below, bound this check only.
+    let source = [0.123_456_79f32, -0.987_654_3, 0.333_333_34, 1.0e-3];
+    let (mut left, mut right) = ([0.0f64; 4], [0.0f64; 4]);
+    let peak = state.add(
+        Signal {
+            left: &source,
+            right: Some(&source),
+        },
+        &mut left,
+        &mut right,
+    );
+    let (gain_left, gain_right) = balance(fader.pan, fader.gain);
+    for (index, sample) in source.iter().enumerate() {
+        assert_eq!(left[index], f64::from(sample * gain_left));
+        assert_eq!(right[index], f64::from(sample * gain_right));
+    }
+    let expected = source
+        .iter()
+        .map(|sample| (sample * gain_left).abs().max((sample * gain_right).abs()))
+        .fold(0.0f32, f32::max);
+    assert_eq!(peak, expected);
+
+    let loud = TrackFader {
+        gain: 2.0,
+        ..TrackFader::unity()
+    };
+    let mut state = FaderState::new(loud, 48_000);
+    let source = [3.0e38f32, 0.25];
+    let (mut left, mut right) = ([0.0f64; 2], [0.0f64; 2]);
+    let peak = state.add(
+        Signal {
+            left: &source,
+            right: Some(&source),
+        },
+        &mut left,
+        &mut right,
+    );
+    assert_eq!(left, [f64::from(3.0e38f32) * 2.0, 0.5]);
+    assert_eq!(right, left);
+    assert_eq!(peak, f32::MAX, "the meter reads the full range");
+}

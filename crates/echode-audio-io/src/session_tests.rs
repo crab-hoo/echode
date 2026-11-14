@@ -1150,3 +1150,16 @@ fn audit_dia03_a_failed_inventory_read_is_not_retried_on_every_service_turn() {
         "100 service turns in a row read the inventory {reads} times"
     );
 }
+
+/// NFA-02: a master sum past the f32 range reaches the app as a level, not
+/// as the `null` that means a NaN.
+#[test]
+fn a_master_overflow_is_reported_as_the_largest_level_not_as_a_nan() {
+    let at = |peak| MasterAutoMute::reported(echode_engine::MasterAutoMute { peak, at: 11 });
+    assert_eq!(at(f32::INFINITY).peak, Some(f32::MAX));
+    assert_eq!(at(f32::NAN).peak, None);
+    assert_eq!(at(9.0).peak, Some(9.0));
+    assert_eq!(at(9.0).sample, 11);
+    let json = serde_json::to_value(at(f32::INFINITY)).unwrap();
+    assert_eq!(json["peak"].as_f64(), Some(f64::from(f32::MAX)));
+}

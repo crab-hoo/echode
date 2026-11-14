@@ -82,8 +82,12 @@ impl FaderState {
         }
     }
 
+    /// Adds the signal through the fader into the `f64` bus and returns the
+    /// peak after the fader. A product past `f32::MAX` reaches the bus as it
+    /// is, so the narrowing of that bus faults on it, and the peak reads
+    /// `f32::MAX` (NFA-01). No value is replaced here.
     pub(crate) fn add(&mut self, signal: Signal<'_>, left: &mut [f64], right: &mut [f64]) -> f32 {
-        let mut peak = 0.0f32;
+        let mut peak = 0.0f64;
         let stereo = signal.right.is_some();
         let sources = signal.left.iter().zip(signal.right.unwrap_or(signal.left));
         for ((left, right), (source_left, source_right)) in left.iter_mut().zip(right).zip(sources)
@@ -109,11 +113,11 @@ impl FaderState {
                     scaled(*source_left, mono_right),
                 )
             };
-            *left += f64::from(l);
-            *right += f64::from(r);
+            *left += l;
+            *right += r;
             peak = peak.max(l.abs()).max(r.abs());
         }
-        peak
+        (peak as f32).min(f32::MAX)
     }
 }
 
@@ -184,12 +188,17 @@ fn fader_ramp_frames(rate: u32) -> u32 {
     (u64::from(rate) * 5 / 1_000).max(1) as u32
 }
 
-fn scaled(sample: f32, gain: f32) -> f32 {
-    if gain == 0.0 || !sample.is_finite() {
-        return 0.0;
+/// The fader's product. A finite `f32` product is the value mixes have always
+/// summed, so no existing mix changes by a rounding. Only a product past
+/// `f32::MAX` is taken in `f64`, where two finite `f32` values multiply
+/// exactly. A NaN or an infinity in the signal stays one.
+fn scaled(sample: f32, gain: f32) -> f64 {
+    let product = sample * gain;
+    if product.is_finite() {
+        f64::from(product)
+    } else {
+        f64::from(sample) * f64::from(gain)
     }
-    let scaled = sample * gain;
-    if scaled.is_finite() { scaled } else { 0.0 }
 }
 
 fn fader_gains(fader: TrackFader) -> [f32; 4] {

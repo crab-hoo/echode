@@ -109,6 +109,24 @@
       "negative_control": {"file": "swift/EchodeApp/Sources/EchodeAppCore/ProjectController.swift", "old": "if first.device == nil {", "new": "if false {"}
     },
     {
+      "id": "fader-overflow", "runner": "rust", "package": "echode-engine", "target": ["--test", "block_size"],
+      "test": "overflow::a_fader_overflow_mutes_the_master_and_refuses_the_export_at_the_same_sample", "timeout": 180,
+      "purpose": "f32 を超えるフェーダーの積を 0 にせず、機器はその標本からマスターを自動ミュートし、書出しは同じ標本で型付きに拒否する（NFA-01）",
+      "negative_control": {"file": "crates/echode-engine/src/mix.rs", "old": "f64::from(sample) * f64::from(gain)", "new": "0.0"}
+    },
+    {
+      "id": "folder-bus-overflow", "runner": "rust", "package": "echode-engine", "target": ["--test", "block_size"],
+      "test": "overflow::a_folder_bus_overflow_mutes_its_parent_from_the_same_sample_and_returns_on_play", "timeout": 180,
+      "purpose": "f32 の面へ収まらない子の和を親の装置なしの障害にし、ほかのトラックを鳴らしたまま、ブロック長によらず同じ標本から減衰・保持・復帰する（NFA-03）",
+      "negative_control": {"file": "crates/echode-engine/src/playback.rs", "old": "crate::output_guard::first_nonfinite(clip_plane, clip_right).map(|(frame, _)| frame);", "new": "None;"}
+    },
+    {
+      "id": "master-overflow-export", "runner": "rust", "package": "echode-cli", "target": ["--test", "render"],
+      "test": "audit_nfa02_an_export_of_an_imported_file_does_not_replace_its_overflow_with_silence", "timeout": 180,
+      "purpose": "実取込みの音の和が f32 を超える書出しを、float32・PCM・ノーマライズの全てで同じ型付きの位置付き拒否にし、既存の書出し先を保全する（NFA-02・08）",
+      "negative_control": {"file": "crates/echode-engine/src/playback.rs", "old": ".filter(|mute| !mute.peak.is_finite())", "new": ".filter(|_| false)"}
+    },
+    {
       "id": "export-presets-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests",
       "suite": "ExportPresetTests", "test": "contractPresetsUseValidatedFieldsAndRemainIndependentOfDocumentDefaults", "timeout": 180,
       "purpose": "名前付き書出しプリセットの検証済み入力・適用・保存の持続・削除・重複拒否を実シートで確認し、前回値・共通既定値・履歴と文書交換から分離する",

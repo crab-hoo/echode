@@ -1248,15 +1248,17 @@ impl HostGraph {
 
     /// Writes collected plugin audio back, concealing misses before the fader.
     ///
-    /// A track that is `muted`, or whose stage returned a non-finite sample
-    /// this block, fades out like a miss from that sample on (ADR 0282).
+    /// The track is heard up to frame `heard`: 0 for an auto-muted track, its
+    /// bus's fault for a parent whose children overflowed. From there, or from
+    /// a stage's non-finite sample this block if earlier, it fades out like a
+    /// miss (ADR 0282, NFA-03).
     pub(crate) fn apply(
         &self,
         key: u32,
         left: &mut [f32],
         right: &mut [f32],
         declick: &mut crate::PluginDeclick,
-        muted: bool,
+        heard: usize,
     ) -> Option<Applied> {
         let track = self.tracks.by_key(key)?;
         let frames = left.len().min(right.len()).min(track.frames);
@@ -1275,15 +1277,12 @@ impl HostGraph {
             Run::Missed => {}
             Run::Idle | Run::Pending => return None,
         }
-        let silent = if muted {
-            0
-        } else {
-            track.fault.map_or(frames, |fault| fault.frame.min(frames))
-        };
-        let (left_heard, left_faded) = left.split_at_mut_checked(silent)?;
-        let (right_heard, right_faded) = right.split_at_mut_checked(silent)?;
-        declick.process(left_heard, right_heard, track.run == Run::Missed);
-        declick.process(left_faded, right_faded, true);
+        let silent = track
+            .fault
+            .map_or(frames, |fault| fault.frame)
+            .min(heard)
+            .min(frames);
+        declick.conceal(left, right, silent, track.run == Run::Missed)?;
         Some(Applied {
             stereo,
             fault: track.fault,

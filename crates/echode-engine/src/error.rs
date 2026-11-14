@@ -68,6 +68,10 @@ pub enum PlaybackError {
     /// The routing feeds a signal back into itself, so no delay aligns it
     /// (ADR 0340).
     Feedback,
+    /// An offline render made a block it cannot use: a sum that is not a
+    /// finite `f32` (NFA-02). Block-wise callers get it as
+    /// [`crate::OfflineError::Render`].
+    Render(RenderFailure),
     /// The planned delay compensation did not pass its own check against the
     /// routing, so the plan that needs it was not prepared (ADR 0340).
     Misaligned,
@@ -119,6 +123,7 @@ impl fmt::Display for PlaybackError {
             }
             Self::Feedback => "the routing feeds a signal back into itself",
             Self::Misaligned => "plugin delay compensation failed its own check",
+            Self::Render(error) => return error.fmt(formatter),
         };
         formatter.write_str(message)
     }
@@ -132,6 +137,7 @@ impl std::error::Error for PlaybackError {
             Self::FanIn(error) => Some(error.as_ref()),
             Self::Workgroup(error) => Some(error),
             Self::Thread(error) => Some(error.as_ref()),
+            Self::Render(error) => Some(error),
             _ => None,
         }
     }
@@ -204,7 +210,17 @@ impl std::error::Error for PluginBlockFailure {}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RenderFailure {
     Plugin(PluginBlockFailure),
-    NonFiniteMix { track: u128, at: i64 },
+    /// A track's sum of its instrument, placed audio and children, or of a
+    /// folder bus, is a NaN or does not fit an `f32` (ADR 0345, NFA-03).
+    NonFiniteMix {
+        track: u128,
+        at: i64,
+    },
+    /// The master's sum is a NaN or does not fit an `f32` (NFA-02). `at` is
+    /// the master's sample, as [`crate::MasterAutoMute::at`].
+    NonFiniteMaster {
+        at: i64,
+    },
 }
 
 impl fmt::Display for RenderFailure {
@@ -217,6 +233,12 @@ impl fmt::Display for RenderFailure {
                     "track {track}: audio sum produced a NaN or an infinity at sample {at}"
                 )
             }
+            Self::NonFiniteMaster { at } => {
+                write!(
+                    f,
+                    "master: audio sum produced a NaN or an infinity at sample {at}"
+                )
+            }
         }
     }
 }
@@ -225,7 +247,7 @@ impl std::error::Error for RenderFailure {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Plugin(error) => Some(error),
-            Self::NonFiniteMix { .. } => None,
+            Self::NonFiniteMix { .. } | Self::NonFiniteMaster { .. } => None,
         }
     }
 }

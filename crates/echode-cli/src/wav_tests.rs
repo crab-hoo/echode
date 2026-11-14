@@ -211,12 +211,17 @@ fn pcm16_rounds_half_steps_saturates_and_encodes_every_integer_independent_of_pa
 }
 
 #[test]
-fn pcm_nonfinite_samples_preserve_the_destination_and_remove_partial_files() {
+fn nonfinite_samples_preserve_the_destination_and_remove_partial_files() {
     let _guard = WRITER.lock().unwrap();
     let directory = scratch();
     let destination = directory.join("keep.wav");
     std::fs::write(&destination, b"keep").unwrap();
-    for (format, name) in [(WavFormat::Pcm16, "PCM16"), (WavFormat::Pcm24, "PCM24")] {
+    // A float file refuses them too, since NFA-08: the render refuses first.
+    for (format, name) in [
+        (WavFormat::Pcm16, "PCM16"),
+        (WavFormat::Pcm24, "PCM24"),
+        (WavFormat::Float32, "float32"),
+    ] {
         for sample in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
             let mut writer = WavFile::create(&destination, 48_000, 2, format).unwrap();
             writer.write_block(&[0.5, -0.5]).unwrap();

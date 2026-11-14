@@ -573,6 +573,9 @@ FFI の `device.parameter.parse`、画面の `enterParameter` を通す（[ADR 0
 子を親のバスへ通す順は `playback_bus.rs` と `playback.rs` の `Block` に置く。
 回帰は `audit_scale_and_mix.rs`・`block_size/folder_mix.rs`・`block_size/folder_bus.rs`・`hosted_playback::a_parent_chain_processes_its_children_under_rtsan`
 （[ADR 0244](decisions/0244-folder-mute-and-solo-gates.md)、[ADR 0338](decisions/0338-folder-bus.md)）。
+f64 の和を f32 の面へ狭めた所（フォルダバス・マスター）の障害の判定は `output_guard.rs` の一つの述語で、狭める側に別の規則を書かない。
+回帰は `tests/audit_overflow.rs`・`block_size/overflow.rs`・`hosted_playback/overflow.rs` と CLI の `render.rs` の `audit_nfa02_*`
+（[ADR 0359](decisions/0359-finite-overflow-is-a-fault.md)）。
 プラグインの遅延の補正（PDC）は、遅延グラフの計算と検証（`Graph`・`Solution`）、エンジンの経路をグラフへ写す `compensate` を `compensation.rs`、遅延線と記憶域の予算を `delay.rs` に置く。
 制御側の `playback.rs::compensate_plan` が報告値を 1 回読んで（`HostGraph::latencies`）線を用意し、最初の音源の線は `plugins.rs` のヘルパーのグラフが持つ。
 合流を足す機能（センド、サイドチェイン、クリップ FX）は、`compensate` に節と辺を足し、その辺の遅延で線を作る。式を別の場所に書かない。

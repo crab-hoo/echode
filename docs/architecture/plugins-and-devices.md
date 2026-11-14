@@ -113,6 +113,10 @@ MIDI の全発音停止は互換用の終了処理であり、MIDI・MPE・MIDI 
   装置自身の出力は遅延線の前、音源と配置音声・子の和は合流の後で調べる。
   合流で生じた非有限値は装置なし（`device: None`）とし、正常な音源を障害扱いしない。
   `render_failure` がメーターの同じ記録から型付きの書出し拒否を返し、アプリ・ログも合流を原因とする（[ADR 0345](../decisions/0345-track-mix-fault-attribution.md)）。
+- 有限の値の積と和が f32 を超えても 0 にしない。フォルダバスの f32 の面へ収まらない子の和は、その標本から面を 0 にして親の装置なしの障害にする。
+  マスターでは無限大のまま機器のガードがその標本から止め、書出しは `RenderFailure::NonFiniteMaster { at }` で拒否する。
+  判定は `output_guard.rs` の一つの述語（`first_fault`・`first_nonfinite`）で、減衰はヘルパーの有無によらず `PluginDeclick::conceal` である
+  （[ADR 0359](../decisions/0359-finite-overflow-is-a-fault.md)）。
 - `SIGABRT`、`SIGSEGV`、`SIGBUS`、`SIGILL` でヘルパーが共有領域へ印を書いてから信号を上げ直す
   （[ADR 0079](../decisions/0079-failed-export.md)、[ADR 0111](../decisions/0111-macos-helper-notices.md)）
 - 再起動ではヘルパーを起動し直して最後に取得した状態を復元する

@@ -80,6 +80,8 @@ Phase 2 のクリップ FX も経路に含め、バイパス・オフライン�
 - **Phase 1 の製品接続**: 素材は制御側で全体を読み、左右を個別に `rubato` でデバイスレートへ変換する。
   ステレオは CLAP メインポート間と書き出しまで維持する。配置音声のループ両端は最大 5 ms、フェーダー変更は 5 ms で補間し、マスター加算は `f64` とする
   （[ADR 0095](../decisions/0095-product-audio-buses-and-continuity.md)）。
+  フェーダーの積は f32 のまま足し、f32 を超えた時だけ f64 の積を足す。狭めた和が f32 に収まらなければ、0 にせず障害にする
+  （[ADR 0359](../decisions/0359-finite-overflow-is-a-fault.md)）。
   素材がステレオのトラックでは、モノの最初の音源の出力を等電力で左右へ分け、配置音声を左右のまま足す。
   後続のメイン入力がモノなら従来どおり拒否する（[ADR 0337](../decisions/0337-mono-instrument-on-stereo-source.md)）。
   ループ先頭も計画採用前に全体準備に含め、`media_loader` が最後に成功した PCM を保持する
@@ -143,6 +145,8 @@ float の基準音声の保持は [ADR 0243](../decisions/0243-float-wav-metadat
 大容量は RF64 に自動切替し、64 bit の長さ・フレーム数を `ds64`、全形式の `fmt` を WAVEFORMATEXTENSIBLE にする。
 RIFF 範囲内のバイト列は変えず、レンダラーの u32 フレーム数は拡張しない（[ADR 0249](../decisions/0249-rf64-wav-export.md)）。
 量子化前の TPDF は `--dither tpdf` で明示する。既定はなしで、float との併用は拒否する。
+書出しは毎ブロック `render_failure` を読み、和が f32 に収まらないブロックを書込みへ渡さず、位置付きの型付きのエラーで止める。
+書込み側も全形式で非有限値を拒否する（[ADR 0359](../decisions/0359-finite-overflow-is-a-fault.md)）。
 既存の `rand_distr::Triangular` と `rand_chacha` を使い、ファイルごとの固定 seed と連続する左右の別々の標本で分割に依存させない。
 仕様と回帰は [ADR 0251](../decisions/0251-tpdf-export-dither.md) に定める。
 GUI は書出し要求の順番で記録済みの曲を捕捉し、参照するオブジェクトだけを新しい専用パッケージへコピーする。
@@ -236,6 +240,7 @@ OS の数学ライブラリを使う実装では `sw_vers` のプロダクト版
 トラックの種別を作らず、親の操作と子の操作は互いに保存値を変えない（[ADR 0277](../decisions/0277-reaper-style-folder-bus.md)）。
 子のフェーダー後の和は計画の順で親の配置音声へ足し、親の素材はステレオになる。親はキャッシュを読まない。
 親のメーターは子を含む（[ADR 0338](../decisions/0338-folder-bus.md)）。
+親の面は f32 のままで、収まらない和はその標本から親の装置なしの自動ミュートになる（[ADR 0359](../decisions/0359-finite-overflow-is-a-fault.md)）。
 P2 のトラック追加位置・フォルダ展開／折りたたみ時の挿入位置・通常複製は
 [操作要件](../interaction-design.md#音源を挿して編集に入る) に従う。
 選択の下と最上位末尾への空トラック追加、フォルダの開閉と折りたたみ時の追加位置は接続済みとする。

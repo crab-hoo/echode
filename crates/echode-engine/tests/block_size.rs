@@ -15,6 +15,8 @@ mod folder_bus;
 mod folder_mix;
 #[path = "block_size/master_guard.rs"]
 mod master_guard;
+#[path = "block_size/overflow.rs"]
+mod overflow;
 #[path = "block_size/plugin_deadline.rs"]
 mod plugin_deadline;
 #[path = "block_size/tempo.rs"]

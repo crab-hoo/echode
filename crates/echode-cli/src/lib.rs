@@ -361,6 +361,8 @@ fn render_to_wav_format(
         )
         .map_err(|error| match error {
             echode_engine::OfflineError::Write(error) => error,
+            // The same typed refusal as an export with plugins (NFA-02).
+            echode_engine::OfflineError::Render(error) => CliError::RenderBlock(error),
             echode_engine::OfflineError::Playback(error) => CliError::Playback(error),
         })?;
         progress.finalizing();
@@ -711,7 +713,14 @@ impl WavFile {
         );
         for sample in interleaved {
             match self.format {
-                WavFormat::Float32 => self.bytes.extend_from_slice(&sample.to_le_bytes()),
+                WavFormat::Float32 => {
+                    // As for PCM (ADR 0247): a NaN or an infinity is refused,
+                    // not written (NFA-08).
+                    if !sample.is_finite() {
+                        return Err(CliError::NonFiniteFloat);
+                    }
+                    self.bytes.extend_from_slice(&sample.to_le_bytes());
+                }
                 WavFormat::Pcm16 | WavFormat::Pcm24 => {
                     let bits = self.format.frame_bytes() * 4;
                     if !sample.is_finite() {

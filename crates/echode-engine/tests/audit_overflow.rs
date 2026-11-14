@@ -1,7 +1,8 @@
 //! Open items from docs/reviews/2026-11-13-finite-overflow-audit.md. Each
 //! ignored test fails until its item is fixed; `make known-bugs` runs them.
 //! Remove the `#[ignore]` with the fix. The tests that are not ignored hold
-//! what the audit confirmed already works.
+//! what the audit confirmed already works and the items fixed since
+//! (NFA-01 to NFA-03 in ADR 0359, NFA-06 in ADR 0344).
 //!
 //! Every clip here is finite. The levels are near `f32::MAX` (3.4e38) because
 //! that is where a finite product or sum stops being an `f32`; they bound
@@ -10,8 +11,9 @@
 use std::sync::Arc;
 
 use echode_engine::{
-    CachedTrack, LoadedClip, MASTER_GUARD_DBFS, PlaybackAudio, PlaybackCommand, PlaybackControl,
-    PlaybackOptions, playback, render_offline_blocks_with_clips,
+    AutoMute, CachedTrack, LoadedClip, MASTER_GUARD_DBFS, OfflineError, PlaybackAudio,
+    PlaybackCommand, PlaybackControl, PlaybackOptions, RenderFailure, playback,
+    render_offline_blocks_with_clips,
 };
 use echode_model::{DeviceKind, Id, ParamKey, Project};
 
@@ -57,14 +59,22 @@ fn set_gain(project: &Project, track: Id, gain: f32) -> Project {
 }
 
 /// The export path of a project without plugins: interleaved stereo.
-fn exported(project: &Project, clips: &[LoadedClip]) -> Result<Vec<f32>, String> {
+fn exported(project: &Project, clips: &[LoadedClip]) -> Result<Vec<f32>, OfflineError<()>> {
     let mut output = Vec::new();
     render_offline_blocks_with_clips(project, RATE, FRAMES as u32, BLOCK as u32, clips, |block| {
         output.extend_from_slice(block);
-        Ok::<_, String>(())
-    })
-    .map_err(|error| error.to_string())?;
+        Ok::<_, ()>(())
+    })?;
     Ok(output)
+}
+
+/// The typed refusal of an export, or a panic naming what it did instead.
+fn refused(result: Result<Vec<f32>, OfflineError<()>>) -> RenderFailure {
+    match result {
+        Err(OfflineError::Render(failure)) => failure,
+        Err(error) => panic!("refused for another reason: {error:?}"),
+        Ok(output) => panic!("exported; the first sample is {}", output[0]),
+    }
 }
 
 /// The device path: the master guard is on, as `echode-audio-io` sets it.
@@ -104,53 +114,50 @@ fn peak(control: &PlaybackControl, track: Id) -> f32 {
 }
 
 /// NFA-01: 3.0e38 through a fader at 2 is 6.0e38, which is not an `f32`.
-/// `scaled` writes 0 for it, so the export succeeds with silence.
+/// It used to be written as 0, so the export succeeded with silence. The
+/// product reaches the f64 master, and the export is refused where it does.
 #[test]
-#[ignore = "NFA-01: a fader product past f32::MAX is exported as silence"]
 fn audit_nfa01_an_export_does_not_write_silence_where_the_fader_overflows() {
     let (project, track) = Project::new().add_track("loud");
     let project = set_gain(&project, track, 2.0);
-    let result = exported(&project, &[constant(track, 3.0e38)]);
-    assert!(
-        !result.as_deref().is_ok_and(silent),
-        "the export succeeded and wrote 0 for every sample"
-    );
+    let failure = refused(exported(&project, &[constant(track, 3.0e38)]));
+    assert_eq!(failure, RenderFailure::NonFiniteMaster { at: 0 });
+    assert!(failure.to_string().contains("master: audio sum produced"));
 }
 
-/// NFA-01: the same track on a device. Nothing is heard, which is safe, but
-/// neither the meter nor the master auto-mute says why.
+/// NFA-01: the same track on a device. Nothing is heard, and now the meter
+/// shows the full range and the master auto-mute says why.
 #[test]
-#[ignore = "NFA-01: a fader product past f32::MAX is silenced without a record"]
 fn audit_nfa01_a_device_reports_a_fader_overflow() {
     let (project, track) = Project::new().add_track("loud");
     let project = set_gain(&project, track, 2.0);
     let (output, control, _audio) = heard(&project, &[constant(track, 3.0e38)]);
     assert!(silent(&output), "nothing past the guard reaches the device");
-    assert!(
-        control.status().master_auto_mute.is_some() || peak(&control, track) > 0.0,
-        "silence with an empty meter and no auto-mute"
+    assert_eq!(peak(&control, track), f32::MAX);
+    let mute = control.status().master_auto_mute.expect("auto-muted");
+    assert_eq!((mute.peak, mute.at), (f32::INFINITY, 0));
+    assert_eq!(
+        control.render_failure(),
+        Some(RenderFailure::NonFiniteMaster { at: 0 })
     );
 }
 
 /// NFA-02: two tracks at 2.0e38 sum to 4.0e38 in the f64 master, and the
-/// narrowing to `f32` writes 0. The export succeeds with silence.
+/// narrowing to `f32` wrote 0. The export succeeded with silence; now it is
+/// refused at the first sample that does not fit.
 #[test]
-#[ignore = "NFA-02: a master sum past f32::MAX is exported as silence"]
 fn audit_nfa02_an_export_does_not_write_silence_where_the_master_overflows() {
     let (project, first) = Project::new().add_track("first");
     let (project, second) = project.add_track("second");
     let clips = [constant(first, 2.0e38), constant(second, 2.0e38)];
-    let result = exported(&project, &clips);
-    assert!(
-        !result.as_deref().is_ok_and(silent),
-        "the export succeeded and wrote 0 for every sample"
-    );
+    let failure = refused(exported(&project, &clips));
+    assert_eq!(failure, RenderFailure::NonFiniteMaster { at: 0 });
 }
 
-/// NFA-02: on a device both meters show 2.0e38 and the master is silent,
-/// but the master auto-mute never fires: the guard runs after the narrowing.
+/// NFA-02: on a device both meters show 2.0e38 and the master is silent.
+/// The auto-mute never fired, as the guard ran after the narrowing; it now
+/// sees the infinity the narrowing makes.
 #[test]
-#[ignore = "NFA-02: a master sum past f32::MAX is silenced without an auto-mute"]
 fn audit_nfa02_a_device_auto_mutes_a_master_that_overflows() {
     let (project, first) = Project::new().add_track("first");
     let (project, second) = project.add_track("second");
@@ -158,16 +165,54 @@ fn audit_nfa02_a_device_auto_mutes_a_master_that_overflows() {
     let (output, control, _audio) = heard(&project, &clips);
     assert!(silent(&output), "nothing past the guard reaches the device");
     assert_eq!(peak(&control, first), 2.0e38);
-    assert!(
-        control.status().master_auto_mute.is_some(),
-        "a master 100 dB past the guard did not auto-mute"
+    let mute = control
+        .status()
+        .master_auto_mute
+        .expect("a master 100 dB past the guard did not auto-mute");
+    assert_eq!((mute.peak, mute.at), (f32::INFINITY, 0));
+}
+
+/// NFA-02: the export is refused at the sample where the sum stops fitting,
+/// and the blocks before it are passed on unchanged: the value is a fault,
+/// not a level, and the sum below `f32::MAX` is kept.
+#[test]
+fn an_export_is_refused_from_the_first_sample_whose_sum_does_not_fit() {
+    let (project, first) = Project::new().add_track("first");
+    let (project, second) = project.add_track("second");
+    // Sums to 3.0e38 for 150 frames, then to 4.0e38.
+    let rising: Vec<f32> = (0..FRAMES)
+        .map(|frame| if frame < 150 { 1.5e38 } else { 2.0e38 })
+        .collect();
+    let clips = [stereo(first, rising.clone()), stereo(second, rising)];
+    let mut passed = Vec::new();
+    let result = render_offline_blocks_with_clips(
+        &project,
+        RATE,
+        FRAMES as u32,
+        BLOCK as u32,
+        &clips,
+        |block| {
+            passed.extend_from_slice(block);
+            Ok::<_, ()>(())
+        },
     );
+    assert!(matches!(
+        result,
+        Err(OfflineError::Render(RenderFailure::NonFiniteMaster {
+            at: 150
+        }))
+    ));
+    // The two whole blocks before the fault; the block holding it is not passed on.
+    assert_eq!(passed.len(), 2 * BLOCK * 2);
+    assert!(passed.iter().all(|sample| *sample == 3.0e38));
 }
 
 /// What the audit confirmed: when an overflow decays into the `f32` range,
-/// its first representable sample is still past the guard, so the guard mutes
-/// from that sample. No device sample is ever past the guard, whether the
-/// master sum or one fader's product was what overflowed.
+/// its first representable sample is still past the guard, so no device
+/// sample is ever past the guard, whether the master sum or one fader's
+/// product was what overflowed. The guard used to see 0 for the overflow and
+/// mute from that first representable sample; since NFA-02 it sees the
+/// infinity and mutes from the first sample that did not fit.
 #[test]
 fn a_device_never_hears_an_overflow_decay_into_range() {
     // Falls from 3.0e38 to 0; doubled, it starts at 6.0e38.
@@ -198,33 +243,81 @@ fn a_device_never_hears_an_overflow_decay_into_range() {
             "{name}: a sample past the guard reached the device"
         );
         let mute = control.status().master_auto_mute.expect("auto-muted");
-        assert_eq!(mute.at, first_in_range as i64, "{name}");
+        assert_eq!((mute.peak, mute.at), (f32::INFINITY, 0), "{name}");
     }
 }
 
 /// NFA-03: two children at 2.0e38 enter a parent whose fader is 1/4. The
-/// master is 1.0e38, an ordinary `f32`, but the children's sum is narrowed to
-/// `f32` before the parent's fader and becomes 0 there.
+/// children's sum is narrowed into the parent's `f32` bus before its fader,
+/// and became 0 there, so the export succeeded with silence. The audit's
+/// reproduction expected the 1.0e38 the fader would bring back; the bus stays
+/// `f32`, the form its plugins receive, so the sum is the parent's fault
+/// instead, and the export is refused naming the parent (ADR 0359).
 #[test]
-#[ignore = "NFA-03: a folder bus past f32::MAX is exported as silence"]
-fn audit_nfa03_a_folder_bus_keeps_a_sum_its_fader_brings_back_into_range() {
+fn audit_nfa03_a_folder_bus_past_the_f32_range_refuses_the_export_naming_its_parent() {
     let (project, folder) = Project::new().add_track("folder");
     let (project, first) = project.add_child(folder, "first").unwrap();
     let (project, second) = project.add_child(folder, "second").unwrap();
     let project = set_gain(&project, folder, 0.25);
     let clips = [constant(first, 2.0e38), constant(second, 2.0e38)];
-    let output = exported(&project, &clips).unwrap();
+    let failure = refused(exported(&project, &clips));
+    assert_eq!(
+        failure,
+        RenderFailure::NonFiniteMix {
+            track: folder.raw(),
+            at: 0
+        }
+    );
+}
+
+/// NFA-03 on a device: the parent auto-mutes without naming a device, the
+/// children's meters still read, and a track outside the folder plays on.
+#[test]
+fn a_device_auto_mutes_a_folder_whose_bus_overflows_and_plays_the_rest() {
+    let (project, folder) = Project::new().add_track("folder");
+    let (project, first) = project.add_child(folder, "first").unwrap();
+    let (project, second) = project.add_child(folder, "second").unwrap();
+    let (project, outside) = project.add_track("outside");
+    let project = set_gain(&project, folder, 0.25);
+    let clips = [
+        constant(first, 2.0e38),
+        constant(second, 2.0e38),
+        constant(outside, 0.25),
+    ];
+    let (output, control, _audio) = heard(&project, &clips);
     assert!(
-        output.iter().all(|sample| *sample == 1.0e38),
-        "expected 1.0e38 on every sample, the first is {}",
+        output.iter().all(|sample| *sample == 0.25),
+        "only the outside track is heard; the first sample is {}",
         output[0]
+    );
+    let mute = control
+        .meters()
+        .into_iter()
+        .find(|meter| meter.track == folder.raw())
+        .and_then(|meter| meter.auto_mute());
+    assert_eq!(
+        mute,
+        Some(AutoMute {
+            device: None,
+            at: 0
+        })
+    );
+    assert_eq!(peak(&control, first), 2.0e38);
+    assert!(control.status().master_auto_mute.is_none());
+    assert_eq!(
+        control.render_failure(),
+        Some(RenderFailure::NonFiniteMix {
+            track: folder.raw(),
+            at: 0
+        })
     );
 }
 
 /// NFA-04: 3.0e38 at a clip gain of 2 is an infinity in the clip plane, and
 /// the fade-in's first frame multiplies it by 0 into a NaN. `echode-audio-io`
-/// refuses this clip before it gets here; the engine takes it and plays
-/// silence.
+/// refuses this clip before it gets here; the engine takes it. It played
+/// silence; since NFA-02 the master's NaN refuses the render instead, which
+/// is still not the refusal of the clip at the engine's entrance.
 #[test]
 #[ignore = "NFA-04: the engine accepts a clip whose gain overflows its samples"]
 fn audit_nfa04_the_engine_refuses_a_clip_whose_gain_overflows_its_samples() {
@@ -234,8 +327,9 @@ fn audit_nfa04_the_engine_refuses_a_clip_whose_gain_overflows_its_samples() {
     clip.fade_in = 8;
     let result = exported(&project, &[clip]);
     assert!(
-        !result.as_deref().is_ok_and(silent),
-        "the engine accepted the clip and exported silence"
+        matches!(result, Err(OfflineError::Playback(_))),
+        "the engine accepted the clip: {:?}",
+        result.map(|output| output[0])
     );
 }
 
