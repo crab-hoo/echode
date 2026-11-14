@@ -200,6 +200,36 @@ impl fmt::Display for PluginBlockFailure {
 
 impl std::error::Error for PluginBlockFailure {}
 
+/// Why export cannot use rendered audio. A host mix is not a plugin failure.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RenderFailure {
+    Plugin(PluginBlockFailure),
+    NonFiniteMix { track: u128, at: i64 },
+}
+
+impl fmt::Display for RenderFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Plugin(error) => error.fmt(f),
+            Self::NonFiniteMix { track, at } => {
+                write!(
+                    f,
+                    "track {track}: audio sum produced a NaN or an infinity at sample {at}"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for RenderFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Plugin(error) => Some(error),
+            Self::NonFiniteMix { .. } => None,
+        }
+    }
+}
+
 /// Why a CoreAudio query of the default output failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeviceError {

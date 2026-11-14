@@ -2706,6 +2706,22 @@ impl PlaybackControl {
         self.hosts.export_failure()
     }
 
+    /// A plugin failure or a non-finite host mix. Reads the same latched mute
+    /// that live playback publishes, so an overflow cannot become a silent export.
+    pub fn render_failure(&self) -> Option<crate::RenderFailure> {
+        for meter in self.meters.values() {
+            if let Some(mute) = meter.auto_mute()
+                && mute.device.is_none()
+            {
+                return Some(crate::RenderFailure::NonFiniteMix {
+                    track: meter.track,
+                    at: mute.at,
+                });
+            }
+        }
+        self.plugin_failure().map(crate::RenderFailure::Plugin)
+    }
+
     pub fn status(&self) -> PlaybackStatus {
         loop {
             let before = self.status.generation.load(Ordering::SeqCst);

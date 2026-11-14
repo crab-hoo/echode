@@ -63,6 +63,7 @@ pub use device::{IoWorkgroup, OutputInventory, output_inventory};
 pub use echode_realtime::Event;
 pub use error::{
     DeviceError, DeviceProperty, PlaybackError, PluginBlockFailure, PluginBlockFailureReason,
+    RenderFailure,
 };
 pub use mix::{InputBus, MONO, STEREO, Speaker, TrackFader, mix_buses, mix_tracks};
 mod meter;

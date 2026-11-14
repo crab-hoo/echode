@@ -118,11 +118,11 @@ public struct AudioStatus: Decodable, Sendable, Equatable {
 /// Why the output muted one track by itself (ADR 0282).
 public struct TrackAutoMute: Decodable, Sendable, Equatable {
     public let track: UUID
-    /// The device that returned the NaN or infinity.
-    public let device: UUID
+    /// The device that returned the NaN or infinity; `nil` for the host's audio sum.
+    public let device: UUID?
     /// The project sample of the first such value.
     public let sample: Int64
-    public init(track: UUID, device: UUID, sample: Int64) {
+    public init(track: UUID, device: UUID?, sample: Int64) {
         self.track = track
         self.device = device
         self.sample = sample

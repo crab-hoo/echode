@@ -1,4 +1,4 @@
-//! Open items NFA-04 and NFA-05 of docs/reviews/2026-11-13-finite-overflow-audit.md,
+//! Regression coverage and open item NFA-04 from the finite-overflow audit,
 //! through a real helper. `make known-bugs` runs the ignored ones.
 //!
 //! The levels are near `f32::MAX` (3.4e38), where a finite sum or product
@@ -72,41 +72,76 @@ fn a_loud_finite_instrument_is_not_a_faulty_device() {
     assert!(control.plugin_failure().is_none());
 }
 
-/// NFA-05: the same instrument on a track that also places a finite 2.0e38
-/// clip. The host adds the clip onto the instrument's output in `f32` and
-/// only then looks for an infinity, so the instrument is named as the device
-/// that "returned a NaN or an infinity". It returned neither.
+/// NFA-05: host overflow is attributed to the track's mix, not a healthy
+/// instrument or downstream effect. Shapes and block lengths bound this test only.
 #[test]
-#[ignore = "NFA-05: the host's own overflow is reported as the instrument's fault"]
 fn audit_nfa05_an_instrument_is_not_blamed_for_the_sum_with_its_tracks_clip() {
-    let (project, track) = Project::new().add_track("instrument and clip");
-    let instrument = Id::generate();
-    let project = project
-        .add_clap_device(track, instrument, "dev.echode.test-instrument")
-        .unwrap();
-    let routes = [route("dev.echode.test-instrument", true, Some("huge"))];
-    let (mut control, mut audio) =
-        playback_with_plugins(&project, RATE, FRAMES, &host_bin(), &routes).unwrap();
-    let clip = constant(track, 2.0e38, 1.0);
-    control.set_clip_loader(Arc::new(move |_, _| Ok(vec![clip.clone()])));
-    control.replace(&project).unwrap();
-    control.command(PlaybackCommand::Play).unwrap();
-    let (mut left, mut right) = (vec![0.0; FRAMES], vec![0.0; FRAMES]);
-    for _ in 0..2 {
-        block(&mut audio, &mut left, &mut right);
-        control.service();
+    for clap_id in ["dev.echode.test-instrument", "dev.echode.test-mono"] {
+        for child_source in [false, true] {
+            for frames in [1, 7, FRAMES] {
+                let (project, track) = Project::new().add_track("instrument and clip");
+                let (project, source) = if child_source {
+                    project.add_child(track, "child source").unwrap()
+                } else {
+                    (project, track)
+                };
+                let project = project
+                    .add_clap_device(track, Id::generate(), clap_id)
+                    .unwrap()
+                    .add_clap_device(track, Id::generate(), "dev.echode.test-gain")
+                    .unwrap();
+                let routes = [
+                    route(clap_id, true, Some("huge")),
+                    route("dev.echode.test-gain", false, Some("delay:0")),
+                ];
+                let (mut control, mut audio) =
+                    playback_with_plugins(&project, RATE, frames, &host_bin(), &routes).unwrap();
+                // A finite instrument plus a finite clip overflows starting at
+                // sample 11, including a mono instrument's stereo promotion.
+                let mut clip = constant(source, 3.0e38, 1.0);
+                clip.start_sample = 11;
+                control.set_clip_loader(Arc::new(move |_, _| Ok(vec![clip.clone()])));
+                control.replace(&project).unwrap();
+                control.command(PlaybackCommand::Play).unwrap();
+                let (mut left, mut right) = (vec![0.0; frames], vec![0.0; frames]);
+                for _ in 0..(512 / frames + 2) {
+                    block(&mut audio, &mut left, &mut right);
+                    control.service();
+                    assert!(left.iter().chain(&right).all(|sample| sample.is_finite()));
+                }
+                let mute = auto_mute(&control, track).expect("the host mix auto-mutes its track");
+                assert_eq!(
+                    mute.device, None,
+                    "the track's auto-mute names the instrument"
+                );
+                assert_eq!(mute.at, 11, "the fault depends on the block length");
+                assert_eq!(
+                    control.render_failure(),
+                    Some(echode_engine::RenderFailure::NonFiniteMix {
+                        track: track.raw(),
+                        at: 11
+                    })
+                );
+                assert!(
+                    control.plugin_failure().is_none(),
+                    "a healthy device was blamed"
+                );
+                assert_eq!(control.status().plugin_missed_blocks, 0);
+                assert!(!control.status().failed);
+                assert!(left.iter().chain(&right).all(|sample| *sample == 0.0));
+
+                // Silence the source and start again: the same meter clears,
+                // the finite instrument is not a fault, and export can resume.
+                control.set_clip_loader(Arc::new(|_, _| Ok(Vec::new())));
+                control.replace(&project).unwrap();
+                control.command(PlaybackCommand::Play).unwrap();
+                block(&mut audio, &mut left, &mut right);
+                control.service();
+                assert!(auto_mute(&control, track).is_none());
+                assert!(control.render_failure().is_none());
+            }
+        }
     }
-    assert!(
-        auto_mute(&control, track).is_none_or(|mute| mute.device != instrument.raw()),
-        "the track's auto-mute names the instrument"
-    );
-    assert!(
-        control
-            .plugin_failure()
-            .is_none_or(|failure| failure.device != instrument.raw()),
-        "the export refusal names the instrument: {}",
-        control.plugin_failure().unwrap()
-    );
 }
 
 /// NFA-04: the engine accepts a clip whose gain overflows its samples
@@ -137,7 +172,7 @@ fn audit_nfa04_an_effect_never_receives_an_infinity_from_placed_audio() {
         control.service();
     }
     assert!(
-        auto_mute(&control, track).is_none_or(|mute| mute.device != effect.raw()),
+        auto_mute(&control, track).is_none_or(|mute| mute.device != Some(effect.raw())),
         "the effect was given an infinity and named for returning it"
     );
 }

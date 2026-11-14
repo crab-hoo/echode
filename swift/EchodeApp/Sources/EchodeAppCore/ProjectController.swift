@@ -273,7 +273,10 @@ public final class ProjectController {
     var autoMuteReasons: [UUID: String] {
         var reasons: [UUID: String] = [:]
         for mute in audio.autoMutedTracks where reasons[mute.track] == nil {
-            reasons[mute.track] = String(format: text("Auto-Mute Reason"), autoMutedPlugin(mute))
+            reasons[mute.track] =
+                mute.device == nil
+                ? text("Mix Auto-Mute Reason")
+                : String(format: text("Auto-Mute Reason"), autoMutedPlugin(mute))
         }
         return reasons
     }
@@ -288,6 +291,9 @@ public final class ProjectController {
         guard let first = audio.autoMutedTracks.first else { return nil }
         if audio.autoMutedTracks.count > 1 {
             return String(format: text("Tracks Auto-Muted"), audio.autoMutedTracks.count)
+        }
+        if first.device == nil {
+            return String(format: text("Track Mix Auto-Muted"), autoMutedTrackName(first.track))
         }
         return String(format: text("Track Auto-Muted"), autoMutedTrackName(first.track), autoMutedPlugin(first))
     }

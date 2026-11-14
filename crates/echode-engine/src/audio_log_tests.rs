@@ -203,7 +203,7 @@ fn automatic_mutes_are_logged_when_they_start_and_end() {
     assert!(capture.on_this_thread().is_empty());
 
     meter.set_auto_mute(AutoMute {
-        device: fixture.device.raw(),
+        device: Some(fixture.device.raw()),
         at: 4_800,
     });
     let mut scene = fixture.scene(&never);
@@ -226,4 +226,37 @@ fn automatic_mutes_are_logged_when_they_start_and_end() {
     assert_eq!(records[0]["fields"]["plugin"], "dev.echode.test-gain");
     assert_eq!(records[0]["fields"]["sample"], 4_800);
     assert_eq!(records[1]["fields"]["peak"], 4.0);
+}
+
+#[test]
+fn a_host_mix_mute_logs_no_device_or_plugin_and_only_once() {
+    let capture = echode_log::testing::capture();
+    let mut fixture = fixture();
+    let meter = Arc::new(TrackMeter::new(fixture.track.raw()));
+    fixture
+        .meters
+        .insert(fixture.track.raw(), Arc::clone(&meter));
+    let never = |_| false;
+    let (_notes, mut log) = note_pair();
+    meter.set_auto_mute(AutoMute {
+        device: None,
+        at: 11,
+    });
+    for _ in 0..2 {
+        log.drain(Instant::now(), &fixture.scene(&never));
+    }
+    meter.clear_auto_mute();
+    log.drain(Instant::now(), &fixture.scene(&never));
+    let records = capture.on_this_thread();
+    assert_eq!(
+        messages(&records),
+        [
+            "a track was muted because its audio sum produced a non-finite sample",
+            "a track's automatic mute ended",
+        ]
+    );
+    let fields = &records[0]["fields"];
+    assert_eq!(fields["track"], fixture.track.to_string());
+    assert_eq!(fields["sample"], 11);
+    assert!(fields.get("device").is_none() && fields.get("plugin").is_none());
 }

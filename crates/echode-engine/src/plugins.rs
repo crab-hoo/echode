@@ -114,10 +114,11 @@ pub(crate) const MISS_EXITED: u8 = 4;
 /// Not a miss: the plugin answered, but with a NaN or an infinity (ADR 0282).
 const FAULT_NONFINITE: u8 = 5;
 
-/// The first stage of a track that returned a NaN or an infinity this block.
+/// The first non-finite device output or host mix on a track this block.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct StageFault {
-    pub(crate) device: u128,
+    /// `None` for the host's mix, not the instrument's own output.
+    pub(crate) device: Option<u128>,
     /// Block frame of the first such sample. The stage's output is zero from here.
     pub(crate) frame: usize,
 }
@@ -203,7 +204,7 @@ struct TrackHost {
     chased_ons: Vec<Event>,
     chase_order: Vec<usize>,
     chase_scratch: Vec<Event>,
-    /// Set by the first stage of this block that returned a non-finite sample.
+    /// Set by the first device output or host mix with a non-finite sample.
     fault: Option<StageFault>,
     /// The first instrument's output, delayed to meet the track's placed
     /// audio and children (ADR 0339). Empty in the control thread's graph.
@@ -1510,7 +1511,9 @@ impl TrackHost {
             frames = bounded(&stage.bypass_output, frames);
             stage.awaiting_notes = true;
             self.frames = frames;
-            self.mix_injected(stage_index, frames);
+            if self.mix_injected(stage_index, frames) {
+                self.contain_nonfinite(stage_index, frames, Planes::Heard);
+            }
             self.heard = true;
             let next = stage_index + 1;
             if next == self.stages.len() {
@@ -1601,16 +1604,13 @@ impl TrackHost {
         self.miss(report, MISS_SUBMIT);
     }
 
-    /// Zeroes a stage's output from its first NaN or infinity, so the next
-    /// plugin, the track and the delay lines never receive one, and names the
-    /// stage once.
+    /// Zeroes a device's output or the host's mix from its first NaN or infinity,
+    /// so downstream plugins and delay lines never receive one. Only the own
+    /// output can blame the device; the heard planes include the host's sum.
     fn contain_nonfinite(&mut self, stage_index: usize, frames: usize, planes: Planes) {
         let Some(stage) = self.stages.get_mut(stage_index) else {
             return;
         };
-        if stage.bypassed {
-            return;
-        }
         let output = match planes {
             Planes::Own => stage.own_mut(),
             // The planes the next stage and the track read, promoted or not.
@@ -1635,13 +1635,19 @@ impl TrackHost {
             }
         }
         // Export refuses the block; live playback auto-mutes the track.
-        stage
-            .instance
-            .failure
-            .store(FAULT_NONFINITE, Ordering::Release);
+        let device = match planes {
+            Planes::Own => {
+                stage
+                    .instance
+                    .failure
+                    .store(FAULT_NONFINITE, Ordering::Release);
+                Some(stage.device)
+            }
+            Planes::Heard => None,
+        };
         if self.fault.is_none() {
             self.fault = Some(StageFault {
-                device: stage.device,
+                device,
                 frame: first,
             });
         }

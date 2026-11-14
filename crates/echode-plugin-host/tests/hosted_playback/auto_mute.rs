@@ -74,7 +74,7 @@ fn a_plugin_nan_auto_mutes_its_track_until_playback_starts() {
     let mute = meter.auto_mute().expect("the faulty track is auto-muted");
     assert_eq!(
         mute.device,
-        instrument.raw(),
+        Some(instrument.raw()),
         "the NaN reached the next plugin"
     );
     assert_eq!(mute.at, frames as i64 + 10);

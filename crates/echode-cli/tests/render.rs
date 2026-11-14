@@ -926,6 +926,54 @@ fn a_latency_on_another_track_changes_no_frame_of_an_export_with_a_tail() {
     let _ = std::fs::remove_dir_all(&directory);
 }
 
+/// NFA-05 through import, the isolated instrument and the WAV publisher.
+#[test]
+fn a_host_mix_overflow_refuses_export_without_blaming_a_plugin_or_replacing_the_output() {
+    let _lock = PLUGIN_ENV.lock().unwrap();
+    let directory = scratch();
+    std::fs::create_dir_all(&directory).unwrap();
+    let _env = PluginEnv::set(&directory.join("clap-scan.jsonl"));
+    write_plugin_cache(&directory.join("clap-scan.jsonl"), &plugin_dylib());
+    let _fault = FaultFile::set("dev.echode.test-instrument", "huge");
+    // A tenth of a second bounds this regression's input and export only.
+    let frames = 4_800;
+    let source = directory.join("loud.wav");
+    write_wav(&source, 48_000, &vec![3.0e38; frames * 2]).unwrap();
+    let stored = echode_history::import_audio(&directory, &source).unwrap();
+    let audio = echode_model::AudioRef::try_new(
+        stored.hash,
+        stored.sample_rate,
+        stored.channels,
+        stored.frames,
+    )
+    .unwrap();
+    let (project, track) = Project::new().add_track("instrument and clip");
+    let placement = Id::generate();
+    let project = project
+        .add_clap_device(track, Id::generate(), "dev.echode.test-instrument")
+        .unwrap()
+        .place_audio(track, placement, Id::generate(), Tick::new(0), audio)
+        .unwrap()
+        .set_clip_fades(placement, 0, 0)
+        .unwrap();
+    write_package(&directory, &project).unwrap();
+    let wav = output_path("overflowed-track-mix.wav");
+    let original = b"keep the existing output";
+    std::fs::write(&wav, original).unwrap();
+    let error = render_to_wav(&directory, &wav, 48_000, Some(frames as u32)).unwrap_err();
+    assert!(
+        matches!(
+            error,
+            echode_cli::CliError::RenderBlock(echode_engine::RenderFailure::NonFiniteMix { track: id, at: 0 })
+                if id == track.raw()
+        ),
+        "unexpected export failure: {error}"
+    );
+    assert!(error.to_string().contains("audio sum produced"));
+    assert_eq!(std::fs::read(&wav).unwrap(), original);
+    let _ = std::fs::remove_dir_all(directory);
+}
+
 /// NFA-02, through the product path: a float file is imported because every
 /// sample is finite, here 2.0e38. Placed on two tracks, the master sum is
 /// not an `f32`, and the export succeeds with a silent file.

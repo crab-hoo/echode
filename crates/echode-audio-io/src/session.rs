@@ -96,8 +96,8 @@ pub struct AudioState {
     /// added (ADR 0142). A request for a device it adds waits for it, by the
     /// same test as [`Session::device_control`] (ADR 0336).
     pub updating: bool,
-    /// Tracks the output muted by itself because a plugin returned a NaN or an
-    /// infinity. Not the tracks' own mute: starting playback clears it (ADR 0282).
+    /// Tracks muted after a non-finite device output or host mix. Not the
+    /// tracks' own mute: starting playback clears it (ADR 0282).
     pub auto_muted_tracks: Vec<TrackAutoMute>,
     /// The output muted the master because it ran past +18 dBFS (ADR 0282).
     pub master_auto_mute: Option<MasterAutoMute>,
@@ -107,8 +107,8 @@ pub struct AudioState {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct TrackAutoMute {
     pub track: echode_model::Id,
-    /// The device that returned the value.
-    pub device: echode_model::Id,
+    /// The device that returned the value, or `None` for the host's audio sum.
+    pub device: Option<echode_model::Id>,
     /// The project sample of the first such value.
     pub sample: i64,
 }
@@ -757,7 +757,7 @@ impl Session {
                         let mute = meter.auto_mute()?;
                         Some(TrackAutoMute {
                             track: echode_model::Id::from_raw(meter.track),
-                            device: echode_model::Id::from_raw(mute.device),
+                            device: mute.device.map(echode_model::Id::from_raw),
                             sample: mute.at,
                         })
                     })

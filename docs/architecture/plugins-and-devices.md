@@ -79,6 +79,9 @@ CLAP の遅延は有効化の直後にメインスレッドで読み、初回の
   古いイベントや音声は再送せず、余韻も復元しない（[ADR 0341](../decisions/0341-recover-notes-after-helper-overrun.md)、UC-75）。
 - ヘルパー終了を `kqueue` で検知したら無音化し、デバイスビューに表示して再起動を提案する
 - 段の出力の NaN・無限大は、その標本から 0 にして次の段へ渡し、トラックを自動ミュートする。再生の開始で解除してリセットする（[ADR 0282](../decisions/0282-plugin-nan-and-master-auto-mute.md)）
+  装置自身の出力は遅延線の前、音源と配置音声・子の和は合流の後で調べる。
+  合流で生じた非有限値は装置なし（`device: None`）とし、正常な音源を障害扱いしない。
+  `render_failure` がメーターの同じ記録から型付きの書出し拒否を返し、アプリ・ログも合流を原因とする（[ADR 0345](../decisions/0345-track-mix-fault-attribution.md)）。
 - `SIGABRT`、`SIGSEGV`、`SIGBUS`、`SIGILL` でヘルパーが共有領域へ印を書いてから信号を上げ直す
   （[ADR 0079](../decisions/0079-failed-export.md)、[ADR 0111](../decisions/0111-macos-helper-notices.md)）
 - 再起動ではヘルパーを起動し直して最後に取得した状態を復元する

@@ -10,8 +10,9 @@ const DISPLAY_FLOOR: f32 = 0.001;
 /// mute: it is never saved, undone or exported, and starting playback clears it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AutoMute {
-    /// The device whose output held a NaN or an infinity.
-    pub device: u128,
+    /// The device whose output held a NaN or an infinity. `None` means the
+    /// host's sum of the instrument, placed audio and children overflowed.
+    pub device: Option<u128>,
     /// The project sample of the first such value.
     pub at: i64,
 }
@@ -23,6 +24,7 @@ pub struct TrackMeter {
     /// the same even value brackets their read.
     mute_generation: AtomicU64,
     muted: AtomicBool,
+    mute_has_device: AtomicBool,
     mute_device: [AtomicU64; 2],
     mute_at: AtomicI64,
     #[cfg(test)]
@@ -36,6 +38,7 @@ impl TrackMeter {
             peak: AtomicU32::new(0),
             mute_generation: AtomicU64::new(0),
             muted: AtomicBool::new(false),
+            mute_has_device: AtomicBool::new(false),
             mute_device: [AtomicU64::new(0), AtomicU64::new(0)],
             mute_at: AtomicI64::new(0),
             #[cfg(test)]
@@ -52,8 +55,10 @@ impl TrackMeter {
                 continue;
             }
             let mute = self.muted.load(Ordering::SeqCst).then(|| AutoMute {
-                device: u128::from(self.mute_device[0].load(Ordering::SeqCst)) << 64
-                    | u128::from(self.mute_device[1].load(Ordering::SeqCst)),
+                device: self.mute_has_device.load(Ordering::SeqCst).then(|| {
+                    u128::from(self.mute_device[0].load(Ordering::SeqCst)) << 64
+                        | u128::from(self.mute_device[1].load(Ordering::SeqCst))
+                }),
                 at: self.mute_at.load(Ordering::SeqCst),
             });
             if self.mute_generation.load(Ordering::SeqCst) == before {
@@ -73,8 +78,12 @@ impl TrackMeter {
             return;
         }
         self.mute_generation.fetch_add(1, Ordering::SeqCst);
-        self.mute_device[0].store((mute.device >> 64) as u64, Ordering::SeqCst);
-        self.mute_device[1].store(mute.device as u64, Ordering::SeqCst);
+        self.mute_has_device
+            .store(mute.device.is_some(), Ordering::SeqCst);
+        if let Some(device) = mute.device {
+            self.mute_device[0].store((device >> 64) as u64, Ordering::SeqCst);
+            self.mute_device[1].store(device as u64, Ordering::SeqCst);
+        }
         self.mute_at.store(mute.at, Ordering::SeqCst);
         self.muted.store(true, Ordering::SeqCst);
         self.mute_generation.fetch_add(1, Ordering::SeqCst);
@@ -165,5 +174,39 @@ mod tests {
         assert_eq!(meter.peak(), 0.0, "silence kept decaying");
         meter.publish(0.25, 1.0);
         assert_eq!(meter.peak(), 0.25);
+    }
+
+    #[test]
+    fn host_mix_and_device_faults_keep_the_first_record_until_reset() {
+        use super::AutoMute;
+        let meter = TrackMeter::new(1);
+        let device = AutoMute {
+            device: Some(u128::MAX),
+            at: 17,
+        };
+        let mix = AutoMute {
+            device: None,
+            at: 23,
+        };
+        for (first, next) in [(device, mix), (mix, device)] {
+            meter.set_auto_mute(first);
+            meter.set_auto_mute(next);
+            assert_eq!(meter.auto_mute(), Some(first));
+            meter.clear_auto_mute();
+            assert_eq!(meter.auto_mute(), None);
+            meter.set_auto_mute(next);
+            assert_eq!(meter.auto_mute(), Some(next));
+            meter.clear_auto_mute();
+        }
+        let zero = AutoMute {
+            device: Some(0),
+            at: 0,
+        };
+        meter.set_auto_mute(zero);
+        assert_eq!(
+            meter.auto_mute(),
+            Some(zero),
+            "zero is not a host-mix sentinel"
+        );
     }
 }

@@ -1,6 +1,14 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Mix Auto-Mute Reason": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Muted automatically: the track's audio sum produced an invalid value. Play to unmute." } },
+      "ja": { "stringUnit": { "state": "translated", "value": "自動ミュート: トラックの音声の加算で不正な値になりました。再生すると解除されます。" } }
+    } },
+    "Track Mix Auto-Muted": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "%@ is muted automatically: its audio sum produced an invalid value. Play to unmute." } },
+      "ja": { "stringUnit": { "state": "translated", "value": "%@ を自動ミュートしました。音声の加算で不正な値になりました。再生すると解除されます。" } }
+    } },
     "Auto-Mute Reason": { "localizations": {
       "en": { "stringUnit": { "state": "translated", "value": "Muted automatically: %@ returned an invalid value. Play to unmute." } },
       "ja": { "stringUnit": { "state": "translated", "value": "自動ミュート: %@ が不正な値を返しました。再生すると解除されます。" } }
@@ -14,8 +22,8 @@
       "ja": { "stringUnit": { "state": "translated", "value": "%1$@ を自動ミュートしました。%2$@ が不正な値を返しました。再生すると解除されます。" } }
     } },
     "Tracks Auto-Muted": { "localizations": {
-      "en": { "stringUnit": { "state": "translated", "value": "%ld tracks are muted automatically: a plugin returned an invalid value. Play to unmute." } },
-      "ja": { "stringUnit": { "state": "translated", "value": "%ld 本のトラックを自動ミュートしました。プラグインが不正な値を返しました。再生すると解除されます。" } }
+      "en": { "stringUnit": { "state": "translated", "value": "%ld tracks are muted automatically: an invalid audio value was detected. Play to unmute." } },
+      "ja": { "stringUnit": { "state": "translated", "value": "%ld 本のトラックを自動ミュートしました。不正な音声の値を検出しました。再生すると解除されます。" } }
     } },
     "Unknown Plugin": { "localizations": {
       "en": { "stringUnit": { "state": "translated", "value": "Unknown plugin" } },

@@ -31,6 +31,10 @@ struct AutoMuteTests {
         #expect(older.autoMutedTracks.isEmpty && older.masterAutoMute == nil)
     }
 
+    @Test func multipleMutesDoNotAssumeAPluginWasAtFault() throws {
+        let template = text("Tracks Auto-Muted")
+        #expect(!template.contains("plugin") && !template.contains("プラグイン"))
+    }
     @Test func theTransportNamesWhatWasMutedWithoutAnAlert() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-auto-mute-\(UUID()).echode")
         defer { removeTestFile(url) }
@@ -62,6 +66,26 @@ struct AutoMuteTests {
         await controller.toggleMetronome()
         #expect(controller.autoMuteNotice == nil && controller.autoMuteReasons.isEmpty)
         #expect(controller.errorMessage == nil, "an automatic mute is not an alert")
+        await controller.close()
+    }
+    @Test func aHostMixIsReportedWithoutBlamingAnUnknownPlugin() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-mix-mute-\(UUID()).echode")
+        defer { removeTestFile(url) }
+        let track = UUID()
+        let muted = try state(
+            """
+            ,"auto_muted_tracks":[{"track":"\(track.uuidString)","device":null,"sample":11}]
+            """)
+        #expect(muted.autoMutedTracks == [TrackAutoMute(track: track, device: nil, sample: 11)])
+        let controller = ProjectController(sendAudio: { document, command in
+            guard case .metronome = command else { return try await document.audio(command) }
+            return muted
+        })
+        await controller.open(url, creating: true)
+        await controller.toggleMetronome()
+        #expect(controller.autoMuteReasons[track] == text("Mix Auto-Mute Reason"))
+        #expect(controller.autoMuteNotice == String(format: text("Track Mix Auto-Muted"), ""))
+        #expect(controller.errorMessage == nil, "a mix fault must not raise an alert")
         await controller.close()
     }
 }

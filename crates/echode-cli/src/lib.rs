@@ -473,7 +473,7 @@ fn render_with_plugins(
                 Instant::now() + OFFLINE_BLOCK_WAIT,
             );
             cancellation.check()?;
-            check_plugins(&control)?;
+            check_render(&control)?;
             let dropped = skip.min(count);
             skip -= dropped;
             let kept = count - dropped;
@@ -534,9 +534,9 @@ fn render_with_plugins(
 /// A plugin that never settles is an error, not an export that never ends.
 const LATENCY_REDRAWS: usize = 8;
 
-fn check_plugins(control: &echode_engine::PlaybackControl) -> Result<(), CliError> {
-    if let Some(reason) = control.plugin_failure() {
-        return Err(CliError::PluginBlock(reason));
+fn check_render(control: &echode_engine::PlaybackControl) -> Result<(), CliError> {
+    if let Some(reason) = control.render_failure() {
+        return Err(CliError::RenderBlock(reason));
     }
     if control.status().failed {
         return Err(CliError::PluginPlaybackFailed);
@@ -567,7 +567,7 @@ fn settle_latency(
             return Err(CliError::UnsettledLatency);
         }
         audio.render_until(left, right, Instant::now() + OFFLINE_BLOCK_WAIT);
-        check_plugins(control)?;
+        check_render(control)?;
     }
 }
 

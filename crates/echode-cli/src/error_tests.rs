@@ -3,7 +3,7 @@ use std::io;
 use std::path::PathBuf;
 
 use super::*;
-use echode_engine::{PlaybackError, PluginBlockFailure, PluginBlockFailureReason};
+use echode_engine::{PlaybackError, PluginBlockFailure, PluginBlockFailureReason, RenderFailure};
 use echode_history::{HostError, PackageError};
 
 #[test]
@@ -73,12 +73,16 @@ fn plugin_block_keeps_device_identity_and_every_failure_reason() {
             "plugin process has exited",
         ),
     ] {
-        let error = CliError::PluginBlock(PluginBlockFailure {
+        let error = CliError::RenderBlock(RenderFailure::Plugin(PluginBlockFailure {
             device: 17,
             clap_id: "test.plugin".into(),
             reason,
-        });
+        }));
         let cause = error
+            .source()
+            .unwrap()
+            .downcast_ref::<RenderFailure>()
+            .unwrap()
             .source()
             .unwrap()
             .downcast_ref::<PluginBlockFailure>()
@@ -93,6 +97,22 @@ fn plugin_block_keeps_device_identity_and_every_failure_reason() {
         assert!(!error.is_cancelled());
         assert!(!error.is_durability_unknown());
     }
+}
+
+#[test]
+fn a_host_mix_failure_keeps_the_track_and_sample_without_a_plugin() {
+    let failure = RenderFailure::NonFiniteMix { track: 23, at: 71 };
+    let error = CliError::RenderBlock(failure.clone());
+    assert_eq!(
+        error.source().unwrap().downcast_ref::<RenderFailure>(),
+        Some(&failure)
+    );
+    assert!(failure.source().is_none());
+    assert_eq!(
+        error.to_string(),
+        "track 23: audio sum produced a NaN or an infinity at sample 71"
+    );
+    assert!(!error.is_cancelled() && !error.is_durability_unknown());
 }
 
 #[test]

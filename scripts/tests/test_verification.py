@@ -145,6 +145,31 @@ class PolicyTests(unittest.TestCase):
         fault = contract["negative_control"]
         self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
 
+    def test_track_mix_fault_contracts_cover_engine_export_and_ui(self):
+        contracts = {c["id"]: c for c in self.policy["product_contracts"]}
+        for name, runner, package in [
+            ("track-mix-fault", "rust", "echode-plugin-host"),
+            ("track-mix-export", "rust", "echode-cli"),
+            ("track-mix-fault-ui", "swift", "swift/EchodeApp"),
+        ]:
+            contract = contracts[name]
+            self.assertEqual(contract["runner"], runner)
+            self.assertEqual(contract.get("package", contract.get("package_path")), package)
+            fault = contract["negative_control"]
+            self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
+        for path in [
+            "crates/echode-engine/src/plugins.rs",
+            "crates/echode-engine/src/meter.rs",
+            "crates/echode-plugin-host/tests/hosted_playback/overflow.rs",
+            "crates/echode-cli/tests/render.rs",
+        ]:
+            self.assertTrue({"check", "check-swift", "check-product-contracts"} <= self.selected(path))
+        for path in [
+            "swift/EchodeBridge/Sources/EchodeBridge/Audio.swift",
+            "swift/EchodeApp/Tests/EchodeAppTests/AutoMuteTests.swift",
+        ]:
+            self.assertTrue({"check-swift", "check-product-contracts"} <= self.selected(path))
+
     def test_main_callback_contracts_cover_realtime_deferral_and_delivery(self):
         contracts = {c["id"]: c for c in self.policy["product_contracts"]}
         for contract_id, target in [
@@ -2571,6 +2596,9 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(
             {c["id"] for c in contracts},
             {
+                "track-mix-fault",
+                "track-mix-export",
+                "track-mix-fault-ui",
                 "export-presets-ui",
                 "export-defaults-ui",
                 "export-input-ui",

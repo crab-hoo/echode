@@ -85,6 +85,24 @@
   ],
   "product_contracts": [
     {
+      "id": "track-mix-fault", "runner": "rust", "package": "echode-plugin-host", "target": ["--test", "hosted_playback"],
+      "test": "overflow::audit_nfa05_an_instrument_is_not_blamed_for_the_sum_with_its_tracks_clip", "timeout": 180,
+      "purpose": "音源と配置・子の和のあふれは装置なしで記録し、モノの昇格・後続 FX・異なるブロック長で位置と解除を保つ（NFA-05）",
+      "negative_control": {"file": "crates/echode-engine/src/plugins.rs", "old": "Planes::Heard => None,", "new": "Planes::Heard => Some(stage.device),"}
+    },
+    {
+      "id": "track-mix-export", "runner": "rust", "package": "echode-cli", "target": ["--test", "render"],
+      "test": "a_host_mix_overflow_refuses_export_without_blaming_a_plugin_or_replacing_the_output", "timeout": 180,
+      "purpose": "実取込みと隔離音源の合流のあふれを型付きで拒否し、既存の書出し先を保全する（NFA-05）",
+      "negative_control": {"file": "crates/echode-engine/src/playback.rs", "old": "&& mute.device.is_none()", "new": "&& false"}
+    },
+    {
+      "id": "track-mix-fault-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests",
+      "suite": "AutoMuteTests", "test": "aHostMixIsReportedWithoutBlamingAnUnknownPlugin", "timeout": 180,
+      "purpose": "装置なしの合流障害を読み、ヘッダとトランスポートの説明がプラグインを責めず、ダイアログを出さない（NFA-05）",
+      "negative_control": {"file": "swift/EchodeApp/Sources/EchodeAppCore/ProjectController.swift", "old": "if first.device == nil {", "new": "if false {"}
+    },
+    {
       "id": "export-presets-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests",
       "suite": "ExportPresetTests", "test": "contractPresetsUseValidatedFieldsAndRemainIndependentOfDocumentDefaults", "timeout": 180,
       "purpose": "名前付き書出しプリセットの検証済み入力・適用・保存の持続・削除・重複拒否を実シートで確認し、前回値・共通既定値・履歴と文書交換から分離する",

@@ -11,7 +11,7 @@
 //! an episode logs at once; later ones are counted and summarised at most every
 //! [`SUMMARY`], and an episode ends after [`SUMMARY`] without a note.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -77,7 +77,7 @@ pub(crate) fn note_pair() -> (NoteSender, AudioLog) {
             notes,
             dropped,
             episodes: BTreeMap::new(),
-            muted: BTreeMap::new(),
+            muted: BTreeSet::new(),
             master_muted: false,
         },
     )
@@ -107,8 +107,8 @@ pub(crate) struct AudioLog {
     notes: Consumer<Note>,
     dropped: Arc<AtomicU64>,
     episodes: BTreeMap<Key, Episode>,
-    /// Tracks the log last saw muted automatically, with the device it named.
-    muted: BTreeMap<u128, u128>,
+    /// Tracks the log last saw muted automatically.
+    muted: BTreeSet<u128>,
     master_muted: bool,
 }
 
@@ -277,28 +277,36 @@ impl AudioLog {
     /// Logs automatic mutes as they start and end (ADR 0282).
     fn mutes(&mut self, scene: &Scene<'_>) {
         for (track, meter) in scene.meters {
-            match (meter.auto_mute(), self.muted.get(track)) {
-                (Some(mute), None) => {
-                    let node = Node::of(scene.project, mute.device);
-                    log::warn!(
-                        target: TARGET,
-                        track:% = Id::from_raw(*track),
-                        device:% = Id::from_raw(mute.device),
-                        plugin = node.plugin.unwrap_or("unknown"),
-                        sample = mute.at;
-                        "a track was muted because a plugin returned a non-finite sample"
-                    );
-                    self.muted.insert(*track, mute.device);
+            match (meter.auto_mute(), self.muted.contains(track)) {
+                (Some(mute), false) => {
+                    if let Some(device) = mute.device {
+                        let node = Node::of(scene.project, device);
+                        log::warn!(
+                            target: TARGET,
+                            track:% = Id::from_raw(*track),
+                            device:% = Id::from_raw(device),
+                            plugin = node.plugin.unwrap_or("unknown"),
+                            sample = mute.at;
+                            "a track was muted because a plugin returned a non-finite sample"
+                        );
+                    } else {
+                        log::warn!(
+                            target: TARGET,
+                            track:% = Id::from_raw(*track),
+                            sample = mute.at;
+                            "a track was muted because its audio sum produced a non-finite sample"
+                        );
+                    }
+                    self.muted.insert(*track);
                 }
-                (None, Some(_)) => {
+                (None, true) => {
                     log::info!(target: TARGET, track:% = Id::from_raw(*track); "a track's automatic mute ended");
                     self.muted.remove(track);
                 }
                 _ => {}
             }
         }
-        self.muted
-            .retain(|track, _| scene.meters.contains_key(track));
+        self.muted.retain(|track| scene.meters.contains_key(track));
         match (scene.master, self.master_muted) {
             (Some((peak, sample)), false) => {
                 log::warn!(
