@@ -139,14 +139,14 @@ AudioToolbox の失敗は `MediaError` の操作別の変種で、`Property` は
 ### ヘルパーの保存・復元・パラメーター・窓の要求が時間切れ／busy になる
 
 `plugin main request N timed out; outcome unknown` は実行の取消ではない。
-メインスレッドに残る要求が完了するまで後続は busy で拒否し、自動再送しない。
+メインスレッドに残る要求が完了するまで後続は busy で拒否し、変更する要求は自動再送しない。
 要求番号 N はヘルパー内部の呼出し番号で、ソケットの応答照合の番号とは別である。
 原因は文面でなく型で見る。ホストの待ちが先に切れた時は `SessionError::Timeout`、ヘルパーの待ちが先なら `Refused(TimedOut(MainCall(N)))` で、どちらも結果不明である。
 後続の拒否は `Refused(Busy)` になる（[ADR 0293](../decisions/0293-typed-helper-boundary-errors.md)）。
 プラグイン自身の失敗は `Refused(Plugin(種類))` で、拡張がない（`NoState`・`NoWindow` など）か、プラグインが断った（`SaveRefused`・`LoadRefused`）かを型で見る。
 予約済み CLAP ID は `Refused(InvalidParameterId(ID))` で、一括変更の全部が未適用である。
 `Refused(UnexpectedMainReply { expected, actual })` はヘルパー内部の手順の不一致で、プラグイン自身の拒否とは分ける。
-表示文の解析や自動再送をせず、型の両方の種類を記録し、`main_requests.rs` と `threads.rs` の対応を調べる（[ADR 0309](../decisions/0309-typed-helper-request-failures.md)）。
+表示文を解析せず、型の両方の種類を記録し、`main_requests.rs` と `threads.rs` の対応を調べる（[ADR 0309](../decisions/0309-typed-helper-request-failures.md)）。
 起動の拒否は `Refused(Launch(原因))` である。未分類の `Other(文)` はなく、旧種類 `0` も拒否する（[ADR 0310](../decisions/0310-typed-plugin-load-boundary.md)）。
 `plugin-main-timeout-state` は機器なしの `slow-save` で再現し、`plugin-control-request-ids` は古い応答の破棄を検査する。
 完了後の復元バイトと新しい保存結果を比較し、実行中の拒否と、古い応答の取り違えを区別する。
@@ -155,6 +155,20 @@ AudioToolbox の失敗は `MediaError` の操作別の変種で、`Property` は
 （[ADR 0227](../decisions/0227-control-only-plugin-operations.md)）。
 親とヘルパーは同じビルドでそろえ、古い起動済みアプリを新しいヘルパーだけに置き換えない
 （[ADR 0199](../decisions/0199-owned-helper-control-requests.md)）。
+
+### 背景のプラグイン状態が保存されない
+
+`echode_sandbox::session` の `background plugin state capture failed` を確認する。
+`cause` は型付きの原因、`request_id` はその制御ソケット内の要求番号、`retry` は未取得の変更が残るかである。
+busy・時間切れ・通信失敗は変更の印を保ち、1 秒以上空けて新しい番号で取り直す（[ADR 0348](../decisions/0348-background-state-capture-retries.md)）。
+復元・値の変更・同期の確定を再送するものではなく、時間切れの実行の取消でもない。
+同じ失敗が続く間は最初の 1 回だけを警告し、取得成功かヘルパーの再起動で間引きを解除する。
+拡張がない・プラグイン自身が拒否した・停止した場合はその取得を終えるが、途中に届いた別の変更は残す。
+保存が毎回 2 秒を超えるプラグインでは取得できないまま再試行を続ける。元の制限は変更していない。
+
+`session_save_tests.rs` は時刻を進めて再試行・間引き・新しい通知の保持を検査する。
+`isolation/state_saves.rs` の実ヘルパーは最初の保存だけが遅く、追加の dirty なしで後の取得が届くことを確かめる。
+取得済みの状態を記録できない場合（DIA-05）とは区別し、文書ワーカー・保管庫・ジャーナル側の警告も確認する。
 
 ### トラックやマスターが急に無音になり、再生し直すと戻る
 

@@ -178,36 +178,55 @@ fn stderr_keeps_the_tail() {
     assert!(slot.chars().all(|ch| ch == 'a'));
 }
 
-/// DIA-04 (docs/reviews/2026-11-13-detailed-implementation-audit.md): a
-/// background save the helper refuses as busy "did not start and changed
-/// nothing, so a later one can succeed". The poller drops the dirty mark with
-/// the refusal, logs nothing and never asks again, so the plugin's change
-/// stays out of the project until the plugin marks itself dirty once more.
+/// DIA-04: a busy capture has not saved the change. Keep it pending, wait
+/// between attempts, and collect a later reply without another dirty notice.
 #[test]
-#[ignore = "DIA-04: a refused background save drops the dirty mark and is not asked again"]
 fn audit_dia04_a_busy_refusal_keeps_the_plugins_change_waiting_for_a_save() {
     let (parent, mut helper) = Socket::pair().unwrap();
     let mut control = PluginControl::new(parent);
+    let now = std::time::Instant::now();
     let wait = Duration::from_secs(5);
     helper.send(&ControlMessage::Dirty).unwrap();
-    // The poll that reads the notice asks for the save.
-    assert!(control.poll_state_save().is_none());
+    assert!(control.poll_state_save_at(now).is_none());
     let (id, request) = helper.recv_tagged(wait).unwrap();
     assert!(matches!(request, ControlMessage::SaveRequest));
     helper
         .send_tagged(id, &ControlMessage::StateRejected(Refusal::Busy))
         .unwrap();
-    // The poll that reads the refusal, then as many as two seconds of worker turns.
-    let mut asked_again = false;
-    for _ in 0..100 {
-        assert!(control.poll_state_save().is_none());
-        if let Ok(Some((_, ControlMessage::SaveRequest))) = helper.try_recv_tagged() {
-            asked_again = true;
-            break;
-        }
+    assert!(control.poll_state_save_at(now).is_none());
+    for turn in 0..50 {
+        assert!(
+            control
+                .poll_state_save_at(now + Duration::from_millis(turn * 20))
+                .is_none()
+        );
+        assert!(
+            helper.try_recv_tagged().unwrap().is_none(),
+            "capture retried too soon"
+        );
     }
     assert!(
-        asked_again,
-        "the change is still only in the plugin and no save was asked for again"
+        control
+            .poll_state_save_at(now + super::SAVE_RETRY)
+            .is_none()
     );
+    let Some((retry, request)) = helper.try_recv_tagged().unwrap() else {
+        panic!("the change is still only in the plugin and no save was asked for again");
+    };
+    assert!(retry > id);
+    assert!(matches!(request, ControlMessage::SaveRequest));
+    helper
+        .send_tagged(retry, &ControlMessage::State(vec![42]))
+        .unwrap();
+    assert_eq!(
+        control.poll_state_save_at(now + super::SAVE_RETRY),
+        Some(vec![42])
+    );
+    assert_eq!(control.applied_state().unwrap().bytes(), [42]);
+    assert!(
+        control
+            .poll_state_save_at(now + super::SAVE_RETRY)
+            .is_none()
+    );
+    assert!(helper.try_recv_tagged().unwrap().is_none());
 }

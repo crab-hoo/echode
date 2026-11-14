@@ -14,6 +14,9 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+#[path = "isolation/state_saves.rs"]
+mod state_saves;
+
 const BUDGET: Duration = Duration::from_micros(30);
 const WARMUP: usize = 200;
 const SAMPLES: usize = 2_000;

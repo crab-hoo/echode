@@ -138,6 +138,10 @@ const WINDOW_REPLY: Duration = Duration::from_secs(10);
 /// 2 GiB do not cross a synchronous request in time.
 const STATE_REPLY: Duration = Duration::from_secs(2);
 
+/// Failed background captures are retried no more than once a second. This
+/// bounds helper requests without blocking a worker turn or dropping changes.
+const SAVE_RETRY: Duration = Duration::from_secs(1);
+
 /// Socket and saved-state access for control threads, independent of the
 /// realtime mapping. Never call these methods from an audio callback.
 ///
@@ -170,6 +174,8 @@ struct ControlState {
     window_open: bool,
     dirty_again: bool,
     save_requested: Option<u64>,
+    save_retry_after: Option<Instant>,
+    save_failure_reported: bool,
     latency_samples: Arc<AtomicU32>,
 }
 
@@ -190,6 +196,8 @@ impl PluginControl {
                 window_open: false,
                 dirty_again: false,
                 save_requested: None,
+                save_retry_after: None,
+                save_failure_reported: false,
                 latency_samples: Arc::clone(&latency_samples),
             })),
             applied,
@@ -233,9 +241,15 @@ impl PluginControl {
 
     /// Poll notices and collect an asynchronous state save. A newer dirty
     /// notice stays pending until the previous reply has been collected.
+    /// Busy or timed-out captures keep the change pending and retry no sooner
+    /// than one second later. A terminal refusal never discards a newer change.
     /// A request in flight on another thread keeps the socket; this poll
     /// returns `None` and the save is collected on a later call.
     pub fn poll_state_save(&mut self) -> Option<Vec<u8>> {
+        self.poll_state_save_at(Instant::now())
+    }
+
+    fn poll_state_save_at(&mut self, now: Instant) -> Option<Vec<u8>> {
         let mut state = match self.socket.try_lock() {
             Ok(state) => state,
             Err(std::sync::TryLockError::Poisoned(error)) => error.into_inner(),
@@ -244,18 +258,35 @@ impl PluginControl {
         if matches!(state.poll_notice(), Ok(Some(PluginNotice::Dirty))) {
             state.dirty_again = true;
         }
-        if state.dirty_again && state.save_requested.is_none() && state.request_save().is_ok() {
-            state.dirty_again = false;
+        if state.dirty_again
+            && state.save_requested.is_none()
+            && state.save_retry_after.is_none_or(|after| now >= after)
+        {
+            match state.request_save() {
+                Ok(()) => state.dirty_again = false,
+                Err(error) => {
+                    let request = state.next_request;
+                    state.save_failed(now, request, true, error);
+                    return None;
+                }
+            }
         }
-        state.save_requested?;
+        let request = state.save_requested?;
         match state.poll_saved() {
             Ok(Some(Ok(bytes))) => {
-                state.save_requested = None;
+                state.save_retry_after = None;
+                state.save_failure_reported = false;
                 Some(bytes)
             }
-            Ok(Some(Err(_))) | Err(_) => {
-                state.save_requested = None;
-                state.dirty_again = false;
+            Ok(Some(Err(refusal))) => {
+                // Capturing state only reads the plugin. A later capture is safe
+                // after an unknown outcome; never retry a mutating operation here.
+                let retry = matches!(refusal, Refusal::Busy | Refusal::TimedOut(_));
+                state.save_failed(now, request, retry, refusal.into());
+                None
+            }
+            Err(error) => {
+                state.save_failed(now, request, true, error);
                 None
             }
             Ok(None) => None,
@@ -264,6 +295,24 @@ impl PluginControl {
 }
 
 impl ControlState {
+    fn save_failed(&mut self, now: Instant, request: u64, retry: bool, error: SessionError) {
+        self.save_requested = None;
+        // A terminal refusal consumes only the change that prompted its request,
+        // never a newer dirty notice received while that request was in flight.
+        self.dirty_again |= retry;
+        self.save_retry_after = Some(now + SAVE_RETRY);
+        if !self.save_failure_reported {
+            log::warn!(
+                target: "echode_sandbox::session",
+                request_id = request,
+                retry = self.dirty_again,
+                cause:? = error;
+                "background plugin state capture failed"
+            );
+            self.save_failure_reported = true;
+        }
+    }
+
     /// Lifecycle notices share the activity stream's order, not the ordering
     /// of a device reply and a later main-thread callback.
     fn set_window_state(&mut self, open: bool) {
@@ -355,7 +404,7 @@ impl ControlState {
 
     /// Asks the helper to save. The reply is collected later by [`Self::poll_saved`].
     /// The poller does not wait for room: a helper that has stopped reading
-    /// leaves the request unsent, and the next poll asks again (ADR 0319).
+    /// leaves the request unsent, and a later poll asks again (ADR 0319).
     pub fn request_save(&mut self) -> Result<(), SessionError> {
         if self.save_requested.is_some() {
             return Err(SessionError::SavePending);
@@ -627,6 +676,8 @@ impl PluginHost {
             control.remembered_request = 0;
             control.save_requested = None;
             control.dirty_again = false;
+            control.save_retry_after = None;
+            control.save_failure_reported = false;
         }
         self.closed = false;
         let fan = self.fan.clone();
@@ -1659,6 +1710,10 @@ mod tests;
 #[cfg(test)]
 #[path = "session_correlation_tests.rs"]
 mod correlation_tests;
+
+#[cfg(test)]
+#[path = "session_save_tests.rs"]
+mod save_tests;
 
 #[cfg(test)]
 #[path = "session_operations_tests.rs"]

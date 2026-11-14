@@ -913,6 +913,7 @@ dependencies = [
 name = "echode-sandbox"
 version = "0.0.0"
 dependencies = [
+ "echode-log",
  "echode-realtime",
  "libc",
  "log",

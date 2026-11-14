@@ -408,7 +408,7 @@ fn a_restore_to_a_helper_that_never_reads_ends_at_the_request_deadline() {
 }
 
 /// The 20 ms background poller never waits for room: a helper that stopped
-/// reading leaves the save request unsent, and a later poll asks again.
+/// reading leaves the save request unsent, and a later, spaced poll asks again.
 #[test]
 fn a_background_save_request_does_not_wait_for_a_helper_that_stopped_reading() {
     let (parent, mut helper) = Socket::pair().unwrap();
@@ -431,7 +431,7 @@ fn a_background_save_request_does_not_wait_for_a_helper_that_stopped_reading() {
     }
     helper.send(&ControlMessage::Dirty).unwrap();
     let start = Instant::now();
-    assert!(control.poll_state_save().is_none());
+    assert!(control.poll_state_save_at(start).is_none());
     assert!(
         start.elapsed() < Duration::from_millis(200),
         "{:?}",
@@ -441,11 +441,15 @@ fn a_background_save_request_does_not_wait_for_a_helper_that_stopped_reading() {
         control.lock().save_requested.is_none(),
         "the request stayed unsent"
     );
-    assert!(control.lock().dirty_again, "the next poll asks again");
+    assert!(control.lock().dirty_again, "a later poll asks again");
 
-    // Once the helper reads, the next poll sends the request.
+    // Once the helper reads, a later poll sends the request.
     while helper.try_recv_tagged().unwrap().is_some() {}
-    assert!(control.poll_state_save().is_none());
+    assert!(
+        control
+            .poll_state_save_at(start + super::SAVE_RETRY)
+            .is_none()
+    );
     let (id, request) = receive(&mut helper);
     assert!(matches!(request, ControlMessage::SaveRequest));
     helper

@@ -92,7 +92,7 @@
   自動ミュートの画面は UC-63・79、期限は UC-64、実機・聴感は UC-50・75。
 - **プラグインの状態の大きさ**: 上限はない。取得・復元は送信込みで 2 秒待ち、2 GiB 前後から時間切れになる（[ADR 0319](decisions/0319-control-send-deadline.md)）。
 - **ヘルパーの時間切れ（SPG-01）**: 実行中の制御要求があれば、次の要求は busy で拒否する。
-  時間切れは結果不明で、プラグインの実行自体の取消・自動再送はしない（[ADR 0199](decisions/0199-owned-helper-control-requests.md)）。
+  時間切れは結果不明で、背景取得以外は自動再送しない（[ADR 0348](decisions/0348-background-state-capture-retries.md)）。
   実機・第三者の応答と聴感は UC-28・76・77。
 - **プラグインの窓での変更（DOC-A1・A2）**: そのデバイス自身の Undo が、画面の知らない途中の変更を読み込み直すことは残る。
   出力を開き直すと、ヘルパーは記録した状態から作り直される（[ADR 0229](decisions/0229-plugin-window-live-edits.md)）。
