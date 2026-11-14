@@ -420,6 +420,7 @@ pub(crate) struct EchodeHost;
 
 pub(crate) struct HostMain<'a> {
     bridge: Option<Arc<Bridge>>,
+    pub(crate) timers: RefCell<crate::plugin_timers::Timers>,
     _lifetime: std::marker::PhantomData<&'a ()>,
 }
 
@@ -428,6 +429,7 @@ impl<'a> MainThreadHandler<'a> for HostMain<'a> {}
 pub(crate) fn host_main(shared: &HostShared) -> HostMain<'_> {
     HostMain {
         bridge: shared.bridge.clone(),
+        timers: RefCell::default(),
         _lifetime: std::marker::PhantomData,
     }
 }
@@ -716,7 +718,7 @@ unsafe impl ExtensionImplementation<EchodeHost> for HostThreadCheck {
         });
 }
 
-unsafe extern "C" fn host_is_main_thread(host: *const clap_host) -> bool {
+pub(crate) unsafe extern "C" fn host_is_main_thread(host: *const clap_host) -> bool {
     // SAFETY: the plugin returns this instance's live host pointer. `handle`
     // accesses only the shared handler, even when called from another thread.
     unsafe {
@@ -739,13 +741,17 @@ impl HostHandlers for EchodeHost {
     type MainThread<'a> = HostMain<'a>;
     type AudioProcessor<'a> = ();
 
-    fn declare_extensions(builder: &mut HostExtensions<Self>, _shared: &Self::Shared<'_>) {
+    fn declare_extensions(builder: &mut HostExtensions<Self>, shared: &Self::Shared<'_>) {
         builder.register::<HostState>();
         builder.register::<HostGui>();
         builder.register::<HostParams>();
         builder.register::<HostLatency>();
         builder.register::<HostThreadCheck>();
         builder.register::<HostLog>();
+        // The comparison-only inert host has no main loop to deliver timers.
+        if shared.bridge.is_some() {
+            builder.register::<crate::plugin_timers::HostTimers>();
+        }
     }
 }
 
@@ -990,7 +996,11 @@ fn serve_region(
         let control_handle = scope.spawn(|| control_thread(&bridge_control, control));
         bridge.signal();
         while !bridge.stop.load(Ordering::Acquire) {
-            gui::run_once(0.05, |command| {
+            let maximum_wait = std::time::Duration::from_millis(50);
+            let wait = loaded.as_ref().map_or(maximum_wait, |loaded| {
+                crate::plugin_timers::wait(&loaded.instance, maximum_wait)
+            });
+            gui::run_once(wait.as_secs_f64(), |command| {
                 bridge
                     .gui_commands
                     .lock()
@@ -999,6 +1009,11 @@ fn serve_region(
                 bridge.bump_control();
             });
             tick_window(&bridge);
+            if !bridge.stop.load(Ordering::Acquire)
+                && let Some(loaded) = loaded.as_ref()
+            {
+                crate::plugin_timers::tick(&loaded.instance);
+            }
         }
         // A thread that panicked has already printed why; the helper exits
         // with an error, which the parent reads as the helper ending.

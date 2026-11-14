@@ -214,7 +214,8 @@ PDC は、トラックとフォルダの合流点の遅延線で揃え、書出�
 センド・サイドチェイン・ドラム用の MIDI 配布は未接続で、合流はこのグラフの辺として足す。
 CLAP の遅延の取得とデバイス列の表示は [ADR 0246](decisions/0246-plugin-latency-reporting.md) で接続した。
 `clap.thread-check` と `clap.log` は [ADR 0347](decisions/0347-clap-thread-check.md)・[ADR 0349](decisions/0349-clap-log-relay.md) で接続した。
-`timer-support` 等のホスト拡張は残る。
+`clap.timer-support` は停止中・窓なしでも主スレッドから通知し、callback 中の登録・解除を扱う（[ADR 0351](decisions/0351-clap-main-thread-timers.md)）。
+`tail`・`audio-ports`・`note-ports` のホスト側は残る。
 フォルダバスは Reaper と同じ意味にし、センド・サイドチェインより先に FCA-06 の解決として実装した（[ADR 0277](decisions/0277-reaper-style-folder-bus.md)）。
 
 - フォルダの入れ子、センド／リターン、サイドチェーン、PDC（クリップ FX や重なる配置の合流を含む）を制御側の実行計画へ組み込む。循環の拒否、チャンネルの意味、加算順序、レイテンシ変更と計画交換を定義する。

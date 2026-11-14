@@ -48,6 +48,7 @@ mod host_log;
 mod latency;
 mod params;
 mod thread_check;
+mod timer_support;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Role {
@@ -137,7 +138,10 @@ impl Plugin for TestGain {
             builder.register::<PluginAudioPorts>();
         }
         if matches!(current_role(), Role::State | Role::Params)
-            || matches!(fault_now(), Fault::RestartNested | Fault::ThreadCheck)
+            || matches!(
+                fault_now(),
+                Fault::RestartNested | Fault::ThreadCheck | Fault::TimerSupport
+            )
         {
             builder.register::<PluginStateExt>();
         }
@@ -150,6 +154,9 @@ impl Plugin for TestGain {
         }
         if matches!(fault_now(), Fault::Latency | Fault::Delay | Fault::Claim) {
             builder.register::<latency::PluginLatency>();
+        }
+        if fault_now() == Fault::TimerSupport {
+            builder.register::<timer_support::PluginTimers>();
         }
     }
 }
@@ -181,8 +188,12 @@ impl DefaultPluginFactory for TestGain {
         if fault_now() == Fault::HostLog {
             host_log::initialize(host.shared())?;
         }
+        let timer_probe = (fault_now() == Fault::TimerSupport)
+            .then(|| timer_support::Probe::new(host))
+            .transpose()?;
         Ok(TestMain {
             role: current_role(),
+            timer_probe: std::cell::RefCell::new(timer_probe),
             // SAFETY: load runs on this same main thread, while the host is still alive.
             host: unsafe { host.with_arbitrary_lifetime() },
         })
@@ -192,6 +203,7 @@ impl DefaultPluginFactory for TestGain {
 pub struct TestMain {
     role: Role,
     host: HostMainThreadHandle<'static>,
+    timer_probe: std::cell::RefCell<Option<timer_support::Probe>>,
 }
 
 impl TestMain {
@@ -285,6 +297,8 @@ enum Fault {
     ThreadCheck,
     /// Logs through the host from initialization, background and audio threads.
     HostLog,
+    /// Registers and cancels main-thread timers, including during callbacks.
+    TimerSupport,
 }
 
 /// For [`Fault::RestartNested`]: activations so far, and whether the first
@@ -316,6 +330,7 @@ fn fault_code(text: &str) -> u8 {
         "restart-nested" => 22,
         "thread-check" => 23,
         "host-log" | "host-log-refuse" => 24,
+        "timer-support" => 25,
         _ if text.starts_with("restart-nested:") => 22,
         _ if text.starts_with("delay:") => 19,
         // The event counter, with the second process call held as `process-wait`.
@@ -353,6 +368,7 @@ fn fault_from_code(code: u8) -> Fault {
         22 => Fault::RestartNested,
         23 => Fault::ThreadCheck,
         24 => Fault::HostLog,
+        25 => Fault::TimerSupport,
         _ => Fault::None,
     }
 }
@@ -595,6 +611,9 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
         }
         if self.fault == Fault::HostLog {
             host_log::process(self.host)?;
+        }
+        if self.fault == Fault::TimerSupport {
+            timer_support::reject_off_main(self.host)?;
         }
         self.process_calls += 1;
         if (self.process_calls == 2 || (self.process_gate_twice && self.process_calls == 4))
@@ -853,6 +872,7 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
             Fault::None
             | Fault::ThreadCheck
             | Fault::HostLog
+            | Fault::TimerSupport
             | Fault::Activate
             | Fault::Generate
             | Fault::SlowSave
@@ -1264,6 +1284,8 @@ unsafe extern "C" fn state_save(plugin: *const clap_plugin, stream: *const clap_
     }
     let byte = if fault_now() == Fault::ThreadCheck {
         thread_check::snapshot()
+    } else if fault_now() == Fault::TimerSupport {
+        timer_support::snapshot()
     } else {
         STATE_BYTE.load(Ordering::Acquire)
     };

@@ -236,6 +236,16 @@ bit 7 が立つ時は誤った判定で、下位 bit の不足は未到達の区
 スロットの寿命・満杯・競合は `cargo test -q -p echode-plugin-host --lib plugin_log::tests` で確認する。
 第三者の診断はプラグイン ID・名前・版、重大度、切詰め・破棄の有無を記録する（[ADR 0349](../decisions/0349-clap-log-relay.md)、UC-81）。
 
+### CLAP の定期更新が止まる・`timer-support` の通知が遅い
+
+`clap.timer-support` の登録表は `plugin_timers.rs` にあり、`threads.rs` の主ループが最初の期限まで待って通知する。
+窓や音声のブロックの有無に依存しない。0 ms・null の出力・主スレッド以外の登録や解除は拒否する。
+主スレッドの処理や入れ子のモーダルループで通知が遅れることはあり、遅れた周期を連続で取り戻さない。
+`cargo test -q -p echode-plugin-host --test isolation timer_support::` は実ヘルパーで登録・解除・反復・スレッドの判定を照合する。
+状態の bit 7 は失敗、下位 4 bit の不足は未到達の段階で、`extension is unavailable` は拡張の登録欠落である。
+`cargo test -q -p echode-plugin-host --lib plugin_timers::` は時刻を引数で進め、期限と ID の境界を検証する。
+第三者だけの遅れは名前・版・要求周期・窓やモーダルの操作を記録し、ヘルパーの主スレッドの処理と分ける（[ADR 0351](../decisions/0351-clap-main-thread-timers.md)、UC-82）。
+
 ### CLAP が鳴らない・走査失敗
 
 プラグイン ID、バンドル走査（macOS の `.clap` ディレクトリを含む）、キャッシュ、ヘルパー起動、入出力バスを追う。走査失敗時は子の終了コードとシグナルを確認する。本体プロセスにプラグインをロードして切り分けてはいけない。

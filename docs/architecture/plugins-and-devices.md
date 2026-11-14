@@ -27,7 +27,11 @@ CLAP の遅延は有効化の直後にメインスレッドで読み、初回の
 問合せはロック・確保・IPC をしない。比較用の同一スレッド処理も音声区間を明示する（[ADR 0347](../decisions/0347-clap-thread-check.md)）。
 `clap.log` は任意スレッドの診断を固定量のスロットへ写し、制御側だけがプラグイン ID・重大度付きで stderr へ書く。
 先頭 1,024 byte の切詰めと、満杯・競合の破棄を明示し、音声側では確保・ロック・書込みをしない。
-詳細は [ADR 0349](../decisions/0349-clap-log-relay.md)。`timer-support` 等のホスト拡張は未接続である。
+詳細は [ADR 0349](../decisions/0349-clap-log-relay.md)。
+`clap.timer-support` は主スレッドの handler が登録を持ち、ヘルパーの主ループが最初の期限まで待って通知する。
+停止中・窓なしでも動き、callback 中の自己解除・後続の解除・追加を許す。遅れた周期をまとめて再送しない。
+登録表はインスタンスとともに破棄し、音声スレッドへ時計・確保・ロックを足さない（[ADR 0351](../decisions/0351-clap-main-thread-timers.md)）。
+通知は主ループの進行に依存し、実時間の精度は保証しない。`tail`・`audio-ports`・`note-ports` のホスト側は残る。
 
 ### 9.2 プロセスの分け方
 

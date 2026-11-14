@@ -33,6 +33,7 @@ pub use launch::LoadError;
 mod main_requests;
 mod main_signal;
 mod plugin_log;
+mod plugin_timers;
 mod relay;
 pub use awake::HelperActivity;
 

@@ -18,6 +18,8 @@ use std::time::{Duration, Instant};
 mod plugin_log;
 #[path = "isolation/state_saves.rs"]
 mod state_saves;
+#[path = "isolation/timer_support.rs"]
+mod timer_support;
 
 const BUDGET: Duration = Duration::from_micros(30);
 const WARMUP: usize = 200;
