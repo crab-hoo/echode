@@ -63,6 +63,10 @@ CLAP の遅延は有効化の直後にメインスレッドで読み、初回の
   ヘルパーは受け取った後に受信権を手放し、名前の登録を消す。Mach の束縛は mach2、Workgroup の宣言は `os_workgroup.rs` にある（[ADR 0326](../decisions/0326-foreign-declarations-checked-against-the-sdk.md)）。
   製品の HAL 選択デバイスから Workgroup を取得・保持し、プラグイン追加・再作成・再起動でも引き継ぐ。
   オフライン書き出しはデバイスの Workgroup を使わない（[ADR 0113](../decisions/0113-product-macos-workgroup-and-caches.md)）
+- **メインへの通知**: 処理スレッドは `MainSignal` の保留ビットを立て、既存の `control_alarm` だけを起こす。
+  制御スレッドがビットを先に消費してから `CFRunLoopSourceSignal`・`CFRunLoopWakeUp` を呼ぶ。
+  `request_callback`・起動要求・GUI の通知を同じ入口で中継し、通常の制御ループと再起動・メイン応答の待ちでも取り出す。
+  メイン・制御・プラグインのほかのスレッドからの通知は直接起こす。処理スレッドはメインを待たない（[ADR 0343](../decisions/0343-relay-realtime-main-notifications.md)）。
 
 ### 9.4 クラッシュとハング
 

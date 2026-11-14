@@ -189,9 +189,11 @@ DSP の状態と CLAP の保存ペイロードは別の形式なので、どち�
 dylib 固有の検査用 TLS は、ヘルパーの最初の非 RT 起動段階の `start_processing` で初期化する。
 検知を外さず、未発音の新しいヘルパーで最初の処理も検査する。
 RTSan が `CFRunLoopSourceSignal` の中の `pthread_mutex_lock` を報告する時は、
-プラグインが `process` の中で `request_callback` を呼んでいる（RTA-01。未修正）。
-`make rtsan` は名前に `under_rtsan` を含むテストだけを動かすので、ほかのテストを RTSan で動かす時は名前を直接渡す。
-再現は `RTSAN_ENABLE=1 cargo test -p echode-plugin-host --features rtsan --test isolation -- --ignored audit_rta01` である。
+処理スレッドから `Bridge::signal` を通らず source を直接起こしていないか、`ON_AUDIO` が外れていないかを調べる。
+共通入口は処理側の通知を `MainSignal` に保留し、制御側が `relay` で取り出す（[ADR 0343](../decisions/0343-relay-realtime-main-notifications.md)）。
+通知が届かない時は `callback_gen`・`callback_seen` と保留ビット、`control_alarm`、制御スレッドの待ちを照合する。
+回帰は `cargo test -q -p echode-plugin-host --test isolation audit_rta01` と `cargo test -q -p echode-plugin-host --lib main_signal::tests`。
+全体の段階の `make rtsan` では、同じ隔離回帰が `under_rtsan` の名前で処理区間のロックも検査する。
 
 ### CLAP が鳴らない・走査失敗
 

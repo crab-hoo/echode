@@ -31,6 +31,7 @@ mod gui;
 mod launch;
 pub use launch::LoadError;
 mod main_requests;
+mod main_signal;
 mod relay;
 pub use awake::HelperActivity;
 

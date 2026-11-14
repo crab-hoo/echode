@@ -47,7 +47,7 @@ RTA-05〜08 は再現テストのない指摘で、コードから読んだ事�
 
 | 番号 | 段 | 内容 | 状態 |
 |---|---|---|---|
-| RTA-01 | 堅牢性 | プラグインが `process` の中で `request_callback` を呼ぶと、処理スレッドが `CFRunLoopSourceSignal` と `CFRunLoopWakeUp` を呼び、`pthread_mutex_lock` を取る | 再現済み（RTSan）・未修正 |
+| RTA-01 | 堅牢性 | プラグインが `process` の中で `request_callback` を呼ぶと、処理スレッドが `CFRunLoopSourceSignal` と `CFRunLoopWakeUp` を呼び、`pthread_mutex_lock` を取る | 対応済み（[ADR 0343](../decisions/0343-relay-realtime-main-notifications.md)） |
 | RTA-02 | 堅牢性 | 再起動の途中でもう一度 `request_restart` が来ると、ヘルパーの制御スレッドが待ち続け、以後の制御の要求に答えない。2 回目の再起動も行われない | 対応済み（[ADR 0342](../decisions/0342-restart-completion-gates-processing.md)） |
 | RTA-03 | 堅牢性 | 前のブロックの処理中に公開されたブロックは、その間に共有領域の交換が有効になると処理されず、イベントが消える | 対応済み（ADR 0341） |
 | RTA-04 | 堅牢性 | ヘルパーが 2 ブロック遅れている間のブロックは `submit failed` になり、そのブロックのイベントを後で送らない。ノートオフなら鳴り続ける | 対応済み（ADR 0341） |
@@ -83,6 +83,12 @@ RTA-09 は指摘ではなく、確かめて問題がなかった項目の一覧�
 - **直し方の案**: 処理スレッドでは CoreFoundation を呼ばない。
   `ON_AUDIO` の時は `callback_gen`（または `op`）を進めて制御スレッドを起こすだけにし、制御スレッドが `signal` を呼ぶ。
   完了条件は、上のテストの `#[ignore]` を外して `make rtsan` が通ること。名前に `under_rtsan` があるので、そのまま `make rtsan` に入る。
+- **対応（2026-11-14）**: [ADR 0343](../decisions/0343-relay-realtime-main-notifications.md)。
+  `Bridge::signal` の共通入口で処理スレッドの通知を保留し、制御スレッドが source を起こす。
+  起動要求と GUI の通知も同じ中継を通す。保留は再起動待ち・メイン応答待ちの中でも取り出す。
+  上の回帰の feature 条件と無視を外し、通常の必須契約と全体の段階の RTSan へ入れた。
+  単体回帰は通知の集約と再通知、実 source の実行、制御側からの起床を確認する。
+  実機・第三者プラグインの GUI 更新と聴感は UC-77。今回 RTSan を手元で再実行せず、全体の段階の実行は GitHub に任せる。
 
 ### RTA-02 重なった再起動の要求で制御スレッドが戻らない
 

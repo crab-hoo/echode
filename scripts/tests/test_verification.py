@@ -145,6 +145,26 @@ class PolicyTests(unittest.TestCase):
         fault = contract["negative_control"]
         self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
 
+    def test_main_callback_contracts_cover_realtime_deferral_and_delivery(self):
+        contracts = {c["id"]: c for c in self.policy["product_contracts"]}
+        for contract_id, target in [
+            ("plugin-main-signal", ["--lib"]),
+            ("plugin-main-callback", ["--test", "isolation"]),
+        ]:
+            contract = contracts[contract_id]
+            self.assertEqual((contract["runner"], contract["package"]), ("rust", "echode-plugin-host"))
+            self.assertEqual(contract["target"], target)
+            self.assertTrue(contract["test"].endswith("_under_rtsan"))
+            fault = contract["negative_control"]
+            self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
+        for path in [
+            "crates/echode-plugin-host/src/main_signal.rs",
+            "crates/echode-plugin-host/src/main_signal_tests.rs",
+            "crates/echode-plugin-host/src/threads.rs",
+            "crates/echode-plugin-host/tests/isolation.rs",
+        ]:
+            self.assertTrue({"check", "check-swift", "check-product-contracts"} <= self.selected(path))
+
     def test_nested_restart_contract_covers_the_helper_and_its_fixture(self):
         contract = next(c for c in self.policy["product_contracts"] if c["id"] == "plugin-nested-restart")
         self.assertEqual((contract["runner"], contract["package"]), ("rust", "echode-plugin-host"))
@@ -2583,6 +2603,8 @@ class PolicyTests(unittest.TestCase):
                 "integer-loop-draft-ui",
                 "plugin-main-call-ownership",
                 "plugin-main-timeout-state",
+                "plugin-main-signal",
+                "plugin-main-callback",
                 "plugin-nested-restart",
                 "plugin-control-request-ids",
                 "plugin-control-save-order",

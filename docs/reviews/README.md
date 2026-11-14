@@ -155,6 +155,7 @@
   RTA-01〜04 を `audit_rta*` で再現した。機器のコールバック・Swift・Metal には確定した指摘がない。
   RTA-03・04 は [ADR 0341](../decisions/0341-recover-notes-after-helper-overrun.md) で対応した。領域交換は公開済みを処理してから行い、未公開のノートは現在の発音へ戻す。
   RTA-02 は [ADR 0342](../decisions/0342-restart-completion-gates-processing.md) で対応し、メインの完了世代まで処理を再開しない。再起動中の制御スレッドの空回りも止めた。
+  RTA-01 は [ADR 0343](../decisions/0343-relay-realtime-main-notifications.md) で対応し、処理スレッドのメイン通知を制御側から起こす。
 - CLAP バンドル・停止時リセット・自然な発音: [ADR 0093](../decisions/0093-product-contract-gate.md)、[ADR 0099](../decisions/0099-transport-plugin-state.md)、[ADR 0106](../decisions/0106-natural-plugin-onsets.md)。
 - macOS ヘルパー通知・Workgroup 引き継ぎ: [2026-10-17 macOS 境界監査](2026-10-17-macos-helper-audit.md)、[ADR 0111](../decisions/0111-macos-helper-notices.md)、[ADR 0113](../decisions/0113-product-macos-workgroup-and-caches.md)。
 - フォルダ型ドラムラックと FX チェイン: [ADR 0116](../decisions/0116-folder-drum-rack.md)、[ADR 0118](../decisions/0118-track-fx-chain-editing.md)。

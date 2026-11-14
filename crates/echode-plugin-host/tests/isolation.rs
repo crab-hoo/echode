@@ -664,30 +664,38 @@ fn a_process_request_during_a_held_nested_restart_does_not_start_audio_early() {
     std::fs::remove_file(path).expect("remove restart gate");
 }
 
-/// RTA-01. `request_callback` is thread-safe in CLAP and plugins call it from
-/// `process`. The helper answers by signalling its main run loop there, which
-/// takes CoreFoundation's locks on the processing thread. RTSan stops the
-/// helper, so the block is not answered. Only an RTSan build can see it:
-/// `RTSAN_ENABLE=1 cargo test -p echode-plugin-host --features rtsan --test isolation -- --ignored audit_rta01`.
-#[cfg(feature = "rtsan")]
+/// RTA-01. A callback requested inside `process` must reach main without
+/// taking CoreFoundation's locks on the processing thread.
 #[test]
-#[ignore = "RTA-01: request_callback in process signals the run loop on the processing thread"]
 fn audit_rta01_a_callback_requested_in_process_under_rtsan() {
     let mut host = spawn_plugin(Some("callback"), SessionLayout::stereo());
-    let input = stereo(32, 0.3);
-    let mut output = [vec![0.0; 32], vec![0.0; 32]];
-    let planes: [&[f32]; 2] = [&input[0], &input[1]];
-    host.process(&planes, &mut outs(&mut output), Duration::from_secs(2))
-        .expect("the block that requests a main-thread callback");
-    let started = Instant::now();
-    while !host.stderr_log().contains("on-main-thread") {
+    // These block lengths exercise only this fixture, not a product limit.
+    for (index, frames) in [1, 32, 128].into_iter().enumerate() {
+        let input = stereo(frames, 0.3);
+        let mut output = stereo(frames, 0.0);
+        let planes: [&[f32]; 2] = [&input[0], &input[1]];
+        host.process(&planes, &mut outs(&mut output), Duration::from_secs(2))
+            .expect("the block that requests a main-thread callback");
         assert!(
-            started.elapsed() < Duration::from_secs(2),
-            "main-thread callback was not delivered: {}",
-            host.stderr_log()
+            output
+                .iter()
+                .flatten()
+                .zip(input.iter().flatten())
+                .all(|(actual, source)| (*actual - *source * 2.0).abs() < 1.0e-6)
         );
-        std::thread::sleep(Duration::from_millis(10));
+        let started = Instant::now();
+        while host.stderr_log().matches("on-main-thread").count() < index + 1 {
+            assert!(
+                started.elapsed() < Duration::from_secs(2),
+                "main-thread callback was not delivered while audio was idle: {}",
+                host.stderr_log()
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        host.set_chain(1)
+            .expect("control still answers after a callback");
     }
+    host.shutdown().expect("shutdown after callbacks");
 }
 
 /// RTA-03. A mapping change must drain every published block, including those

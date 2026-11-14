@@ -8,6 +8,7 @@ use crate::events::write_input;
 use crate::extension::table;
 use crate::gui::GuiRequests;
 use crate::main_requests::{MainReply, MainRequest, MainRequests};
+use crate::main_signal::MainSignal;
 use crate::relay::{RelayOutput, RelayRing};
 use crate::{HostError, LoadError, gui, host_info, load_entry};
 use clack_host::events::io::{EventBuffer, InputEvents};
@@ -156,8 +157,7 @@ impl ProcessorHandoff {
 }
 
 struct Bridge {
-    source: AtomicPtr<CFRunLoopSource>,
-    run_loop: AtomicPtr<CFRunLoop>,
+    main_signal: MainSignal,
     root: Arc<MappedRegion>,
     current: AtomicPtr<Arc<MappedRegion>>,
     pending: AtomicPtr<Arc<MappedRegion>>,
@@ -234,17 +234,8 @@ unsafe impl Sync for Bridge {}
 
 impl Bridge {
     fn signal(&self) {
-        let source = self.source.load(Ordering::Acquire);
-        let run_loop = self.run_loop.load(Ordering::Acquire);
-        if source.is_null() || run_loop.is_null() {
-            return;
-        }
-        // SAFETY: `serve_region` stores both pointers before any worker starts and keeps the source
-        // and the run loop retained until the workers have been joined and the plugin is gone;
-        // CoreFoundation allows signalling a source and waking a run loop from any thread.
-        unsafe {
-            (*source).signal();
-            (*run_loop).wake_up();
+        if self.main_signal.signal(ON_AUDIO.with(|flag| flag.get())) {
+            self.bump_control();
         }
     }
 
@@ -749,8 +740,7 @@ fn serve_region(
     let region = Box::into_raw(Box::new(Arc::clone(&root)));
     let fan = fan.map(|fan| Box::into_raw(Box::new(fan)));
     let bridge = Arc::new(Bridge {
-        source: AtomicPtr::new(ptr::null_mut()),
-        run_loop: AtomicPtr::new(ptr::null_mut()),
+        main_signal: MainSignal::default(),
         root,
         current: AtomicPtr::new(region),
         pending: AtomicPtr::new(ptr::null_mut()),
@@ -819,13 +809,9 @@ fn serve_region(
     let run_loop = CFRunLoop::current().ok_or(HostError::NoRunLoop)?;
     // SAFETY: the common-modes symbol is a process-wide constant.
     run_loop.add_source(Some(&source), unsafe { kCFRunLoopCommonModes });
-    // Retained below so the pointers stay valid until the worker threads are joined.
-    bridge
-        .source
-        .store(ptr::from_ref(&*source).cast_mut(), Ordering::Release);
-    bridge
-        .run_loop
-        .store(ptr::from_ref(&*run_loop).cast_mut(), Ordering::Release);
+    // SAFETY: both objects remain retained below until the workers have joined
+    // and the plugin is gone, so no caller can outlive them.
+    unsafe { bridge.main_signal.install(&source, &run_loop) };
     let _kept_source: CFRetained<CFRunLoopSource> = source;
     let _kept_loop: CFRetained<CFRunLoop> = run_loop;
 
@@ -1500,6 +1486,7 @@ fn control_thread(bridge: &Bridge, mut socket: Option<Socket>) -> Result<(), Hos
         if bridge.stop.load(Ordering::Acquire) {
             return Ok(());
         }
+        bridge.main_signal.relay();
         let want = bridge.restart_request.load(Ordering::Acquire);
         if want != restarted {
             while bridge.restart_ack.load(Ordering::Acquire) < want
@@ -1753,6 +1740,7 @@ fn pause(bridge: &Bridge, socket: Option<&Socket>, seen: u64) -> u64 {
 }
 
 fn wait_control(bridge: &Bridge, seen: u64) -> u64 {
+    bridge.main_signal.relay();
     echode_sandbox::wait_until_ne(&bridge.control_alarm, seen, SyncFlags::THREAD)
         .unwrap_or(seen.wrapping_add(1))
 }
@@ -1982,6 +1970,7 @@ fn call_main(bridge: &Bridge, request: MainRequest) -> Result<MainReply, Refusal
     bridge.signal();
     let started = std::time::Instant::now();
     loop {
+        bridge.main_signal.relay();
         if let Some(reply) = call.take_reply() {
             return reply;
         }
@@ -2719,12 +2708,7 @@ fn publish_stopped(
 }
 
 fn stop_loop(bridge: &Bridge) {
-    let run_loop = bridge.run_loop.load(Ordering::Acquire);
-    if !run_loop.is_null() {
-        // SAFETY: `serve_region` keeps the run loop retained until the workers have been joined;
-        // CoreFoundation allows stopping a run loop from any thread.
-        unsafe { (*run_loop).stop() };
-    }
+    bridge.main_signal.stop();
 }
 
 fn emit_line(line: &str) {

@@ -285,6 +285,18 @@
       "negative_control": {"file": "crates/echode-plugin-host/src/threads.rs", "old": "load_plugin_state(instance, &bytes)?;", "new": "load_plugin_state(instance, &[64])?;"}
     },
     {
+      "id": "plugin-main-signal", "runner": "rust", "package": "echode-plugin-host", "target": ["--lib"],
+      "test": "main_signal::tests::realtime_notifications_are_deferred_and_coalesced_under_rtsan", "timeout": 180,
+      "purpose": "処理スレッドのメイン通知は原子変数へ集約し、制御側が消費するまで CoreFoundation を呼ばない（RTA-01）",
+      "negative_control": {"file": "crates/echode-plugin-host/src/main_signal.rs", "old": "if realtime {", "new": "if false && realtime {"}
+    },
+    {
+      "id": "plugin-main-callback", "runner": "rust", "package": "echode-plugin-host", "target": ["--test", "isolation"],
+      "test": "audit_rta01_a_callback_requested_in_process_under_rtsan", "timeout": 180,
+      "purpose": "process 内の callback 要求が、次のブロックなしでもメインへ届き、異なるブロック長で音声と制御応答を保つ（RTA-01）",
+      "negative_control": {"file": "crates/echode-plugin-host/src/threads.rs", "old": "bridge.callback_gen.fetch_add(1, Ordering::Release);", "new": "bridge.callback_gen.fetch_add(0, Ordering::Release);"}
+    },
+    {
       "id": "plugin-nested-restart", "runner": "rust", "package": "echode-plugin-host", "target": ["--test", "isolation"],
       "test": "audit_rta02_a_restart_requested_while_restarting_is_run_and_the_helper_keeps_answering", "timeout": 180,
       "purpose": "activate 中の次の再起動要求を処理し、両方の完了後に制御応答・状態保存・音声が戻る。処理の再開はメインの完了世代に限る（RTA-02）",
