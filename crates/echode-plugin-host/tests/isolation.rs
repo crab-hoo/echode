@@ -532,14 +532,9 @@ fn audit_pro08_restart_under_rtsan() {
     assert!((output[0][0] - input[0][0] * 2.0).abs() < 1.0e-6);
 }
 
-/// RTA-02. The plugin asks for a restart in its first block and again from
-/// the activation that restart runs, which then takes 50 ms to return. The
-/// processing thread acknowledges the second request while it holds no
-/// processor, then starts the processor the first restart activated. The
-/// control thread waits for that processor to be released, which nothing
-/// asks for any more, and no longer reads its socket.
+/// RTA-02. A restart requested by activate must finish before audio starts
+/// the processor, even if audio has already acknowledged the newer request.
 #[test]
-#[ignore = "RTA-02: a restart requested while restarting leaves the helper's control thread waiting"]
 fn audit_rta02_a_restart_requested_while_restarting_is_run_and_the_helper_keeps_answering() {
     let mut host = spawn_plugin(Some("restart-nested"), SessionLayout::stereo());
     let input = stereo(32, 0.2);
@@ -564,6 +559,109 @@ fn audit_rta02_a_restart_requested_while_restarting_is_run_and_the_helper_keeps_
         .expect("a block after the restarts");
     host.set_chain(1)
         .expect("the control thread still answers after the nested restart");
+    assert_eq!(
+        host.control_handle()
+            .capture_state()
+            .expect("save after both restarts"),
+        [64]
+    );
+    let started = Instant::now();
+    loop {
+        host.process(&planes, &mut outs(&mut output), Duration::from_secs(2))
+            .expect("audio resumes after both restarts");
+        if output[0]
+            .iter()
+            .zip(&input[0])
+            .all(|(sample, input)| (*sample - input * 2.0).abs() < 1.0e-6)
+        {
+            break;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "audio stayed silent"
+        );
+        std::thread::yield_now();
+    }
+}
+
+#[test]
+fn a_process_request_during_a_held_nested_restart_does_not_start_audio_early() {
+    use std::io::{Read, Write};
+    // These socket and block sizes bound only this regression, not product capacity.
+    let path = PathBuf::from("/tmp").join(format!("echode-rta02-{}.sock", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    let listener = std::os::unix::net::UnixListener::bind(&path).expect("restart gate socket");
+    listener
+        .set_nonblocking(true)
+        .expect("nonblocking listener");
+    let fault = format!("restart-nested:{}", path.display());
+    let mut host = spawn_plugin(Some(&fault), SessionLayout::stereo());
+    let input = stereo(32, 0.2);
+    let mut output = [vec![0.0; 32], vec![0.0; 32]];
+    let planes: [&[f32]; 2] = [&input[0], &input[1]];
+    host.process(&planes, &mut outs(&mut output), Duration::from_secs(2))
+        .expect("the first block requests a restart");
+    let started = Instant::now();
+    let mut gate = loop {
+        match listener.accept() {
+            Ok((gate, _)) => break gate,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(error) => panic!("restart gate accept: {error}"),
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "restart gate was not reached"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    gate.set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("restart gate timeout");
+    gate.read_exact(&mut [0])
+        .expect("activate requested restart and process");
+    let control = host.control_handle();
+    std::thread::scope(|scope| {
+        // A queued socket request must not prevent the internal restart handoff.
+        let save = scope.spawn(|| control.capture_state());
+        for _ in 0..4 {
+            host.process(&planes, &mut outs(&mut output), Duration::from_secs(2))
+                .expect("audio keeps answering while activate is held");
+            assert!(output.iter().flatten().all(|sample| *sample == 0.0));
+        }
+        gate.write_all(&[1]).expect("release the nested activation");
+        assert_eq!(
+            save.join()
+                .expect("save thread")
+                .expect("save after restart"),
+            [64]
+        );
+    });
+    let started = Instant::now();
+    let mut notices = 0;
+    let mut audible = false;
+    while notices < 2 || !audible {
+        if matches!(
+            host.poll_notice().expect("notices"),
+            Some(PluginNotice::PluginRestarted { .. })
+        ) {
+            notices += 1;
+        }
+        host.process(&planes, &mut outs(&mut output), Duration::from_secs(2))
+            .expect("audio after restart");
+        audible = output
+            .iter()
+            .flatten()
+            .zip(input.iter().flatten())
+            .all(|(sample, input)| (*sample - input * 2.0).abs() < 1.0e-6);
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "restarts did not complete"
+        );
+        std::thread::yield_now();
+    }
+    assert!(host.stderr_log().contains("nested-activation 3"));
+    host.set_chain(1).expect("subsequent control request");
+    host.shutdown().expect("shutdown after nested restarts");
+    std::fs::remove_file(path).expect("remove restart gate");
 }
 
 /// RTA-01. `request_callback` is thread-safe in CLAP and plugins call it from

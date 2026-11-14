@@ -145,6 +145,23 @@ class PolicyTests(unittest.TestCase):
         fault = contract["negative_control"]
         self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
 
+    def test_nested_restart_contract_covers_the_helper_and_its_fixture(self):
+        contract = next(c for c in self.policy["product_contracts"] if c["id"] == "plugin-nested-restart")
+        self.assertEqual((contract["runner"], contract["package"]), ("rust", "echode-plugin-host"))
+        self.assertEqual(contract["target"], ["--test", "isolation"])
+        self.assertEqual(
+            contract["test"],
+            "audit_rta02_a_restart_requested_while_restarting_is_run_and_the_helper_keeps_answering",
+        )
+        for path in [
+            "crates/echode-plugin-host/src/threads.rs",
+            "crates/echode-plugin-host/tests/isolation.rs",
+            "crates/echode-test-plugin/src/lib.rs",
+        ]:
+            self.assertTrue({"check", "check-swift", "check-product-contracts"} <= self.selected(path))
+        fault = contract["negative_control"]
+        self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
+
     def test_peak_normalization_contracts_cover_cli_output_and_gui_handoff(self):
         contracts = {c["id"]: c for c in self.policy["product_contracts"]}
         cli = contracts["export-normalization-cli"]
@@ -2566,6 +2583,7 @@ class PolicyTests(unittest.TestCase):
                 "integer-loop-draft-ui",
                 "plugin-main-call-ownership",
                 "plugin-main-timeout-state",
+                "plugin-nested-restart",
                 "plugin-control-request-ids",
                 "plugin-control-save-order",
                 "plugin-control-descriptors",

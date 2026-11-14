@@ -21,6 +21,8 @@
 //! `ECHODE_TEST_FAULT=restart-nested` requests a restart in its first block
 //! and once more from the activation that restart runs, and prints
 //! `nested-activation <n>` at each activation.
+//! `restart-nested:<socket>` instead holds that activation at a test gate and
+//! also requests processing there, to exercise arming during a pending restart.
 
 use std::ffi::{CStr, c_void};
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -132,7 +134,9 @@ impl Plugin for TestGain {
         if current_role() != Role::NoPorts {
             builder.register::<PluginAudioPorts>();
         }
-        if matches!(current_role(), Role::State | Role::Params) {
+        if matches!(current_role(), Role::State | Role::Params)
+            || fault_now() == Fault::RestartNested
+        {
             builder.register::<PluginStateExt>();
         }
         if current_role() == Role::Params {
@@ -295,6 +299,7 @@ fn fault_code(text: &str) -> u8 {
         "large-state" => 18,
         "huge" => 20,
         "restart-nested" => 22,
+        _ if text.starts_with("restart-nested:") => 22,
         _ if text.starts_with("delay:") => 19,
         // The event counter, with the second process call held as `process-wait`.
         _ if text.starts_with("count-wait:") => 5,
@@ -467,10 +472,20 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
             eprintln!("nested-activation {activation}");
             if activation == 2 {
                 _host.shared().request_restart();
-                // An activation that takes a while after asking, as one that
-                // loads resources does. The host's processing thread sees the
-                // request before this activation returns.
-                std::thread::sleep(std::time::Duration::from_millis(50));
+                let fault = std::env::var("ECHODE_TEST_FAULT").unwrap_or_default();
+                if let Some(path) = fault.strip_prefix("restart-nested:") {
+                    use std::io::{Read, Write};
+                    _host.shared().request_process();
+                    let mut gate =
+                        std::os::unix::net::UnixStream::connect(path).expect("nested restart gate");
+                    gate.set_read_timeout(Some(std::time::Duration::from_secs(10)))
+                        .expect("nested restart gate timeout");
+                    gate.write_all(&[1]).expect("nested restart reached");
+                    gate.read_exact(&mut [0]).expect("nested restart released");
+                } else {
+                    // Give audio time to acknowledge the request before this activation returns.
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
             }
         }
         Ok(Self {

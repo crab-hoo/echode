@@ -173,10 +173,13 @@ AudioToolbox の失敗は `MediaError` の操作別の変種で、`Property` は
 `host event capacity was not prepared` はイベント領域の準備漏れであり、音声側の確保や固定発音数で回避しない
 （[ADR 0123](../decisions/0123-explicit-sine-pad-plugin.md)）。
 音色・声の継続だけが違う時は `echode-dsp/src/sine_pad_tests.rs`、隔離後の経路は `hosted_playback` を使う。
-音は出ているのに、あるヘルパーへの要求だけが全部 `SessionError::Timeout` になり、そのプロセスが 1 コアを使い続ける時は、
-再起動の要求が重なって制御スレッドが待ち続けている（RTA-02。未修正）。`sample` でヘルパーの制御スレッドが `pause` の中にいるかを見る。
-再現は `audit_rta02_*` で、試験用プラグインの `restart-nested` が再起動の `activate` の中でもう一度再起動を求める
-（[監査](../reviews/2026-11-14-realtime-adversarial-audit.md)）。
+音は出ているのに、あるヘルパーへの要求だけが全部 `SessionError::Timeout` になる時は、再起動の世代と制御スレッドの待ちを調べる。
+再起動が重なる回帰は `audit_rta02_*` と `a_process_request_during_a_held_nested_restart_*` である。
+`restart-nested` が再起動の `activate` の中で次の再起動を求め、ソケット付きの形は `request_process` も求めて完了を保留する。
+`restart_request`・`restart_ack`・`main_done` と `holds_started` を照合する。
+処理側の停止の確認だけでは再開せず、メインの完了世代も一致してから再開する（[ADR 0342](../decisions/0342-restart-completion-gates-processing.md)）。
+制御の再起動待ちは `wait_control` で内部の通知を待つ。そこへ親の要求が届いても回り続けない。
+待ち続けるなら `sample` で `activate`・`deactivate` 自体が戻らない場合と区別する。
 
 DSP の状態と CLAP の保存ペイロードは別の形式なので、どちらの入口で差が出たかを記録する（[ADR 0266](../decisions/0266-host-independent-sine-pad-dsp.md)）。
 

@@ -296,35 +296,43 @@ impl Bridge {
 
     fn restart_on_main(&self) {
         let want = self.restart_for_main.load(Ordering::Acquire);
-        INSTANCE.with(|cell| {
+        let restarted = INSTANCE.with(|cell| {
             let instance = cell.get();
             if instance.is_null() {
-                return;
+                return false;
             }
+            let Some(stopped) = self.processor.try_take() else {
+                return false;
+            };
             // SAFETY: as in `on_main`: the instance lives until `serve_region` clears `INSTANCE`,
-            // and this main-thread call holds its only reference.
+            // and this main-thread call holds its only reference. Audio has handed off the processor.
             let instance = unsafe { &mut *instance };
-            if let Some(stopped) = self.processor.try_take() {
-                instance.deactivate(stopped);
-                match activate(
-                    instance,
-                    f64::from_bits(self.sample_bits.load(Ordering::Acquire)),
-                    self.activation_frames.load(Ordering::Acquire),
-                ) {
-                    Ok(stopped) => {
-                        self.latency_samples
-                            .store(query_latency(instance), Ordering::Release);
-                        publish_stopped(&self.processor, stopped, false);
-                    }
-                    Err(error) => {
-                        eprintln!("echode-plugin-host: activate after restart failed: {error}");
-                        self.stop.store(true, Ordering::Release);
-                    }
+            instance.deactivate(stopped);
+            match activate(
+                instance,
+                f64::from_bits(self.sample_bits.load(Ordering::Acquire)),
+                self.activation_frames.load(Ordering::Acquire),
+            ) {
+                Ok(stopped) => {
+                    self.latency_samples
+                        .store(query_latency(instance), Ordering::Release);
+                    publish_stopped(&self.processor, stopped, false);
+                    true
+                }
+                Err(error) => {
+                    eprintln!("echode-plugin-host: activate after restart failed: {error}");
+                    false
                 }
             }
         });
-        self.need_start.store(true, Ordering::Release);
-        self.main_done.store(want, Ordering::Release);
+        if restarted {
+            self.need_start.store(true, Ordering::Release);
+            self.main_done.store(want, Ordering::Release);
+        } else {
+            // Never report a restart as done if its processor was absent or activation failed.
+            eprintln!("echode-plugin-host: restart did not produce a stopped processor");
+            self.stop.store(true, Ordering::Release);
+        }
         self.bump_audio();
         self.bump_control();
     }
@@ -1407,6 +1415,9 @@ fn pump(
 ) -> Result<(), RtFail> {
     let want = bridge.restart_request.load(Ordering::Acquire);
     let acked = bridge.restart_ack.load(Ordering::Acquire);
+    // An acknowledgement only means audio has stopped. Main must have completed
+    // that same generation before audio can take the processor again or arm it.
+    let can_start = want == acked && bridge.main_done.load(Ordering::Acquire) == want;
     if want != acked {
         if let Some(active) = started.take() {
             let stopped = active.stop_processing();
@@ -1415,7 +1426,8 @@ fn pump(
         }
         bridge.restart_ack.store(want, Ordering::Release);
         bridge.bump_control();
-    } else if bridge.need_start.swap(false, Ordering::AcqRel)
+    } else if can_start
+        && bridge.need_start.swap(false, Ordering::AcqRel)
         && let Some(stopped) = bridge.processor.try_take()
     {
         match stopped.start_processing() {
@@ -1430,7 +1442,7 @@ fn pump(
             }
         }
     }
-    if bridge.want_process.swap(false, Ordering::AcqRel) && started.is_none() {
+    if can_start && bridge.want_process.swap(false, Ordering::AcqRel) && started.is_none() {
         if bridge.processor.is_empty() {
             bridge.op.store(OP_ARM, Ordering::Release);
             bridge.signal();
@@ -1496,7 +1508,9 @@ fn control_thread(bridge: &Bridge, mut socket: Option<Socket>) -> Result<(), Hos
                 if bridge.stop.load(Ordering::Acquire) {
                     return Ok(());
                 }
-                seen = pause(bridge, socket.as_ref(), seen);
+                // Socket readability cannot advance this handoff. Waiting on it
+                // would spin while a parent request is queued during activation.
+                seen = wait_control(bridge, seen);
             }
             if bridge.has_plugin.load(Ordering::Acquire) {
                 bridge.restart_for_main.store(want, Ordering::Release);
@@ -1506,7 +1520,7 @@ fn control_thread(bridge: &Bridge, mut socket: Option<Socket>) -> Result<(), Hos
                     if bridge.stop.load(Ordering::Acquire) {
                         return Ok(());
                     }
-                    seen = pause(bridge, socket.as_ref(), seen);
+                    seen = wait_control(bridge, seen);
                 }
             } else {
                 emit_line("restart-observed");

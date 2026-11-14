@@ -107,6 +107,10 @@ CLAP の遅延は有効化の直後にメインスレッドで読み、初回の
 - プラグイン GUI はヘルパープロセスが持つフローティングの `NSPanel` に表示する（[ADR 0132](../decisions/0132-helper-plugin-windows.md)）。
   ヘルパーはメインスレッドで run loop を回し、最初の窓から AppKit のイベントも同じループで処理する。
   音声処理は別スレッド、再起動は制御スレッドが進める（[ADR 0041](../decisions/0041-helper-threads.md)）
+  再起動の停止の確認とメインの完了が要求世代へ揃うまで、処理の開始と `request_process` の消費を止める。
+  メインが停止済みプロセッサを受け取れなければ、完了扱いにせずヘルパーを止める。
+  制御側は再起動の間、ソケットではなく内部の警報を待ち、親の要求を後で読む。
+  通常のソケット待ちの 20 ms ポーリングは残る（[ADR 0342](../decisions/0342-restart-completion-gates-processing.md)）。
 - 埋め込み型を優先し、content view を `set_parent` へ渡す。浮動型だけのプラグインはプラグイン自身の窓を `show` / `hide` で扱う。
   開く・前面化はキーウィンドウにせず、中のクリックでだけキーになる。親と同じ作業中のヘルパーが最前面でも表示を保つ
   （[ADR 0061](../decisions/0061-distribution-signing.md)、[ADR 0111](../decisions/0111-macos-helper-notices.md)）
