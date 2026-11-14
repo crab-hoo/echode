@@ -53,6 +53,7 @@ mod params;
 mod tail;
 mod thread_check;
 mod timer_support;
+mod transport;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Role {
@@ -339,6 +340,8 @@ enum Fault {
     NotePorts,
     /// Invalidates parameter descriptions while the host reads relay flags.
     ParamRescan,
+    /// Reports the process transport snapshot and checks it against time-zero events.
+    Transport,
 }
 
 /// For [`Fault::RestartNested`]: activations so far, and whether the first
@@ -375,6 +378,7 @@ fn fault_code(text: &str) -> u8 {
         "audio-ports" => 27,
         "note-ports" => 28,
         "params-rescan" => 29,
+        "transport" => 30,
         _ if text.starts_with("restart-nested:") => 22,
         _ if text.starts_with("delay:") => 19,
         // The event counter, with the second process call held as `process-wait`.
@@ -417,6 +421,7 @@ fn fault_from_code(code: u8) -> Fault {
         27 => Fault::AudioPorts,
         28 => Fault::NotePorts,
         29 => Fault::ParamRescan,
+        30 => Fault::Transport,
         _ => Fault::None,
     }
 }
@@ -720,6 +725,10 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
                 if delay::restart_due() {
                     self.host.request_restart();
                 }
+                return Ok(ProcessStatus::Continue);
+            }
+            Fault::Transport => {
+                transport::render(_process, &mut audio, events.input)?;
                 return Ok(ProcessStatus::Continue);
             }
             Fault::NotePorts => {

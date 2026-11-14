@@ -102,6 +102,7 @@ make debug-report
   - CLAP の診断が見えない・`clap.log` に切詰めや破棄が出る
   - CLAP の定期更新が止まる・`timer-support` の通知が遅い
   - CLAP の音声ポートの変更が反映されない
+  - CLAP がテンポ・再生位置を取得できない
   - CLAP のノート形式が選ばれない・ポート変更後に発音が残る
   - CLAP が鳴らない・走査失敗
   - ヘルパーの応答が `window title is not text` / `parameter text is not UTF-8` で切れる

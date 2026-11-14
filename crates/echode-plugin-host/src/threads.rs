@@ -15,7 +15,7 @@ use crate::{HostError, LoadError, gui, host_info, load_entry};
 use clack_host::events::io::{EventBuffer, InputEvents};
 use clack_host::events::{
     Pckn,
-    event_types::{MidiEvent, NoteChokeEvent, ParamValueEvent},
+    event_types::{MidiEvent, NoteChokeEvent, ParamValueEvent, TransportEvent},
 };
 use clack_host::extensions::prelude::{
     Extension, ExtensionImplementation, HostExtensionSide, HostWrapper, RawExtension,
@@ -2005,6 +2005,14 @@ fn render_plugin(
         .then_some((&choke, &started.reset_midi));
     region.copy_input_events(generation, &mut buffers.decoded);
     write_input(&buffers.decoded, &mut buffers.events);
+    // CLAP reads the state at sample zero from process.transport as well as
+    // timestamped changes from in_events. Borrow the same converted event so
+    // the two views cannot drift, and never retain it for a later block.
+    let transport = buffers
+        .events
+        .iter()
+        .take_while(|event| event.header().time() == 0)
+        .find_map(|event| event.as_event::<TransportEvent>());
     let all_events = (&lifecycle, &buffers.events);
     let input_events = InputEvents::from_buffer(&all_events);
     // Values and gestures the plugin reports go to the ring; nothing allocates.
@@ -2019,7 +2027,7 @@ fn render_plugin(
             &input_events,
             &mut output_events,
             None,
-            None,
+            transport,
         )
         .map_err(|_| ())?;
     for (channel, plane) in buffers.output.iter().enumerate() {

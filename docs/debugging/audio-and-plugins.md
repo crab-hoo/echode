@@ -259,6 +259,20 @@ bit 7 が立つ時は誤った判定で、下位 bit の不足は未到達の区
 cargo test -q -p echode-plugin-host --test isolation audio_ports::
 ```
 
+### CLAP がテンポ・再生位置を取得できない
+
+`clap_process.transport` はブロックの時刻 0 の状態、入力イベント列の transport は時刻付きの変更である。
+ヘルパーは `threads.rs::render_plugin` で翻訳済みの先頭状態を両方へ渡す。
+先頭状態なしでは null とし、後続の変更や前のブロックの状態を代用しない。
+`isolation/transport.rs` の診断用 CLAP は、左に先頭のテンポ（なしは -1）、右に transport 件数（先頭状態との不一致は -1）を出す。
+再生・停止・録音・ループのフラグ、負の位置・小節、拍子を含む全フィールドの一致を調べる。
+1・7・64・512 フレームとリセット前後を比べ、先頭の通知とブロック途中の変更を取り違えていないか確認する。
+製品エンジンはまだ通知を生成・配布しない。実アプリで同期しないことは、ヘルパーの受渡しの失敗と区別する。
+
+```sh
+cargo test -q -p echode-plugin-host --test isolation transport::
+```
+
 ### CLAP のノート形式が選ばれない・ポート変更後に発音が残る
 
 ホストの `clap.note-ports.supported_dialects` は native CLAP だけを返す。

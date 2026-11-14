@@ -83,7 +83,7 @@
 
 ### プラグイン・デバイスビュー
 
-- **CLAP バンドルの互換性**: 音源とエフェクトは同じ隔離チェインを通る。macOS のディレクトリ形式のバンドルも走査・処理できる。
+- **CLAP の互換性**: 曲のテンポ・位置の通知はエンジンから未接続である。
   第三者互換・聴感は未確認で、音声ポートの構造変更は未対応（UC-80〜83、[ADR 0356](decisions/0356-clap-note-port-capabilities-and-lifecycle.md)）。
 - **遅いプラグインの走査**: 5 秒で答えないバンドルは後で 120 秒待ち、なお答えなければ次の起動まで出ない（UC-65、[ADR 0285](decisions/0285-scan-timeouts-are-not-verdicts.md)）。
 - **オフライン書出し（CLI-A1）**: ステレオ・u32 フレームまで、ヘルパーは 1 ブロック 60 秒待つ。出力先は元パッケージの外へ固定する（[ADR 0260](decisions/0260-pinned-gui-export-destination.md)）。

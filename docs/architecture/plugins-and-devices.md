@@ -16,6 +16,10 @@ CLAP、VST3、AU の違いを 1 つのインターフェース（サンプル位
 | VST3 | `vst3` crate | Note Expression とサンプル位置付きパラメータ変更に対応する |
 | AU | AudioToolbox / AVFAudio | AUv3 と AUv2 を `AUAudioUnit` API で扱う（未実装）。AUv3 は OS が XPC extension で別プロセス実行するためヘルパーを重ねない（[ADR 0111](../decisions/0111-macos-helper-notices.md)） |
 
+共有領域に届いた時刻 0 のトランスポートは、翻訳済みイベントを借りて `clap_process.transport` にも渡す。
+同ブロック内の後続の変更は元の時刻のまま入力イベント列に残し、時刻 0 がなければ null にする。前ブロックの状態は補わない。
+ただし製品エンジンからのテンポ・位置の通知生成と各チェインへの配布は未接続で、曲へのテンポ同期の完成ではない。
+
 CLAP の遅延は有効化の直後にメインスレッドで読み、初回のポート情報と再起動通知で親へ送る。
 `clap_host_latency.changed` は有効化中の通知だけを受け、毎回の有効化後の問合せで反映する。
 親の保持値と活動通知をデバイス列へ運び、出力レートのサンプル数を表示する。

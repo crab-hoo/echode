@@ -28,6 +28,8 @@ mod state_saves;
 mod tail;
 #[path = "isolation/timer_support.rs"]
 mod timer_support;
+#[path = "isolation/transport.rs"]
+mod transport;
 
 const BUDGET: Duration = Duration::from_micros(30);
 const WARMUP: usize = 200;

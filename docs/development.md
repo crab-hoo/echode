@@ -389,6 +389,9 @@ CLAP の音声ポート名の通知と対応フラグは `echode-plugin-host/src
 CLAP のノート形式の対応の公開は `echode-plugin-host/src/note_ports.rs`、全発音停止の再生成は `threads.rs::activate` に置く。
 一覧は `Processor<P>` が処理器とともに渡し、`render_plugin` が通常のイベントの前へ参照でつなぐ。
 名前の通知・無効化中のポートの増減・0 への変更・終了処理の順序は `tests/isolation/note_ports.rs` を使う（[ADR 0356](decisions/0356-clap-note-port-capabilities-and-lifecycle.md)）。
+共有領域の時刻 0 のトランスポートを `clap_process.transport` に渡す処理は `threads.rs::render_plugin` に置く。
+`events.rs` の翻訳済みイベントを借り、別の保持状態や変換を作らない。
+実ヘルパーの先頭状態・途中の更新・通知なし・リセット・ブロック長の回帰は `tests/isolation/transport.rs`、診断用の出力は `echode-test-plugin/src/transport.rs` を使う。
 
 共有メモリの作成と `SharedMemoryOperation` は `echode-sandbox/src/region.rs`、
 操作・errno・表示・unlink と close-on-exec の回帰は `region_error_tests.rs` に置く（[ADR 0311](decisions/0311-typed-shared-memory-errors.md)）。
