@@ -251,6 +251,7 @@
   [ADR 0188](../decisions/0188-arrange-adjacent-clip-duplication.md)。
 
 - 文書の手番の調停（ワーカー・デバイスレーン・保存の取込み）・完了の 1 回の保証・`Presenter`: [ADR 0204](../decisions/0204-document-service.md)。
+- 文書の作成・オープンの同期の診断と製品ログ（IQA-03）: [ADR 0354](../decisions/0354-document-acquisition-diagnostics.md)。
 
 ## 6. ビルド・対象プラットフォーム・検査基盤
 

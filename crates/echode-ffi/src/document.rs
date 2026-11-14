@@ -69,8 +69,8 @@ impl Document {
     }
 }
 
-/// The C ABI reads a failure as text. This is the one place a document's
-/// error becomes it (ADR 0292).
+/// The C ABI lends the final display of a command failure to its completion
+/// (ADR 0292). Package acquisition reports its failure in `document_open`.
 fn finish(context: *mut c_void, complete: Complete, result: Result<Snapshot, DocumentError>) {
     match result {
         Ok(snapshot) => complete(

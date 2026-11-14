@@ -172,7 +172,7 @@ CPU 負荷（`yes`）や並列の反復では再現率は上がらなかった�
 Xcode・CMake・Ninja の版と合わない。この時 TSan の検査はソースの変更がなくても `stale` になる。
 準備は毎回 CMake のビルドのディレクトリを作り直す。別の作業ツリーから写した `target/` のキャッシュは古い場所を指し、
 以前は `CMakeCache.txt directory ... is different` で構成が止まった（2026-11-12）。
-`swift test -q` が `Build failed` / `fatalError` だけを返す場合は、`swift build --build-tests` で診断を取得する。
+`swift test -q` が `Build failed` / `fatalError` だけを返す場合は、`swift build -v --build-tests` で診断を取得する。
 同じ `--package-path`・`--scratch-path` と `-Xswiftc -warnings-as-errors` を指定し、`target/` のログで `error:` 周辺を読む。
 Xcode 側のビルド診断が quiet 出力に出ない場合がある。大量のコンパイルコマンドは会話へ展開しない。
 `-Zbuild-std --offline` が `failed to download addr2line` 等で止まる場合は、製品の依存とは別の固定 nightly の標準ライブラリ用キャッシュが不足している。

@@ -398,18 +398,12 @@ public final class Document: @unchecked Sendable {
 
     /// Creates an empty package at `path` and opens it.
     public init(creating path: String) throws {
-        let handle: OpaquePointer? = path.withCString { echode_document_create($0) }
-        guard let handle else {
-            throw BridgeError(message: "could not create the package")
-        }
-        self.handle = handle
+        self.handle = try openDocument(path: path, creating: true)
     }
 
     /// Opens an existing package and replays its durable journal.
     public init(opening path: String) throws {
-        let handle = path.withCString { echode_document_open($0) }
-        guard let handle else { throw BridgeError(message: "could not recover the package") }
-        self.handle = handle
+        self.handle = try openDocument(path: path, creating: false)
     }
 
     deinit {

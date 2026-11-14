@@ -288,7 +288,7 @@ Undo と Redo は段ごとに編集前の版を持ち、段数の上限はない
 `.git` や参照を削除して新規文書として開き直さない。
 原本を保全し、参照・チェーン・設定と残るオブジェクトをコピー上で照合する（[ADR 0350](../decisions/0350-unreadable-history-is-not-empty.md)）。
 `tests/audit_quality.rs` は、安全な拒否・ファイルのバイト保持・破損を戻した後の編集と履歴の保持を検査する。
-詳細な原因の Swift への伝達は IQA-03 が未対応で、Rust の拒否と画面の汎用エラーを区別する。
+詳細な原因は同期の `DocumentFailure` から Swift の `BridgeError.message` と画面へ渡す（[ADR 0354](../decisions/0354-document-acquisition-diagnostics.md)）。
 プロセスロックの回帰の `the holder exited before it owned the package` は、子の終了コードと stderr でオープン失敗の原因を確認する。
 新規文書は復旧結果から初回保存の要否を決める。自動保存スレッドの起動後に未完成の Git を読み直さない。
 破損ジャーナルは `journal seq <連番> violates model invariants: <理由>` でオープンを拒否する（[ADR 0180](../decisions/0180-journal-replay-invariants.md)）。
@@ -305,6 +305,16 @@ Undo と Redo は段ごとに編集前の版を持ち、段数の上限はない
 警告でいったんキャンセルし、原本のコピーを保全する。「続行」は復旧状態の同期保存であり、失われた編集の復元ではない。
 確認時の保存に失敗した場合は編集を解放しない。CLI / MCP には同意の入口がないため、アプリで確認する。
 確認の取消後も開く処理が残る場合は、要求の UUID と `RecoveryOpenRequest` の取消・`recoveryReply` の解放を調べる。
+
+### 文書の作成・オープンの失敗理由を調べる
+
+画面の診断は操作・パスと元の理由を含む。製品ログの `target: echode_ffi::document` の error を照合する。
+`fields.operation` は `open` / `create`、`fields.package` は指定したパスで、callback を使わない呼出しの失敗も記録する。
+`package is already open`、`package already exists`、JSON の位置、I/O、Git とジャーナルの拒否を区別し、原本を消して再作成しない。
+Swift で汎用文しか出ない場合は `DocumentOpening.swift` と生成ヘッダの `DocumentFailure` を確認する。
+返された文字列は callback の間だけ有効で、別のスレッドから last-error を読まない。
+回帰は Rust の `document_open_tests.rs` と、橋渡し・アプリの `DocumentOpenErrorTests.swift`。
+実画面・VoiceOver・署名したアプリのログは UC-84。
 
 ### 自動保存の失敗の原因が文だけで分からない
 

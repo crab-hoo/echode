@@ -433,6 +433,10 @@ C ABI の入口は、呼出し側のメモリを `crates/echode-ffi/src/abi.rs` 
 目録の Rust の境界は `crates/echode-ffi/src/catalog.rs` の `CatalogError` で、未検出のヘルパーのパスと元の目録・JSON の原因を持つ。
 回帰は `catalog_tests.rs` が子プロセスの環境・走査先を隔離し、同じ入口と C ABI の数値・JSON を照合する（[ADR 0302](decisions/0302-typed-ffi-catalog-errors.md)）。
 
+文書の作成・オープンの ABI と失敗のログは `crates/echode-ffi/src/document_open.rs`、同期の診断のコピーは
+`EchodeBridge/DocumentOpening.swift` に置く。回帰は `document_open_tests.rs` と、橋渡し・アプリの `DocumentOpenErrorTests.swift`。
+失敗は `BridgeError.message` へ全文を渡し、失敗で既存の文書を置き換えない（[ADR 0354](decisions/0354-document-acquisition-diagnostics.md)）。
+
 文書の単一編集は `worker.rs::apply_edit` から `Command` の `FromStr` を使う。
 `error.rs` は意味の拒否を `DocumentError::Parameters`、JSON の構文・形を元の原因付きの `Malformed` へ分ける。
 `crates/echode-document/tests/edit_errors.rs` は製品ワーカーで原因・入力・診断・拒否後の履歴と再オープンを検査する（[ADR 0307](decisions/0307-typed-document-command-decoding.md)）。

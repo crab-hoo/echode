@@ -16,6 +16,7 @@ mod catalog;
 mod constants;
 mod controls;
 mod document;
+mod document_open;
 mod logging;
 mod overview;
 mod piano;
@@ -29,6 +30,7 @@ pub use controls::{
 pub use projection::{TrackTreeInfo, echode_snapshot_project_arrange, echode_snapshot_track_tree};
 
 pub use document::Document;
+pub use document_open::{DocumentFailure, echode_document_create, echode_document_open};
 pub use logging::{
     ECHODE_LOG_DEBUG, ECHODE_LOG_ERROR, ECHODE_LOG_FILE_LIMIT, ECHODE_LOG_INFO, ECHODE_LOG_WARN,
     echode_log_append_lines, echode_log_flush, echode_log_install, echode_log_write,
@@ -340,7 +342,7 @@ use std::ffi::{CStr, c_char, c_void};
 use std::os::raw::c_int;
 
 use echode_document::Operation;
-use echode_history::write_package;
+#[cfg(test)]
 use echode_model::Project;
 
 /// A track lane.
@@ -421,46 +423,6 @@ pub unsafe extern "C" fn echode_keep_panic_log(path: *const c_char) {
     // SAFETY: the caller passes null or a NUL-terminated string.
     let path = unsafe { abi::text(path) };
     echode_audio_io::keep_panic_log(path.map(std::path::PathBuf::from));
-}
-
-/// Creates an empty package at `path` and opens it. Null if that fails.
-///
-/// # Safety
-/// `path` is a nullable NUL-terminated string. The returned pointer is freed
-/// with [`echode_document_close`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn echode_document_create(path: *const c_char) -> *mut Document {
-    // SAFETY: the caller passes null or a NUL-terminated string.
-    let Some(path) = (unsafe { abi::text(path) }) else {
-        return std::ptr::null_mut();
-    };
-    let path = std::path::Path::new(&path);
-    // Creation never replaces an existing package or another user's directory.
-    if path.exists() {
-        return std::ptr::null_mut();
-    }
-    if write_package(path, &Project::new()).is_err() {
-        return std::ptr::null_mut();
-    }
-    Document::open(path)
-        .map(|document| Box::into_raw(Box::new(document)))
-        .unwrap_or(std::ptr::null_mut())
-}
-
-/// Opens a package. Null if `path` is not a recoverable package.
-///
-/// # Safety
-/// `path` is a nullable NUL-terminated string. The returned pointer is freed
-/// with [`echode_document_close`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn echode_document_open(path: *const c_char) -> *mut Document {
-    // SAFETY: the caller passes null or a NUL-terminated string.
-    let Some(path) = (unsafe { abi::text(path) }) else {
-        return std::ptr::null_mut();
-    };
-    Document::open(std::path::Path::new(&path))
-        .map(|document| Box::into_raw(Box::new(document)))
-        .unwrap_or(std::ptr::null_mut())
 }
 
 /// Finishes queued commands, then rejects later submissions.

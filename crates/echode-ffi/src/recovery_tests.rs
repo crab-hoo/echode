@@ -90,7 +90,7 @@ fn contract_recovery_requires_consent_before_edits_and_preserves_the_original_on
     let journal = std::fs::read(path.join("journal.jsonl")).unwrap();
     let c_path = CString::new(path.to_str().unwrap()).unwrap();
     // SAFETY: `c_path` is a NUL-terminated string.
-    let document = unsafe { echode_document_open(c_path.as_ptr()) };
+    let document = unsafe { echode_document_open(c_path.as_ptr(), std::ptr::null_mut(), None) };
     assert!(!document.is_null());
     let initial = report(request(document, ECHODE_DOCUMENT_SNAPSHOT, None));
     assert_eq!(
@@ -163,7 +163,7 @@ fn contract_recovery_requires_consent_before_edits_and_preserves_the_original_on
     drop(host);
 
     // SAFETY: `c_path` is a NUL-terminated string.
-    let document = unsafe { echode_document_open(c_path.as_ptr()) };
+    let document = unsafe { echode_document_open(c_path.as_ptr(), std::ptr::null_mut(), None) };
     let stale = request(
         document,
         1,
@@ -214,7 +214,7 @@ fn contract_recovery_requires_consent_before_edits_and_preserves_the_original_on
     unsafe { echode_document_close(document) };
 
     // SAFETY: `c_path` is a NUL-terminated string.
-    let document = unsafe { echode_document_open(c_path.as_ptr()) };
+    let document = unsafe { echode_document_open(c_path.as_ptr(), std::ptr::null_mut(), None) };
     assert!(report(request(document, ECHODE_DOCUMENT_SNAPSHOT, None))["recovery"].is_null());
     report(request(
         document,

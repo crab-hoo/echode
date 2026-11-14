@@ -135,6 +135,7 @@
 | UC-31 | 前回のプロジェクトの復元に失敗した後、別のプロジェクトを開ける（同じ後の新規作成とトラックの追加は 2026-10-19 にユーザーが確認した。[ADR 0121](decisions/0121-startup-recovery-and-errno-validation.md)） | 画面 | [現在の制約](status.md) のプロジェクトの開始 | 2026-10-19 |
 | UC-66 | `make app` のアプリで文書を開き、再生・停止して閉じ、アプリを終了する。`~/Library/Logs/Echode/echode.ndjson` に `log started`・`a document opened`・`the audio output opened`・`a document closed` が順に並び、Console で `subsystem:io.echode` の記録が見える。自動検査は署名したアプリの起動経路と統合ログの保存を通らない | 実機 | [ADR 0322](decisions/0322-product-log.md) | 2026-11-12 |
 | UC-70 | 初期化の遅い第三者 CLAP を多く入れた曲を開き、プラグインの起動中に文書を閉じる・別の曲を開く・アプリを終了する・出力機器を替える。どれも起動の終わりを待たずに進み、閉じた曲のヘルパーのプロセスが残らない（アクティビティモニタ）。プラグイン名・数・閉じ終わるまでの時間を記録する | 実機・第三者 | [ADR 0334](decisions/0334-cancel-helper-starts-on-close.md) | 2026-11-13 |
+| UC-84 | 原本でなく壊した複製を開き、理由とパスがエラー表示で読め、長いパスが途切れず VoiceOver でも分かることを確認する。ログの `echode_ffi::document` の操作・パス・原因が一致することも見る。自動回帰は表示用の状態までで、実画面の折返し・読み上げと署名したアプリのログを通さない | 画面・VO・実機 | [ADR 0354](decisions/0354-document-acquisition-diagnostics.md) | 2026-11-15 |
 
 ## H. 書出し
 
