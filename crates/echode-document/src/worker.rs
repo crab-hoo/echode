@@ -281,7 +281,7 @@ impl<P: Presenter> Worker<P> {
                     &mut worker.audio,
                     &mut worker.saves.editing,
                     device,
-                    &reply?,
+                    reply,
                 )?;
                 let view = worker.publish(None, Some(report))?;
                 worker.publish_position();
@@ -590,3 +590,7 @@ fn history_report(host: &DocumentHost, bytes: &[u8]) -> Result<Vec<u8>, Document
         "recovery": host.recovery_notice(),
     }))
 }
+
+#[cfg(test)]
+#[path = "worker_tests.rs"]
+mod tests;

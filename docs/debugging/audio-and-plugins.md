@@ -583,6 +583,10 @@ I/O は `CliIoOperation` とパス・元の errno、引数は `ArgumentError` �
 （[ADR 0140](../decisions/0140-device-parameter-list-retry.md)）。
 `plugin-params` は実ヘルパーとエンジン、`fx-params-ui` は画面と履歴のログである。
 Undo では記録のハッシュとヘルパーが最後に保存・読込したバイトを比べ、一致すれば読み込まない（[ADR 0130](../decisions/0130-clap-parameter-editing.md)）。
+確定の取得・記録の失敗でも、そのデバイスの編集中の印は外し、以後の背景保存を妨げない。
+失敗した操作の再送・Undo は行わず、背景保存がなければ失敗した値の復元は保証しない（[ADR 0346](../decisions/0346-failed-device-commits-release-saves.md)）。
+保存が止まり続ける場合は `device_tests.rs` の `audit_dia02_*` と `worker_tests.rs` の `failed_captures_*` を実行し、
+確定の取得の失敗・保管庫の書込みの失敗と、背景保存自体の拒否（DIA-04）・記録失敗（DIA-05）を分ける。
 
 ## 再生・停止・ループ
 

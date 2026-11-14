@@ -435,6 +435,7 @@ C ABI の入口は、呼出し側のメモリを `crates/echode-ffi/src/abi.rs` 
 複製対象の保持は `TrackDuplication.swift`、ヘッダの右メニューは `ArrangeHeaderView.swift` に置く。
 CLAP パラメーターの通信は `crates/echode-sandbox/src/params.rs`、ヘルパー側は `threads.rs` の `flush_params` / `param_infos`、
 文書の手番は `crates/echode-document/src/device.rs`（検査・往復・記録）と `lane.rs`（ワーカー外のデバイスレーン）に置く。
+確定の完了（成功と失敗の保留解除）は `device::commit` を通し、回帰は `device_tests.rs`・`worker_tests.rs` に置く（[ADR 0346](decisions/0346-failed-device-commits-release-saves.md)）。
 画面は `DeviceParameters.swift`（デバイスごとの状態・世代・ピン留め）、`WorkspaceParameterView.swift`（画面内の行だけの一覧）、
 `WorkspaceDeviceView.swift`（横並びの列とドロップ）に置く。
 列の開閉と文書 ID の検査は `DeviceDisclosure.swift`、幅・入力・フォーカスの制御は `WorkspaceDeviceView.swift` に置く。
