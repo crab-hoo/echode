@@ -438,8 +438,6 @@ fn render_with_plugins(
         PlaybackOptions::default().plugins(host, routes),
     )
     .map_err(CliError::from)?;
-    let frames = tail.total_frames(frames, control.tail_samples())?;
-    let total = frames as usize;
     let package = package.to_path_buf();
     control.set_clip_loader(Arc::new(move |project, rate| {
         load_placed_clips(&package, project, rate)
@@ -454,6 +452,8 @@ fn render_with_plugins(
     let mut interleaved = vec![0.0; block.saturating_mul(2)];
     let mut redraws = 0usize;
     let wav = loop {
+        let frames = tail.total_frames(frames, control.tail_samples())?;
+        let total = frames as usize;
         // Master lags the timeline by the compensated latency. The frames
         // before it are dropped, so the file starts at the project's start
         // (ADR 0339).
@@ -495,16 +495,24 @@ fn render_with_plugins(
             if let Some(error) = control.take_preparation_error() {
                 return Err(error.into());
             }
-            // A helper that restarts may report another latency. From then
-            // on its path is heard at another time than the frames dropped
-            // above assumed, so the file is drawn again from its start with
-            // the new compensation (PCA-01, ADR 0340).
+            // A changed latency or tail invalidates alignment or automatic
+            // length. Draw again from the start using the new plan's metadata.
             if control.compensation_changes() != compensation || !control.latency_settled() {
                 moved = true;
                 break;
             }
             rendered += kept;
             progress.advance(kept as u32);
+        }
+        if !moved {
+            // No further block is sent before the completion fence. A short
+            // export may finish before an asynchronous tail notice arrives.
+            control.refresh_plugin_tails()?;
+            control.service();
+            if let Some(error) = control.take_preparation_error() {
+                return Err(error.into());
+            }
+            moved = control.compensation_changes() != compensation || !control.latency_settled();
         }
         if !moved {
             break wav;
@@ -530,7 +538,7 @@ fn render_with_plugins(
     wav.finish_cancellable(cancellation)
 }
 
-/// How often one export is drawn again because a plugin changed its latency.
+/// How often one export is drawn again because a plugin changed its latency or tail.
 /// A plugin that never settles is an error, not an export that never ends.
 const LATENCY_REDRAWS: usize = 8;
 
@@ -545,7 +553,7 @@ fn check_render(control: &echode_engine::PlaybackControl) -> Result<(), CliError
 }
 
 /// Renders and discards blocks until the plan that compensates every
-/// helper's current latency is the one playing.
+/// helper's current latency and tail is the one playing.
 fn settle_latency(
     control: &mut echode_engine::PlaybackControl,
     audio: &mut echode_engine::PlaybackAudio,

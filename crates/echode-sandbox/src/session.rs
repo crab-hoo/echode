@@ -122,7 +122,6 @@ pub struct PluginHost {
     input_ports: Vec<u32>,
     /// Channel count of each declared output port.
     output_ports: Vec<u32>,
-    tail_samples: u32,
 }
 
 /// Covers the helper's flush and main-thread read bounds. Late replies are
@@ -158,6 +157,7 @@ pub struct PluginControl {
     applied: Arc<Mutex<Option<AppliedState>>>,
     activity: Arc<Mutex<PluginActivity>>,
     latency_samples: Arc<AtomicU32>,
+    tail_samples: Arc<AtomicU32>,
 }
 
 struct ControlState {
@@ -177,6 +177,7 @@ struct ControlState {
     save_retry_after: Option<Instant>,
     save_failure_reported: bool,
     latency_samples: Arc<AtomicU32>,
+    tail_samples: Arc<AtomicU32>,
 }
 
 impl PluginControl {
@@ -184,6 +185,7 @@ impl PluginControl {
         let applied = Arc::new(Mutex::new(None));
         let activity = Arc::new(Mutex::new(PluginActivity::default()));
         let latency_samples = Arc::new(AtomicU32::new(0));
+        let tail_samples = Arc::new(AtomicU32::new(0));
         Self {
             socket: Arc::new(Mutex::new(ControlState {
                 control,
@@ -199,10 +201,12 @@ impl PluginControl {
                 save_retry_after: None,
                 save_failure_reported: false,
                 latency_samples: Arc::clone(&latency_samples),
+                tail_samples: Arc::clone(&tail_samples),
             })),
             applied,
             activity,
             latency_samples,
+            tail_samples,
         }
     }
 
@@ -210,6 +214,12 @@ impl PluginControl {
     /// The engine aligns every path by this value (ADR 0339).
     pub fn latency_samples(&self) -> u32 {
         self.latency_samples.load(Ordering::Acquire)
+    }
+
+    /// Latest tail declared by the live helper, in device-rate samples.
+    /// Values at least i32::MAX represent an infinite tail in CLAP.
+    pub fn tail_samples(&self) -> u32 {
+        self.tail_samples.load(Ordering::Acquire)
     }
 
     /// Window notices and plugin-made changes since the last call, in order.
@@ -353,6 +363,16 @@ impl ControlState {
                     .unwrap_or_else(|error| error.into_inner())
                     .latency_samples = Some(*latency_samples);
             }
+        }
+        match &message {
+            ControlMessage::Ports { tail_samples, .. }
+            | ControlMessage::TailChanged(tail_samples) => {
+                self.tail_samples.store(*tail_samples, Ordering::Release);
+            }
+            _ => {}
+        }
+        if id == 0 && matches!(message, ControlMessage::TailChanged(_)) {
+            return; // Metadata is coalesced, not queued without bound.
         }
         let note = match message {
             ControlMessage::GuiCommand(command) => PluginActivity {
@@ -647,7 +667,6 @@ impl PluginHost {
             fan: options.fan_in.clone(),
             input_ports: Vec::new(),
             output_ports: Vec::new(),
-            tail_samples: 0,
         };
         host.start_watch();
         if let Err(error) = host.finish_launch(options.cancel) {
@@ -1076,11 +1095,10 @@ impl PluginHost {
         }
     }
 
-    /// Reads the plugin's declared ports, resizes the mapping, then waits until
-    /// the helper is ready to process that layout.
-    /// Tail declared at activation, in device frames. Values at least i32::MAX are infinite.
+    /// Latest declared tail in device frames, refreshed by control polling.
+    /// Values at least i32::MAX are infinite.
     pub fn tail_samples(&self) -> u32 {
-        self.tail_samples
+        self.control.tail_samples()
     }
 
     fn finish_launch(&mut self, cancel: Option<&AtomicBool>) -> Result<(), SessionError> {
@@ -1122,14 +1140,8 @@ impl PluginHost {
         })?;
         let (inputs, outputs) = match ports {
             ControlMessage::Ports {
-                inputs,
-                outputs,
-                tail_samples,
-                ..
-            } => {
-                self.tail_samples = tail_samples;
-                (inputs, outputs)
-            }
+                inputs, outputs, ..
+            } => (inputs, outputs),
             ControlMessage::PortsRejected(refusal) => return Err(refusal.into()),
             _ => return Err(ProtocolError::UnexpectedReply("describe audio ports").into()),
         };

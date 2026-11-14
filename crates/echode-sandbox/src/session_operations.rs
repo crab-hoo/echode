@@ -9,6 +9,24 @@ use crate::{AppliedState, GuiReport, ParamChange, ParamInfo, ParamText, ParamVal
 use std::time::Instant;
 
 impl PluginControl {
+    /// Queries the live tail on the helper's main thread. Control-only: waits
+    /// at most the state deadline, so an export cannot commit stale metadata.
+    pub fn refresh_tail(&self) -> Result<u32, SessionError> {
+        let mut state = self.lock();
+        let deadline = Instant::now() + STATE_REPLY;
+        let id = state.request(ControlMessage::TailRequest, deadline)?;
+        match state.wait_reply(id, deadline, |message| {
+            matches!(
+                message,
+                ControlMessage::TailChanged(_) | ControlMessage::StateRejected(_)
+            )
+        })? {
+            ControlMessage::TailChanged(samples) => Ok(samples),
+            ControlMessage::StateRejected(refusal) => Err(refusal.into()),
+            _ => Err(ProtocolError::UnexpectedReply("read the tail").into()),
+        }
+    }
+
     /// Opens the plugin's window in its helper, or raises it when it is open.
     /// The window does not take keyboard focus. `title` names a new window.
     pub fn show_gui(&self, title: &str) -> Result<GuiReport, SessionError> {

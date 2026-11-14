@@ -168,11 +168,11 @@ impl Latencies {
             .unwrap_or_default()
     }
 
-    /// Each device's latency in graph order, to compare with later reports.
-    pub(crate) fn reported(&self) -> Vec<(u128, u32)> {
+    /// Each device's latency and tail in graph order, to compare with later reports.
+    pub(crate) fn reported(&self) -> Vec<(u128, u32, u32)> {
         self.devices
             .iter()
-            .map(|device| (device.device, device.latency))
+            .map(|device| (device.device, device.latency, device.tail))
             .collect()
     }
 }
@@ -816,10 +816,8 @@ impl HostGraph {
     }
 
     /// Every hosted device's reported latency and declared tail, read once
-    /// (ADR 0340). A plan's delays and the values a later restart is compared
-    /// with both come from this one reading, so a helper that restarts while
-    /// a plan is prepared is still noticed. Control only: reading a tail locks
-    /// the helper.
+    /// (ADR 0340). A plan and the values later reports are compared with both
+    /// come from this reading, so changes during preparation are still noticed.
     pub(crate) fn latencies(&self) -> Latencies {
         let mut devices = Vec::with_capacity(self.stage_index.len());
         let mut tracks = Vec::with_capacity(self.tracks.len());
@@ -828,7 +826,7 @@ impl HostGraph {
             devices.extend(track.stages.iter().map(|stage| DeviceLatency {
                 device: stage.device,
                 latency: stage.instance.control.latency_samples(),
-                tail: stage.instance.host().tail_samples(),
+                tail: stage.instance.control.tail_samples(),
                 instrument: stage.instrument,
                 bypassed: stage.bypassed,
             }));
@@ -838,17 +836,30 @@ impl HostGraph {
         Latencies { devices, tracks }
     }
 
-    /// A helper reported a latency other than `reported`, which
-    /// [`Latencies::reported`] returned for the same graph.
-    pub(crate) fn latency_differs(&self, reported: &[(u128, u32)]) -> bool {
+    /// Offline completion fence: no more blocks are submitted while each
+    /// helper's current tail is read. Normal service only polls notifications.
+    pub(crate) fn refresh_tails(&self) -> Result<(), PlaybackError> {
+        for stage in self.tracks.iter().flat_map(|track| &track.stages) {
+            stage
+                .instance
+                .control
+                .refresh_tail()
+                .map_err(|error| PlaybackError::helper(stage.device, error))?;
+        }
+        Ok(())
+    }
+
+    /// A helper reported a latency or tail other than the published plan used.
+    pub(crate) fn reports_differ(&self, reported: &[(u128, u32, u32)]) -> bool {
         let mut stages = self.tracks.iter().flat_map(|track| &track.stages);
         let mut reported = reported.iter();
         loop {
             match (stages.next(), reported.next()) {
                 (None, None) => return false,
-                (Some(stage), Some(&(device, latency)))
+                (Some(stage), Some(&(device, latency, tail)))
                     if stage.device == device
-                        && stage.instance.control.latency_samples() == latency => {}
+                        && stage.instance.control.latency_samples() == latency
+                        && stage.instance.control.tail_samples() == tail => {}
                 _ => return true,
             }
         }

@@ -31,7 +31,11 @@ CLAP の遅延は有効化の直後にメインスレッドで読み、初回の
 `clap.timer-support` は主スレッドの handler が登録を持ち、ヘルパーの主ループが最初の期限まで待って通知する。
 停止中・窓なしでも動き、callback 中の自己解除・後続の解除・追加を許す。遅れた周期をまとめて再送しない。
 登録表はインスタンスとともに破棄し、音声スレッドへ時計・確保・ロックを足さない（[ADR 0351](../decisions/0351-clap-main-thread-timers.md)）。
-通知は主ループの進行に依存し、実時間の精度は保証しない。`tail`・`audio-ports`・`note-ports` のホスト側は残る。
+通知は主ループの進行に依存し、実時間の精度は保証しない。
+`clap.tail.changed` は主スレッドへ中継して最新値を読み、再有効化後も更新する。
+親は `PluginControl` の共有 atomic に値を集約し、ゼロと無限値も反映する。
+書出しの確定前には番号付きの問合せで読み直す（[ADR 0352](../decisions/0352-live-clap-tails-and-export-fence.md)）。
+`audio-ports`・`note-ports` のホスト側は残る。
 
 ### 9.2 プロセスの分け方
 

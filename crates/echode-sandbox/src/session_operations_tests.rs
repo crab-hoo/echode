@@ -8,6 +8,46 @@ fn receive(helper: &mut Socket) -> (u64, ControlMessage) {
 }
 
 #[test]
+fn tail_refresh_waits_for_its_reply_not_an_unsolicited_notice() {
+    let (parent, mut helper) = Socket::pair().unwrap();
+    let control = PluginControl::new(parent);
+    let answer = std::thread::spawn(move || {
+        let (id, request) = receive(&mut helper);
+        assert!(matches!(request, ControlMessage::TailRequest));
+        helper.send(&ControlMessage::TailChanged(128)).unwrap();
+        helper
+            .send_tagged(id + 1, &ControlMessage::TailChanged(256))
+            .unwrap();
+        helper
+            .send_tagged(id, &ControlMessage::TailChanged(1024))
+            .unwrap();
+    });
+    assert_eq!(control.refresh_tail().unwrap(), 1024);
+    assert_eq!(control.tail_samples(), 1024);
+    answer.join().unwrap();
+}
+
+#[test]
+fn tail_refresh_keeps_the_typed_refusal_and_does_not_replace_metadata() {
+    let (parent, mut helper) = Socket::pair().unwrap();
+    let control = PluginControl::new(parent);
+    let answer = std::thread::spawn(move || {
+        let (id, request) = receive(&mut helper);
+        assert!(matches!(request, ControlMessage::TailRequest));
+        helper.send(&ControlMessage::TailChanged(128)).unwrap();
+        helper
+            .send_tagged(id, &ControlMessage::StateRejected(crate::Refusal::Busy))
+            .unwrap();
+    });
+    assert!(matches!(
+        control.refresh_tail(),
+        Err(SessionError::Refused(crate::Refusal::Busy))
+    ));
+    assert_eq!(control.tail_samples(), 128);
+    answer.join().unwrap();
+}
+
+#[test]
 fn parameter_operation_retains_invalid_utf8_from_the_helper() {
     use std::io::Write;
     use std::os::unix::net::UnixStream;

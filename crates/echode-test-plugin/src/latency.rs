@@ -19,6 +19,8 @@ pub(crate) fn activated(host: &HostMainThreadHandle<'_>) {
     if SAMPLES.load(Ordering::Relaxed) == 768 {
         SAMPLES.store(0, Ordering::Relaxed);
     }
+    // A different tail without a changed notice exercises host reactivation.
+    crate::tail::report(SAMPLES.load(Ordering::Relaxed));
     if let Some(extension) = host.get_extension::<HostLatency>() {
         // SAFETY: the extension and host belong to this live instance. Activation
         // runs on the main thread, where CLAP permits the latency change notice.

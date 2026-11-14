@@ -563,13 +563,18 @@ GUI の設定引渡しは `ExportNormalizationTests`。実画面・VO・聴感�
 
 ### 書出しの余韻が短い・`infinite plugin tail` / `export length overflowed` で止まる
 
-長さの省略時だけ初期化時の CLAP tail を使う。`--tail-frames N` はその値へ加算せず、出力レートの N フレームで置き換える。
+長さの省略時だけ最新の CLAP tail を使う。`--tail-frames N` はその値へ加算せず、出力レートの N フレームで置き換える。
 `--frames N` は曲末からの長さではなく総フレーム数なので、短い値では曲も途中で切れる。両オプションは併用できない。
 CLAP の `>= i32::MAX` の申告値は無限として明示指定を求めるが、明示した tail の値は無限と解釈しない。
 曲末との和が `u32::MAX` を超える場合は RF64 でも拒否し、既存の出力は保つ。ヘッダの byte rate エラーとは分ける。
 再現には指定したレートと両オプションの有無、復旧した `exported` の版を残す。
 `tests/tail.rs` は実 CLI と隔離 Sine Pad の自動・短縮・延長・ゼロ、空の曲と配置音声、復旧した編集の曲末、入力の拒否を検査する。
 無限の申告値と明示値の区別・加算の上限は `tail_tests` で検査する（[ADR 0250](../decisions/0250-explicit-export-tail.md)）。
+実行中の余韻の変更は `TailChanged` → `PluginControl` の atomic → 計画の報告値の比較で反映する。
+通知が遅い短い曲も、最終ブロック後の `refresh_plugin_tails` が主スレッドへ問い合わせ、古い計画なら描き直す。
+`tests/render/tail.rs` は短い曲と長い曲の自動長と明示した総長を通す。
+`UnsettledLatency` は余韻の変化で落ち着かない場合も含む。問合せの busy・時間切れは元の `SessionError` をたどる
+（[ADR 0352](../decisions/0352-live-clap-tails-and-export-fence.md)）。
 
 ### オフラインの FX が読み込まれる・素材まで無音になる・書出しに失敗する
 

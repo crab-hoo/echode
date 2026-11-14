@@ -39,6 +39,8 @@ mod plugin_gui;
 mod recorded_states;
 #[path = "hosted_playback/stopped_processing.rs"]
 mod stopped_processing;
+#[path = "hosted_playback/tail.rs"]
+mod tail;
 #[path = "hosted_playback/track_events.rs"]
 mod track_events;
 

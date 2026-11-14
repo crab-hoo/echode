@@ -18,6 +18,8 @@ use std::time::{Duration, Instant};
 mod plugin_log;
 #[path = "isolation/state_saves.rs"]
 mod state_saves;
+#[path = "isolation/tail.rs"]
+mod tail;
 #[path = "isolation/timer_support.rs"]
 mod timer_support;
 

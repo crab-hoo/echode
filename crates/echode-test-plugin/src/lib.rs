@@ -47,6 +47,7 @@ mod gui;
 mod host_log;
 mod latency;
 mod params;
+mod tail;
 mod thread_check;
 mod timer_support;
 
@@ -140,7 +141,10 @@ impl Plugin for TestGain {
         if matches!(current_role(), Role::State | Role::Params)
             || matches!(
                 fault_now(),
-                Fault::RestartNested | Fault::ThreadCheck | Fault::TimerSupport
+                Fault::RestartNested
+                    | Fault::ThreadCheck
+                    | Fault::TimerSupport
+                    | Fault::TailChanged
             )
         {
             builder.register::<PluginStateExt>();
@@ -154,6 +158,9 @@ impl Plugin for TestGain {
         }
         if matches!(fault_now(), Fault::Latency | Fault::Delay | Fault::Claim) {
             builder.register::<latency::PluginLatency>();
+        }
+        if matches!(fault_now(), Fault::TailChanged | Fault::Latency) {
+            builder.register::<tail::PluginTail>();
         }
         if fault_now() == Fault::TimerSupport {
             builder.register::<timer_support::PluginTimers>();
@@ -187,6 +194,9 @@ impl DefaultPluginFactory for TestGain {
         }
         if fault_now() == Fault::HostLog {
             host_log::initialize(host.shared())?;
+        }
+        if fault_now() == Fault::TailChanged {
+            tail::initialize(host.shared())?;
         }
         let timer_probe = (fault_now() == Fault::TimerSupport)
             .then(|| timer_support::Probe::new(host))
@@ -299,6 +309,8 @@ enum Fault {
     HostLog,
     /// Registers and cancels main-thread timers, including during callbacks.
     TimerSupport,
+    /// Changes its declared tail from process after a state load.
+    TailChanged,
 }
 
 /// For [`Fault::RestartNested`]: activations so far, and whether the first
@@ -331,6 +343,7 @@ fn fault_code(text: &str) -> u8 {
         "thread-check" => 23,
         "host-log" | "host-log-refuse" => 24,
         "timer-support" => 25,
+        "tail-changed" => 26,
         _ if text.starts_with("restart-nested:") => 22,
         _ if text.starts_with("delay:") => 19,
         // The event counter, with the second process call held as `process-wait`.
@@ -369,6 +382,7 @@ fn fault_from_code(code: u8) -> Fault {
         23 => Fault::ThreadCheck,
         24 => Fault::HostLog,
         25 => Fault::TimerSupport,
+        26 => Fault::TailChanged,
         _ => Fault::None,
     }
 }
@@ -614,6 +628,9 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
         }
         if self.fault == Fault::TimerSupport {
             timer_support::reject_off_main(self.host)?;
+        }
+        if self.fault == Fault::TailChanged {
+            tail::process(self.host)?;
         }
         self.process_calls += 1;
         if (self.process_calls == 2 || (self.process_gate_twice && self.process_calls == 4))
@@ -873,6 +890,7 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
             | Fault::ThreadCheck
             | Fault::HostLog
             | Fault::TimerSupport
+            | Fault::TailChanged
             | Fault::Activate
             | Fault::Generate
             | Fault::SlowSave

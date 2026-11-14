@@ -467,6 +467,8 @@ fn sample_messages() -> Vec<ControlMessage> {
         ControlMessage::Restored,
         ControlMessage::RequestProcess,
         ControlMessage::Dirty,
+        ControlMessage::TailRequest,
+        ControlMessage::TailChanged(1024),
         ControlMessage::PluginRestarted {
             latency_samples: 64,
         },

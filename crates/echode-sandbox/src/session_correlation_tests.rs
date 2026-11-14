@@ -35,6 +35,35 @@ fn latency_is_retained_when_another_request_drains_the_socket() {
 }
 
 #[test]
+fn tails_are_coalesced_and_late_replies_do_not_replace_current_metadata() {
+    let (parent, _helper) = Socket::pair().unwrap();
+    let control = PluginControl::new(parent);
+    let mut state = control.lock();
+    state.accept(
+        0,
+        ControlMessage::Ports {
+            inputs: vec![2],
+            outputs: vec![2],
+            tail_samples: 128,
+            latency_samples: 0,
+        },
+    );
+    assert_eq!(control.tail_samples(), 128);
+    let queued = state.inbox.len();
+    for tail in [1024, u32::MAX, 0] {
+        state.accept(0, ControlMessage::TailChanged(tail));
+        assert_eq!(control.tail_samples(), tail);
+        assert_eq!(
+            state.inbox.len(),
+            queued,
+            "tail notices must not accumulate"
+        );
+    }
+    state.accept(99, ControlMessage::TailChanged(256));
+    assert_eq!(control.tail_samples(), 0);
+}
+
+#[test]
 fn contract_control_replies_are_correlated_across_timeouts() {
     let (parent, mut helper) = Socket::pair().unwrap();
     let control = PluginControl::new(parent);

@@ -381,6 +381,8 @@ CLAP のログの固定量スロット・重大度と破棄の出力は `echode-
 満杯・競合・寿命の回帰は `plugin_log_tests.rs`、実ヘルパーの音声と起動拒否前の診断は `tests/isolation/plugin_log.rs` を使う（[ADR 0349](decisions/0349-clap-log-relay.md)）。
 CLAP の主スレッドタイマーの登録表・拡張・期限の計算と通知は `echode-plugin-host/src/plugin_timers.rs`、主ループとの接続は `threads.rs` に置く。
 時刻を引数で進める境界回帰は `plugin_timers_tests.rs`、実ヘルパーの停止中の通知と callback 中の登録・解除は `tests/isolation/timer_support.rs` を使う（[ADR 0351](decisions/0351-clap-main-thread-timers.md)）。
+CLAP の余韻の通知・再有効化後の読直しは `threads.rs`、親の最新値は `session.rs` の `PluginControl` に置く。
+確定前の問合せは `session_operations.rs::refresh_tail`、回帰は `isolation/tail.rs`・`hosted_playback/tail.rs` と `echode-cli/tests/render/tail.rs` を使う（[ADR 0352](decisions/0352-live-clap-tails-and-export-fence.md)）。
 
 共有メモリの作成と `SharedMemoryOperation` は `echode-sandbox/src/region.rs`、
 操作・errno・表示・unlink と close-on-exec の回帰は `region_error_tests.rs` に置く（[ADR 0311](decisions/0311-typed-shared-memory-errors.md)）。

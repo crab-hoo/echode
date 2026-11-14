@@ -189,6 +189,8 @@ struct Bridge {
     sample_bits: AtomicU64,
     activation_frames: AtomicU32,
     tail_samples: AtomicU32,
+    /// A plugin changed its declared tail; main reads the new value.
+    tail_changed: AtomicBool,
     latency_samples: AtomicU32,
     /// Port channel counts, published before the worker threads start.
     ports: AtomicPtr<PortShape>,
@@ -281,11 +283,27 @@ impl Bridge {
             });
         }
         self.service_main_request();
+        if self.tail_changed.swap(false, Ordering::AcqRel) {
+            INSTANCE.with(|cell| {
+                let instance = cell.get();
+                if !instance.is_null() {
+                    // SAFETY: INSTANCE lives until serve_region clears it, and
+                    // CLAP permits reading the tail on this main thread.
+                    self.update_tail(unsafe { &*instance });
+                }
+            });
+        }
         match self.op.swap(0, Ordering::AcqRel) {
             OP_RESTART => self.restart_on_main(),
             OP_ARM => self.arm_on_main(),
             _ => {}
         }
+    }
+
+    fn update_tail(&self, instance: &PluginInstance<EchodeHost>) {
+        self.tail_samples
+            .store(query_tail(instance), Ordering::Release);
+        self.bump_control();
     }
 
     fn restart_on_main(&self) {
@@ -308,6 +326,7 @@ impl Bridge {
                 self.activation_frames.load(Ordering::Acquire),
             ) {
                 Ok(stopped) => {
+                    self.update_tail(instance);
                     self.latency_samples
                         .store(query_latency(instance), Ordering::Release);
                     publish_stopped(&self.processor, stopped, false);
@@ -347,6 +366,7 @@ impl Bridge {
                     self.activation_frames.load(Ordering::Acquire),
                 ) {
                     Ok(stopped) => {
+                        self.update_tail(instance);
                         self.latency_samples
                             .store(query_latency(instance), Ordering::Release);
                         publish_stopped(&self.processor, stopped, false);
@@ -661,6 +681,37 @@ unsafe impl ExtensionImplementation<EchodeHost> for HostLatency {
 unsafe extern "C" fn host_latency_changed(_host: *const clap_host) {}
 
 #[derive(Copy, Clone)]
+struct HostTail;
+
+// SAFETY: this identifier names the CLAP host tail extension.
+unsafe impl Extension for HostTail {
+    const IDENTIFIERS: &[&CStr] = &[clap_sys::ext::tail::CLAP_EXT_TAIL];
+    type ExtensionSide = HostExtensionSide;
+    unsafe fn from_raw(_raw: RawExtension<Self::ExtensionSide>) -> Self {
+        Self
+    }
+}
+
+// SAFETY: the implementation has the official clap_host_tail C layout.
+unsafe impl ExtensionImplementation<EchodeHost> for HostTail {
+    const IMPLEMENTATION: RawExtensionImplementation =
+        RawExtensionImplementation::new(&clap_sys::ext::tail::clap_host_tail {
+            changed: Some(host_tail_changed),
+        });
+}
+
+unsafe extern "C" fn host_tail_changed(host: *const clap_host) {
+    // SAFETY: the plugin returns its live host pointer. Only shared atomics and
+    // the existing RT-safe main notification relay are accessed from audio.
+    unsafe {
+        with_bridge(host, |bridge| {
+            bridge.tail_changed.store(true, Ordering::Release);
+            bridge.signal();
+        });
+    }
+}
+
+#[derive(Copy, Clone)]
 struct HostLog;
 
 // SAFETY: this identifier names the CLAP host log extension.
@@ -751,6 +802,7 @@ impl HostHandlers for EchodeHost {
         // The comparison-only inert host has no main loop to deliver timers.
         if shared.bridge.is_some() {
             builder.register::<crate::plugin_timers::HostTimers>();
+            builder.register::<HostTail>();
         }
     }
 }
@@ -863,6 +915,7 @@ fn serve_region(
         sample_bits: AtomicU64::new(sample_rate.to_bits()),
         activation_frames: AtomicU32::new(max_frames.max(1)),
         tail_samples: AtomicU32::new(0),
+        tail_changed: AtomicBool::new(false),
         latency_samples: AtomicU32::new(0),
         ports: AtomicPtr::new(ptr::null_mut()),
         main_requests: MainRequests::default(),
@@ -1550,6 +1603,7 @@ fn control_thread(bridge: &Bridge, mut socket: Option<Socket>) -> Result<(), Hos
     if bridge.stop.load(Ordering::Acquire) {
         return Ok(());
     }
+    let mut sent_tail = bridge.tail_samples.load(Ordering::Acquire);
     if let Some(socket) = socket.as_mut()
         && bridge.has_plugin.load(Ordering::Acquire)
         && let Some(shape) = published_ports(bridge)
@@ -1560,7 +1614,7 @@ fn control_thread(bridge: &Bridge, mut socket: Option<Socket>) -> Result<(), Hos
             ControlMessage::Ports {
                 inputs: shape.inputs.clone(),
                 outputs: shape.outputs.clone(),
-                tail_samples: bridge.tail_samples.load(Ordering::Acquire),
+                tail_samples: sent_tail,
                 latency_samples: bridge.latency_samples.load(Ordering::Acquire),
             }
         };
@@ -1627,6 +1681,15 @@ fn control_thread(bridge: &Bridge, mut socket: Option<Socket>) -> Result<(), Hos
             }
             restarted = want;
             continue;
+        }
+        let tail = bridge.tail_samples.load(Ordering::Acquire);
+        if tail != sent_tail {
+            if let Some(socket) = &mut socket {
+                socket
+                    .send(&ControlMessage::TailChanged(tail))
+                    .map_err(HostError::Socket)?;
+            }
+            sent_tail = tail;
         }
         if bridge.plugin_dirty.swap(false, Ordering::AcqRel)
             && let Some(socket) = &mut socket
@@ -1698,6 +1761,18 @@ fn handle_control(
         ControlMessage::Restore(bytes) => {
             let reply = match call_main(bridge, MainRequest::Load(bytes)) {
                 Ok(MainReply::Done) => ControlMessage::Restored,
+                Ok(reply) => ControlMessage::StateRejected(reply.unexpected(MainReplyKind::Done)),
+                Err(error) => ControlMessage::StateRejected(error),
+            };
+            socket
+                .send_tagged(request_id, &reply)
+                .map_err(HostError::Socket)?;
+        }
+        ControlMessage::TailRequest => {
+            let reply = match call_main(bridge, MainRequest::RefreshTail) {
+                Ok(MainReply::Done) => {
+                    ControlMessage::TailChanged(bridge.tail_samples.load(Ordering::Acquire))
+                }
                 Ok(reply) => ControlMessage::StateRejected(reply.unexpected(MainReplyKind::Done)),
                 Err(error) => ControlMessage::StateRejected(error),
             };
@@ -2111,6 +2186,10 @@ fn perform_main_request(bridge: &Bridge, request: MainRequest) -> Result<MainRep
             }
             MainRequest::PrepareCapacity(capacity) => {
                 prepare_event_capacity(instance, capacity)?;
+                MainReply::Done
+            }
+            MainRequest::RefreshTail => {
+                bridge.update_tail(instance);
                 MainReply::Done
             }
             MainRequest::Parameters => {

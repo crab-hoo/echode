@@ -27,6 +27,12 @@ fn malformed_control_metadata_retains_a_structural_cause() {
             "restart notice is the wrong size",
         ),
         (
+            TAIL_CHANGED,
+            ControlField::TailSamples,
+            4,
+            "tail notice is the wrong size",
+        ),
+        (
             SET_CHAIN,
             ControlField::ChainStages,
             4,
@@ -58,7 +64,13 @@ fn malformed_control_metadata_retains_a_structural_cause() {
             );
         }
     }
-    for typ in [PARAMS_REQUEST, GUI_CLOSE, GUI_CLOSED_REPLY, GUI_CLOSED] {
+    for typ in [
+        PARAMS_REQUEST,
+        TAIL_REQUEST,
+        GUI_CLOSE,
+        GUI_CLOSED_REPLY,
+        GUI_CLOSED,
+    ] {
         for actual in 1..=4 {
             assert_cause(
                 receive(typ, &vec![0; actual]).unwrap_err(),
@@ -71,8 +83,8 @@ fn malformed_control_metadata_retains_a_structural_cause() {
             );
         }
     }
-    // `PART + 1` is the first type past the last one in use (ADR 0318).
-    for typ in [0, crate::control_transport::PART + 1, 256, u32::MAX] {
+    // The next type past the most recent notice is still unknown.
+    for typ in [0, TAIL_REQUEST + 1, 256, u32::MAX] {
         assert_cause(
             receive(typ, &[1, 2, 3]).unwrap_err(),
             ControlDecodeError::UnknownMessageType(typ),
@@ -209,12 +221,14 @@ fn metadata_errors_wait_for_the_complete_frame() {
 fn valid_metadata_keeps_its_values_and_existing_body_acceptance() {
     let mut messages = vec![
         ControlMessage::ParamsRequest,
+        ControlMessage::TailRequest,
         ControlMessage::GuiClose,
         ControlMessage::GuiClosedReply,
         ControlMessage::GuiClosed,
     ];
     for value in [0, 1, u32::MAX] {
         messages.push(ControlMessage::SetChain(value));
+        messages.push(ControlMessage::TailChanged(value));
         messages.push(ControlMessage::PluginRestarted {
             latency_samples: value,
         });

@@ -73,6 +73,8 @@ const PARAM_RELAY: u32 = 31;
 const GUI_COMMAND: u32 = 32;
 const PARSE_PARAM: u32 = 33;
 const PARAM_PARSED: u32 = 34;
+const TAIL_CHANGED: u32 = 36;
+const TAIL_REQUEST: u32 = 37;
 
 #[derive(Debug)]
 pub enum ControlMessage {
@@ -86,6 +88,10 @@ pub enum ControlMessage {
     PluginRestarted {
         latency_samples: u32,
     },
+    /// Reads the current tail on the helper's main thread before export commits.
+    TailRequest,
+    /// Notice: latest declared tail, including zero and CLAP's infinite values.
+    TailChanged(u32),
     Remap {
         layout: SessionLayout,
         fd: OwnedFd,
@@ -110,7 +116,7 @@ pub enum ControlMessage {
     },
     /// The plugin has no usable audio-port description.
     PortsRejected(Refusal),
-    /// Save or load did not finish: the helper did not call the plugin, the
+    /// State or tail request did not finish: the helper did not call the plugin, the
     /// plugin refused, or the outcome is unknown.
     StateRejected(Refusal),
     /// Asks for every parameter description and current value.
@@ -154,6 +160,7 @@ impl ControlMessage {
             self,
             Self::Dirty
                 | Self::PluginRestarted { .. }
+                | Self::TailChanged(_)
                 | Self::RequestProcess
                 | Self::Hello
                 | Self::GuiClosed
@@ -597,6 +604,8 @@ fn encode(message: &ControlMessage) -> (u32, Cow<'_, [u8]>) {
         ControlMessage::PluginRestarted { latency_samples } => {
             (PLUGIN_RESTARTED, latency_samples.to_le_bytes().to_vec())
         }
+        ControlMessage::TailRequest => (TAIL_REQUEST, Vec::new()),
+        ControlMessage::TailChanged(samples) => (TAIL_CHANGED, samples.to_le_bytes().to_vec()),
         ControlMessage::Remap { layout, .. } => (REMAP, layout_bytes(*layout).to_vec()),
         ControlMessage::Remapped => (REMAPPED, Vec::new()),
         ControlMessage::RemapFailed => (REMAP_FAILED, Vec::new()),
@@ -677,6 +686,14 @@ fn decode_body(
         PLUGIN_RESTARTED => ControlMessage::PluginRestarted {
             latency_samples: u32::from_le_bytes(read_fixed(body, ControlField::RestartLatency)?),
         },
+        TAIL_REQUEST => {
+            read_fixed::<0>(body, ControlField::EmptyBody { message_type: typ })?;
+            ControlMessage::TailRequest
+        }
+        TAIL_CHANGED => ControlMessage::TailChanged(u32::from_le_bytes(read_fixed(
+            body,
+            ControlField::TailSamples,
+        )?)),
         REMAPPED => ControlMessage::Remapped,
         REMAP_FAILED => ControlMessage::RemapFailed,
         CANCEL_REMAP => ControlMessage::CancelRemap,

@@ -1722,7 +1722,7 @@ pub struct PlaybackControl {
     save_controls: Vec<(u128, echode_sandbox::PluginControl)>,
     /// What the most recently published plan's delay compensation used.
     compensated: Compensated,
-    /// Published plans whose compensation was planned from other latencies
+    /// Published plans whose compensation used other latency or tail reports
     /// than the plan before them.
     compensation_changes: u64,
     /// The audio thread's notes, logged on this thread (ADR 0322).
@@ -1732,9 +1732,8 @@ pub struct PlaybackControl {
 /// What a published plan's delay compensation was planned from (ADR 0339).
 #[derive(Default)]
 struct Compensated {
-    /// Each hosted device's reported latency, in graph order, to notice a
-    /// change that a helper's restart reports later.
-    reported: Vec<(u128, u32)>,
+    /// Each hosted device's latency and tail in graph order, to notice later changes.
+    reported: Vec<(u128, u32, u32)>,
     latency: u64,
     tail: u32,
 }
@@ -2109,27 +2108,34 @@ impl PlaybackControl {
         self.compensated.tail
     }
 
+    /// Offline-only completion fence. After the last block, read every hosted
+    /// device's live tail, then service and settle the plan before committing.
+    /// This waits for helpers and must not run on an audio callback.
+    pub fn refresh_plugin_tails(&self) -> Result<(), PlaybackError> {
+        self.hosts.refresh_tails()
+    }
+
     /// How far master lags the timeline in the most recently published plan,
     /// in device frames. An export drops this many frames first (ADR 0339).
     pub fn latency_samples(&self) -> u64 {
         self.compensated.latency
     }
 
-    /// How many published plans were compensated from other latencies than
-    /// the plan before them. A render that must stay aligned from its first
-    /// frame to its last starts over when this moves (ADR 0340).
+    /// How many published plans used different latency or tail reports than
+    /// the previous plan. Exports restart when this changes, so alignment and
+    /// automatic length both use current metadata (ADR 0340, ADR 0352).
     pub fn compensation_changes(&self) -> u64 {
         self.compensation_changes
     }
 
-    /// Every helper still reports the latency the published plan compensates,
+    /// Every helper still reports the latency and tail the published plan uses,
     /// and no other plan is on its way. While this is false, a path is heard
     /// at another time than the plan aligned it to (ADR 0340).
     pub fn latency_settled(&self) -> bool {
         self.held.is_none()
             && self.preparing.is_none()
             && self.media.is_none()
-            && !self.hosts.latency_differs(&self.compensated.reported)
+            && !self.hosts.reports_differ(&self.compensated.reported)
     }
 
     pub fn set_routes(&mut self, host_bin: &std::path::Path, routes: &[PluginRoute]) {
@@ -2562,7 +2568,7 @@ impl PlaybackControl {
             || self.preparing.is_some()
             || self.media.is_some()
             || self.preparation_error.is_some()
-            || !self.hosts.latency_differs(&self.compensated.reported)
+            || !self.hosts.reports_differ(&self.compensated.reported)
         {
             return;
         }

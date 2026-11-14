@@ -78,6 +78,8 @@ fn every_truncated_body_is_refused_without_a_panic() {
         },
         ControlMessage::SetChain(3),
         ControlMessage::PluginRestarted { latency_samples: 9 },
+        ControlMessage::TailRequest,
+        ControlMessage::TailChanged(u32::MAX),
         ControlMessage::GuiCommand(crate::PluginCommand::decode(0).unwrap()),
         ControlMessage::Params(vec![ParamInfo {
             id: 4,

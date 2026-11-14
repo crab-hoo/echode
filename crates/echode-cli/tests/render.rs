@@ -17,6 +17,8 @@ use echode_engine::{PlaybackCommand, PlaybackOptions, playback};
 use echode_history::write_package;
 use echode_model::{Id, NoteDraft, Project, Tick};
 
+#[path = "render/tail.rs"]
+mod dynamic_tail;
 fn scratch() -> PathBuf {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let n = NEXT.fetch_add(1, Ordering::Relaxed);

@@ -20,11 +20,17 @@ fn plugin_latency_is_reported_at_startup_and_after_restart() {
     .unwrap();
     let read_latency = |host: &mut PluginHost| {
         let deadline = Instant::now() + Duration::from_secs(5);
+        let mut seen = None;
         loop {
             if let Some(PluginNotice::PluginRestarted { latency_samples }) =
                 host.poll_notice().unwrap()
             {
-                break latency_samples;
+                seen = Some(latency_samples);
+            }
+            if let Some(latency) = seen
+                && host.tail_samples() == latency
+            {
+                break latency;
             }
             assert!(
                 Instant::now() < deadline,
@@ -34,6 +40,7 @@ fn plugin_latency_is_reported_at_startup_and_after_restart() {
         }
     };
     let control = host.control_handle();
+    assert_eq!(host.tail_samples(), 256);
     assert_eq!(
         control.latency_samples(),
         256,
@@ -72,4 +79,5 @@ fn plugin_latency_is_reported_at_startup_and_after_restart() {
 fn plugins_without_latency_extension_report_zero() {
     let host = spawn_declared("dev.echode.test-gain").unwrap();
     assert_eq!(host.control_handle().latency_samples(), 0);
+    assert_eq!(host.tail_samples(), 0);
 }

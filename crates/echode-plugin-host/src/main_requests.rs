@@ -11,6 +11,7 @@ pub(crate) enum MainRequest {
     Save,
     Load(Vec<u8>),
     PrepareCapacity(u32),
+    RefreshTail,
     Parameters,
     Values { ids: Vec<u32>, relay: bool },
     Parse { id: u32, text: String },

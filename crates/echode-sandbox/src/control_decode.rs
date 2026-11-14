@@ -6,6 +6,7 @@ pub enum ControlField {
     MessageType,
     RequestId,
     RestartLatency,
+    TailSamples,
     ChainStages,
     PortTailLatency,
     PortCount {
@@ -65,6 +66,7 @@ impl std::fmt::Display for ControlDecodeError {
                 MessageType => "control message has no type",
                 RequestId => "control message has no request id",
                 RestartLatency => "restart notice is the wrong size",
+                TailSamples => "tail notice is the wrong size",
                 ChainStages => "chain message is the wrong size",
                 PortTailLatency => "port tail/latency is missing",
                 PortCount { .. } | PortChannels { .. } => "port description is truncated",
