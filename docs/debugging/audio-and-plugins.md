@@ -250,13 +250,27 @@ bit 7 が立つ時は誤った判定で、下位 bit の不足は未到達の区
 
 `clap.audio-ports` のホスト側は `CLAP_AUDIO_PORTS_RESCAN_NAMES` だけを対応と答える。
 名前はまだ保持・表示しないため、名前の通知では再起動や親のグラフ再作成は起きない。
-リスト・チャンネル数などの構造変更と `note-ports` のホスト側は未対応である（[ADR 0355](../decisions/0355-clap-audio-port-name-rescans.md)）。
+リスト・チャンネル数など音声ポートの構造変更は未対応である（[ADR 0355](../decisions/0355-clap-audio-port-name-rescans.md)）。
 まずプラグインが問い合わせたフラグと、通知時に実際に変えた項目を区別する。
 非対応の変更を許可したとみなして再起動を繰り返さず、初期のポート宣言・機器なしのヘルパー回帰と比較する。
 公開する対応フラグは `echode-plugin-host/src/audio_ports.rs`、実ヘルパーの回帰は次である。
 
 ```sh
 cargo test -q -p echode-plugin-host --test isolation audio_ports::
+```
+
+### CLAP のノート形式が選ばれない・ポート変更後に発音が残る
+
+ホストの `clap.note-ports.supported_dialects` は native CLAP だけを返す。
+MIDI の全発音停止を送ることと、曲の MIDI / MPE / MIDI 2.0 の入力に対応することは別である。
+名前の通知は再起動しない。構成を変えるプラグインは `request_restart` の後、無効化中に `RESCAN_ALL` を通知する。
+終了処理の一覧は `threads.rs::activate` が無効化中に再生成し、処理器と一緒に音声側へ渡す。
+古い一覧のまま増減を受理していないか、`isolation/note_ports.rs` の増加・減少・0 ポートの回帰と比べる。
+`activate after restart failed` があれば、無効化後の count/get の失敗と処理そのものの失敗を区別する。
+ポート数・対応形式・通知時の有効化状態と stderr を残す（[ADR 0356](../decisions/0356-clap-note-port-capabilities-and-lifecycle.md)）。
+
+```sh
+cargo test -q -p echode-plugin-host --test isolation note_ports::
 ```
 
 ### CLAP が鳴らない・走査失敗

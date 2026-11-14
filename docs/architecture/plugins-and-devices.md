@@ -36,7 +36,12 @@ CLAP の遅延は有効化の直後にメインスレッドで読み、初回の
 親は `PluginControl` の共有 atomic に値を集約し、ゼロと無限値も反映する。
 書出しの確定前には番号付きの問合せで読み直す（[ADR 0352](../decisions/0352-live-clap-tails-and-export-fence.md)）。
 `clap.audio-ports` のホスト側は名前の更新だけを対応と答え、保持しない名前の通知で再起動しない。
-構造の変更と `note-ports` のホスト側は未対応である（[ADR 0355](../decisions/0355-clap-audio-port-name-rescans.md)）。
+音声ポートの構造変更は未対応である（[ADR 0355](../decisions/0355-clap-audio-port-name-rescans.md)）。
+`clap.note-ports` は、曲のノートと表情に使う native CLAP だけを対応と答える。
+MIDI の全発音停止は互換用の終了処理であり、MIDI・MPE・MIDI 2.0 の曲の入力には対応しない。
+名前は保持・表示せず、名前だけの通知では音声を再起動しない。
+全走査の通知は初期化と無効化中に受け、入力ポートから作る全発音停止の一覧を毎回の有効化前に読み直す。
+一覧は処理器と一緒に所有権を渡し、音声側では差替え・解放・拡張をしない（[ADR 0356](../decisions/0356-clap-note-port-capabilities-and-lifecycle.md)）。
 
 ### 9.2 プロセスの分け方
 

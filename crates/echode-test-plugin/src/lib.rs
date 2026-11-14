@@ -47,6 +47,7 @@ mod delay;
 mod gui;
 mod host_log;
 mod latency;
+mod note_ports;
 mod params;
 mod tail;
 mod thread_check;
@@ -147,6 +148,7 @@ impl Plugin for TestGain {
                     | Fault::TimerSupport
                     | Fault::TailChanged
                     | Fault::AudioPorts
+                    | Fault::NotePorts
             )
         {
             builder.register::<PluginStateExt>();
@@ -156,6 +158,9 @@ impl Plugin for TestGain {
             builder.register::<gui::PluginGuiExt>();
         }
         if current_role() == Role::Order || fault_now() == Fault::TailLegacy {
+            builder.register::<PluginNotePorts>();
+        }
+        if fault_now() == Fault::NotePorts {
             builder.register::<PluginNotePorts>();
         }
         if matches!(fault_now(), Fault::Latency | Fault::Delay | Fault::Claim) {
@@ -202,6 +207,10 @@ impl DefaultPluginFactory for TestGain {
         }
         if fault_now() == Fault::AudioPorts {
             audio_ports::probe(host.shared(), 1);
+            host.shared().request_callback();
+        }
+        if fault_now() == Fault::NotePorts {
+            note_ports::probe(host.shared(), 1);
             host.shared().request_callback();
         }
         let timer_probe = (fault_now() == Fault::TimerSupport)
@@ -254,6 +263,9 @@ impl PluginMainThread<'_, ()> for TestMain {
         }
         if fault_now() == Fault::AudioPorts {
             audio_ports::probe(self.host.shared(), 2);
+        }
+        if fault_now() == Fault::NotePorts {
+            note_ports::probe(self.host.shared(), 2);
         }
         if gui::CLOSE.swap(false, Ordering::AcqRel) {
             gui::report_closed();
@@ -322,6 +334,8 @@ enum Fault {
     TailChanged,
     /// Checks supported audio-port rescans during initialization and on main.
     AudioPorts,
+    /// Checks note dialects, name rescans, and changing inactive port counts.
+    NotePorts,
 }
 
 /// For [`Fault::RestartNested`]: activations so far, and whether the first
@@ -356,6 +370,7 @@ fn fault_code(text: &str) -> u8 {
         "timer-support" => 25,
         "tail-changed" => 26,
         "audio-ports" => 27,
+        "note-ports" => 28,
         _ if text.starts_with("restart-nested:") => 22,
         _ if text.starts_with("delay:") => 19,
         // The event counter, with the second process call held as `process-wait`.
@@ -396,6 +411,7 @@ fn fault_from_code(code: u8) -> Fault {
         25 => Fault::TimerSupport,
         26 => Fault::TailChanged,
         27 => Fault::AudioPorts,
+        28 => Fault::NotePorts,
         _ => Fault::None,
     }
 }
@@ -518,6 +534,9 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
         if fault_now() == Fault::AudioPorts {
             audio_ports::activated();
         }
+        if fault_now() == Fault::NotePorts {
+            note_ports::activate();
+        }
         if fault_now() == Fault::Latency {
             latency::activated(&main_thread.host);
         }
@@ -595,6 +614,12 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
             nan_cleared: false,
             delay,
         })
+    }
+
+    fn deactivate(self, main_thread: &TestMain) {
+        if self.fault == Fault::NotePorts {
+            note_ports::deactivate(main_thread.host.shared());
+        }
     }
 
     fn start_processing(&mut self) -> Result<(), PluginError> {
@@ -690,6 +715,10 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
                 if delay::restart_due() {
                     self.host.request_restart();
                 }
+                return Ok(ProcessStatus::Continue);
+            }
+            Fault::NotePorts => {
+                fill_outputs(&mut audio, note_ports::render(events.input));
                 return Ok(ProcessStatus::Continue);
             }
             Fault::Onset => {
@@ -1332,6 +1361,16 @@ unsafe extern "C" fn state_save(plugin: *const clap_plugin, stream: *const clap_
             })
         };
     }
+    if fault_now() == Fault::NotePorts {
+        let bytes = note_ports::snapshot();
+        // SAFETY: the host's live stream receives this readable local buffer.
+        return unsafe {
+            (*stream).write.is_some_and(|write| {
+                write(stream, bytes.as_ptr().cast::<c_void>(), bytes.len() as u64)
+                    == bytes.len() as i64
+            })
+        };
+    }
     let byte = if fault_now() == Fault::ThreadCheck {
         thread_check::snapshot()
     } else if fault_now() == Fault::TimerSupport {
@@ -1469,6 +1508,9 @@ unsafe extern "C" fn state_load(plugin: *const clap_plugin, stream: *const clap_
     unsafe {
         PluginWrapper::<TestGain>::handle(plugin, |wrapper| {
             wrapper.main_thread().mark_dirty();
+            if fault_now() == Fault::NotePorts {
+                note_ports::change(wrapper.main_thread().host.shared(), byte);
+            }
             Ok(())
         });
     }
@@ -1499,6 +1541,9 @@ unsafe impl ExtensionImplementation<TestGain> for PluginNotePorts {
 }
 
 unsafe extern "C" fn note_port_count(_plugin: *const clap_plugin, is_input: bool) -> u32 {
+    if fault_now() == Fault::NotePorts {
+        return note_ports::count(is_input);
+    }
     // Three ports only exercise this fixture's declaration and final port.
     if fault_now() == Fault::TailLegacy {
         if is_input { 3 } else { 0 }
@@ -1523,14 +1568,22 @@ unsafe extern "C" fn note_port_get(
     unsafe {
         *info = clap_note_port_info {
             id: index,
-            supported_dialects: CLAP_NOTE_DIALECT_CLAP
-                | if fault_now() == Fault::TailLegacy {
-                    CLAP_NOTE_DIALECT_MIDI
-                } else {
-                    0
-                },
+            supported_dialects: if fault_now() == Fault::NotePorts {
+                note_ports::port_dialects(index)
+            } else {
+                CLAP_NOTE_DIALECT_CLAP
+                    | if fault_now() == Fault::TailLegacy {
+                        CLAP_NOTE_DIALECT_MIDI
+                    } else {
+                        0
+                    }
+            },
             preferred_dialect: CLAP_NOTE_DIALECT_CLAP,
-            name: [0; 256],
+            name: if fault_now() == Fault::NotePorts {
+                note_ports::name()
+            } else {
+                [0; clap_sys::string_sizes::CLAP_NAME_SIZE]
+            },
         };
     }
     true

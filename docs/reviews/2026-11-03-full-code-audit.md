@@ -467,6 +467,10 @@ PDC と `clap.log`・`clap.thread-check` 等の拡張は残り、実画面・第
 `plugin_timers_tests.rs` は仮想の時刻で期限・追付きの抑止・ID の境界を確認する。
 `tail`・ポート通知等は残り、第三者の周期と窓の互換は UC-82 に残す。
 
+2026-11-15 の追加対応: [ADR 0356](../decisions/0356-clap-note-port-capabilities-and-lifecycle.md) で `clap.note-ports` の native 対応の公開と、無効化中の全走査後の終了処理の更新を接続した。
+`isolation/note_ports.rs` は実ヘルパーの対応形式・名前の通知・ポートの増減と 0 への変更、終了処理と通常ノートの順序を照合する。
+音声ポートの構造変更、MIDI / MPE / MIDI 2.0 の曲の入力と第三者互換の確認は残る。
+
 ### FCA-08: 締め切り超過の急な無音
 
 - `HostGraph::apply`（plugins.rs 922 行）は、間に合わなかったトラックを 0 で埋める。次のブロックで元の音へ戻る。

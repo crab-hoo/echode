@@ -94,11 +94,45 @@ impl Drop for AudioFlag {
     }
 }
 
+/// Lifecycle events travel with the processor through the existing ownership
+/// handoff. Main replaces their storage only while the plugin is inactive.
+struct Processor<P> {
+    inner: P,
+    reset_midi: Vec<MidiEvent>,
+}
+
+type StoppedProcessor = Processor<StoppedPluginAudioProcessor<EchodeHost>>;
+type StartedProcessor = Processor<StartedPluginAudioProcessor<EchodeHost>>;
+
+impl StartedProcessor {
+    fn stop_processing(self) -> StoppedProcessor {
+        Processor {
+            inner: self.inner.stop_processing(),
+            reset_midi: self.reset_midi,
+        }
+    }
+}
+
+impl StoppedProcessor {
+    fn start_processing(self) -> Result<StartedProcessor, Self> {
+        match self.inner.start_processing() {
+            Ok(inner) => Ok(Processor {
+                inner,
+                reset_midi: self.reset_midi,
+            }),
+            Err(error) => Err(Processor {
+                inner: error.into_stopped_processor(),
+                reset_midi: self.reset_midi,
+            }),
+        }
+    }
+}
+
 /// One stopped processor, handed between the main thread and the audio thread
 /// without allocating. `state` is empty, full, or busy.
 struct ProcessorHandoff {
     state: AtomicU8,
-    slot: UnsafeCell<MaybeUninit<StoppedPluginAudioProcessor<EchodeHost>>>,
+    slot: UnsafeCell<MaybeUninit<StoppedProcessor>>,
 }
 
 impl ProcessorHandoff {
@@ -115,10 +149,7 @@ impl ProcessorHandoff {
 
     /// Stores `stopped` when the slot is empty.
     /// On failure the caller still owns `stopped`.
-    fn try_store(
-        &self,
-        stopped: StoppedPluginAudioProcessor<EchodeHost>,
-    ) -> Result<(), StoppedPluginAudioProcessor<EchodeHost>> {
+    fn try_store(&self, stopped: StoppedProcessor) -> Result<(), StoppedProcessor> {
         if self
             .state
             .compare_exchange(
@@ -137,7 +168,7 @@ impl ProcessorHandoff {
         Ok(())
     }
 
-    fn try_take(&self) -> Option<StoppedPluginAudioProcessor<EchodeHost>> {
+    fn try_take(&self) -> Option<StoppedProcessor> {
         if self
             .state
             .compare_exchange(
@@ -319,7 +350,7 @@ impl Bridge {
             // SAFETY: as in `on_main`: the instance lives until `serve_region` clears `INSTANCE`,
             // and this main-thread call holds its only reference. Audio has handed off the processor.
             let instance = unsafe { &mut *instance };
-            instance.deactivate(stopped);
+            instance.deactivate(stopped.inner);
             match activate(
                 instance,
                 f64::from_bits(self.sample_bits.load(Ordering::Acquire)),
@@ -794,6 +825,7 @@ impl HostHandlers for EchodeHost {
 
     fn declare_extensions(builder: &mut HostExtensions<Self>, shared: &Self::Shared<'_>) {
         builder.register::<crate::audio_ports::HostAudioPorts>();
+        builder.register::<crate::note_ports::HostNotePorts>();
         builder.register::<HostState>();
         builder.register::<HostGui>();
         builder.register::<HostParams>();
@@ -982,7 +1014,6 @@ fn serve_region(
             Err(error) => PortShape {
                 inputs: Vec::new(),
                 outputs: Vec::new(),
-                reset_midi: Vec::new(),
                 error: Some(error),
             },
         };
@@ -1000,11 +1031,19 @@ fn serve_region(
         } else {
             let stopped = match activate(&mut loaded.instance, sample_rate, max_frames) {
                 Ok(stopped) => stopped,
-                Err(error) => {
+                Err(HostError::Instance(error)) => {
                     let error = LoadError::Instance(error);
                     bridge.plugin_log.emit();
                     reject_launch(control.as_mut(), &error);
                     return Err(error.into());
+                }
+                Err(error) => {
+                    if let HostError::Plugin(failure) = &error
+                        && let Some(socket) = control.as_mut()
+                    {
+                        let _ = socket.send(&ControlMessage::PortsRejected((*failure).into()));
+                    }
+                    return Err(error);
                 }
             };
             bridge
@@ -1085,7 +1124,7 @@ fn serve_region(
     if let Some(loaded) = loaded.as_mut()
         && let Some(stopped) = bridge.processor.try_take()
     {
-        loaded.instance.deactivate(stopped);
+        loaded.instance.deactivate(stopped.inner);
     }
     #[cfg(test)]
     if let (Ok(main), Ok(audio)) = (bridge.main_id.lock(), bridge.audio_id.lock())
@@ -1196,15 +1235,21 @@ fn activate(
     instance: &mut PluginInstance<EchodeHost>,
     sample_rate: f64,
     max_frames: u32,
-) -> Result<StoppedPluginAudioProcessor<EchodeHost>, PluginInstanceError> {
-    instance.activate(
-        |_, _| (),
-        PluginAudioConfiguration {
-            sample_rate,
-            min_frames_count: 1,
-            max_frames_count: max_frames.max(1),
-        },
-    )
+) -> Result<StoppedProcessor, HostError> {
+    // Descriptors may change during deactivate. Read only after it returns,
+    // before activation, and move this snapshot with the stopped processor.
+    let reset_midi = query_midi_resets(instance.raw_instance())?;
+    let inner = instance
+        .activate(
+            |_, _| (),
+            PluginAudioConfiguration {
+                sample_rate,
+                min_frames_count: 1,
+                max_frames_count: max_frames.max(1),
+            },
+        )
+        .map_err(HostError::Instance)?;
+    Ok(Processor { inner, reset_midi })
 }
 
 fn audio_thread(bridge: &Bridge, workgroup: Option<&(String, u32)>) -> Result<(), HostError> {
@@ -1217,7 +1262,7 @@ fn audio_thread(bridge: &Bridge, workgroup: Option<&(String, u32)>) -> Result<()
         ),
         None => None,
     };
-    let mut started: Option<StartedPluginAudioProcessor<EchodeHost>> = None;
+    let mut started: Option<StartedProcessor> = None;
     if let Err(error) = pump(bridge, &mut started) {
         bridge.stop.store(true, Ordering::Release);
         bridge.bump_control();
@@ -1249,9 +1294,6 @@ fn audio_thread(bridge: &Bridge, workgroup: Option<&(String, u32)>) -> Result<()
         &output_counts,
         frames.max(1),
         event_cap.max(1),
-        shape
-            .map(|shape| shape.reset_midi.as_slice())
-            .unwrap_or_default(),
     ));
     bridge.buffers_live.store(true, Ordering::Release);
     current_region(bridge).mark_ready();
@@ -1288,18 +1330,11 @@ struct PluginBuffers {
     output_ptrs: Vec<*mut f32>,
     events: EventBuffer,
     decoded: Vec<Event>,
-    reset_midi: Vec<MidiEvent>,
 }
 
 impl PluginBuffers {
     /// Sized once from the declared ports. Later blocks reuse this storage.
-    fn allocate(
-        inputs: &[u32],
-        outputs: &[u32],
-        frames: usize,
-        events: usize,
-        reset_midi: &[MidiEvent],
-    ) -> Self {
+    fn allocate(inputs: &[u32], outputs: &[u32], frames: usize, events: usize) -> Self {
         let input_channels = inputs.iter().map(|count| *count as usize).sum();
         let output_channels = outputs.iter().map(|count| *count as usize).sum();
         Self {
@@ -1313,12 +1348,8 @@ impl PluginBuffers {
             output_offsets: channel_offsets(outputs),
             input_ptrs: vec![ptr::null_mut(); input_channels],
             output_ptrs: vec![ptr::null_mut(); output_channels],
-            // One host lifecycle event in addition to the routed project events.
-            events: EventBuffer::with_capacity(
-                events.saturating_add(1).saturating_add(reset_midi.len()),
-            ),
+            events: EventBuffer::with_capacity(events),
             decoded: Vec::with_capacity(events),
-            reset_midi: reset_midi.to_vec(),
         }
     }
 
@@ -1363,7 +1394,7 @@ fn explain(error: RtFail) -> HostError {
 
 fn audio_loop(
     bridge: &Bridge,
-    started: &mut Option<StartedPluginAudioProcessor<EchodeHost>>,
+    started: &mut Option<StartedProcessor>,
     buffers: &mut Box<PluginBuffers>,
     seen_request: &mut u64,
     seen_alarm: &mut u64,
@@ -1392,7 +1423,7 @@ fn audio_loop(
 #[cfg_attr(feature = "rtsan", rtsan_standalone::nonblocking)]
 fn service_block(
     bridge: &Bridge,
-    started: &mut Option<StartedPluginAudioProcessor<EchodeHost>>,
+    started: &mut Option<StartedProcessor>,
     buffers: &mut PluginBuffers,
     seen_request: &mut u64,
     seen_alarm: &mut u64,
@@ -1427,7 +1458,7 @@ fn service_block(
         if bridge.has_plugin.load(Ordering::Acquire) && fits {
             if let Some(active) = started.as_mut() {
                 if command == CMD_RESET_PROCESS {
-                    active.reset();
+                    active.inner.reset();
                 }
                 for stage in 0..stages {
                     if stage > 0 {
@@ -1556,10 +1587,7 @@ fn reclaim_retired(bridge: &Bridge) {
     }
 }
 
-fn pump(
-    bridge: &Bridge,
-    started: &mut Option<StartedPluginAudioProcessor<EchodeHost>>,
-) -> Result<(), RtFail> {
+fn pump(bridge: &Bridge, started: &mut Option<StartedProcessor>) -> Result<(), RtFail> {
     let want = bridge.restart_request.load(Ordering::Acquire);
     let acked = bridge.restart_ack.load(Ordering::Acquire);
     // An acknowledgement only means audio has stopped. Main must have completed
@@ -1583,7 +1611,7 @@ fn pump(
                 bridge.holds_started.store(true, Ordering::Release);
             }
             Err(error) => {
-                publish_stopped(&bridge.processor, error.into_stopped_processor(), true);
+                publish_stopped(&bridge.processor, error, true);
                 bridge.stop.store(true, Ordering::Release);
                 return Err(RtFail::Start);
             }
@@ -1933,7 +1961,7 @@ fn wait_control(bridge: &Bridge, seen: u64) -> u64 {
 fn render_plugin(
     region: &MappedRegion,
     generation: u64,
-    started: &mut StartedPluginAudioProcessor<EchodeHost>,
+    started: &mut StartedProcessor,
     frames: usize,
     buffers: &mut PluginBuffers,
     relay: &RelayRing,
@@ -1968,22 +1996,21 @@ fn render_plugin(
     let input_audio = buffers.input_ports.with_input_buffers(input_ports);
     let mut output_audio = buffers.output_ports.with_output_buffers(output_ports);
     buffers.events.clear();
-    if region.block_command(generation) == CMD_RESET_PROCESS {
-        buffers
-            .events
-            .push(&NoteChokeEvent::new(0, Pckn::match_all()));
-        for event in &buffers.reset_midi {
-            buffers.events.push(event);
-        }
-    }
+    // Lifecycle events precede same-time project notes without copying them
+    // into mapping-sized storage. Port-count changes cannot grow an RT buffer.
+    let choke = NoteChokeEvent::new(0, Pckn::match_all());
+    let lifecycle = (region.block_command(generation) == CMD_RESET_PROCESS)
+        .then_some((&choke, &started.reset_midi));
     region.copy_input_events(generation, &mut buffers.decoded);
     write_input(&buffers.decoded, &mut buffers.events);
-    let input_events = InputEvents::from_buffer(&buffers.events);
+    let all_events = (&lifecycle, &buffers.events);
+    let input_events = InputEvents::from_buffer(&all_events);
     // Values and gestures the plugin reports go to the ring; nothing allocates.
     let mut relay = RelayOutput(relay);
     let mut output_events = OutputEvents::from_buffer(&mut relay);
     // The error string would allocate. The parent reads the refusal flag.
     started
+        .inner
         .process(
             &input_audio,
             &mut output_audio,
@@ -2073,9 +2100,6 @@ fn buffers_for(bridge: &Bridge, region: &MappedRegion) -> PluginBuffers {
         &outputs,
         layout.max_frames.max(1) as usize,
         layout.input_events.max(1) as usize,
-        shape
-            .map(|shape| shape.reset_midi.as_slice())
-            .unwrap_or_default(),
     )
 }
 
@@ -2088,7 +2112,6 @@ fn refresh_ptrs(planes: &mut [Vec<f32>], ptrs: &mut [*mut f32]) {
 struct PortShape {
     inputs: Vec<u32>,
     outputs: Vec<u32>,
-    reset_midi: Vec<MidiEvent>,
     error: Option<PluginFailure>,
 }
 
@@ -2247,7 +2270,7 @@ fn params_extension(instance: &PluginInstance<EchodeHost>) -> *mut clap_plugin_p
 /// `process`. The control thread allocated the batch; this only moves pointers.
 /// A plugin's own `request_flush` runs `flush` with no input, so changes made
 /// in its window reach the relay while the transport is stopped.
-fn flush_params(bridge: &Bridge, started: &mut Option<StartedPluginAudioProcessor<EchodeHost>>) {
+fn flush_params(bridge: &Bridge, started: &mut Option<StartedProcessor>) {
     let Some(active) = started.as_mut() else {
         return;
     };
@@ -2273,7 +2296,7 @@ fn flush_params(bridge: &Bridge, started: &mut Option<StartedPluginAudioProcesso
             };
             let mut output = OutputEvents::from_buffer(&mut relay);
             flush(
-                active.plugin_handle().as_raw(),
+                active.inner.plugin_handle().as_raw(),
                 input.as_raw(),
                 output.as_raw(),
             );
@@ -2793,7 +2816,6 @@ fn query_audio_ports(instance: &PluginInstance<EchodeHost>) -> Result<PortShape,
     Ok(PortShape {
         inputs,
         outputs,
-        reset_midi: query_midi_resets(plugin)?,
         error: None,
     })
 }
@@ -2874,11 +2896,7 @@ fn read_port_list(
     Ok(counts)
 }
 
-fn publish_stopped(
-    handoff: &ProcessorHandoff,
-    stopped: StoppedPluginAudioProcessor<EchodeHost>,
-    realtime: bool,
-) {
+fn publish_stopped(handoff: &ProcessorHandoff, stopped: StoppedProcessor, realtime: bool) {
     let Err(stopped) = handoff.try_store(stopped) else {
         return;
     };
