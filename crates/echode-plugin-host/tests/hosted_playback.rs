@@ -43,6 +43,8 @@ mod stopped_processing;
 mod tail;
 #[path = "hosted_playback/track_events.rs"]
 mod track_events;
+#[path = "hosted_playback/transport.rs"]
+mod transport;
 
 fn host_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_echode-plugin-host"))

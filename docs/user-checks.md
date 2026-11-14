@@ -101,6 +101,7 @@
 | UC-81 | `clap.log` を使う第三者 CLAP で、既知の診断がプラグイン ID・重大度付きでヘルパーの stderr に残り、再生・停止・窓の操作が続く。名前・版・診断を出す操作と切詰め・破棄の有無を記録する。自動回帰は検査用プラグインだけで、メーカー固有の診断頻度と実機の期限は分からない | 第三者・実機・聴感 | [ADR 0349](decisions/0349-clap-log-relay.md) | 2026-11-14 |
 | UC-82 | `clap.timer-support` を使う第三者 CLAP で、停止中・窓の開閉・再生中にも定期更新が続き、閉じた後に異常終了しない。名前・版・周期・操作を記録する。自動回帰は検査用だけで、メーカー固有のモーダル処理と実機の通知精度は分からない | 第三者・実機・画面 | [ADR 0351](decisions/0351-clap-main-thread-timers.md) | 2026-11-14 |
 | UC-83 | 余韻長を設定で変える第三者 CLAP で、長さ無指定の書出しが変更後の余韻を含み、短い曲でも切れないことを聴感で確認する。名前・版・設定と申告値の妥当性を記録する。自動回帰ではメーカー固有の申告と実際の余韻の一致は分からない | 第三者・聴感 | [ADR 0352](decisions/0352-live-clap-tails-and-export-fence.md) | 2026-11-14 |
+| UC-85 | テンポ同期の第三者 CLAP 音源・FX で再生・停止・位置移動・短いループ・曲中のテンポ変更を試し、後段とフォルダ FX でも拍が合うか確認する。名前・版・同期設定を記録する。自動回帰は通知と波形の一致だけで、メーカーの同期モードと実機の聴感は判定できない | 第三者・実機・聴感 | [ADR 0358](decisions/0358-product-musical-transport.md) | 2026-11-15 |
 | UC-21 | 窓での変更（パラメーターにならない編集を含む）が、無関係な編集の後も残り、1 回の Undo で戻る | 画面・第三者 | [ADR 0229](decisions/0229-plugin-window-live-edits.md) | 2026-11-02 |
 | UC-22 | 窓アイコンと VoiceOver、実ウィンドウの表示、アプリ切替時の隠れ方、第三者の GUI と音 | 画面・VO・第三者・聴感 | [ADR 0130](decisions/0130-clap-parameter-editing.md)、[ADR 0132](decisions/0132-helper-plugin-windows.md)、[ADR 0134](decisions/0134-plugin-window-lifetime-and-shortcuts.md) | 2026-10-21 |
 | UC-23 | プラグイン付きトラックを選ぶたびの GUI の停止と、パラメーター画面の重さが直った | 実機・第三者 | [ADR 0131](decisions/0131-device-view-and-responsive-parameters.md) | 2026-10-20 |

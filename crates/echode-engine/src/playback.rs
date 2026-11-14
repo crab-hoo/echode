@@ -15,8 +15,8 @@ use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::mix::{FaderState, GateRamp, Signal};
 use crate::plugins::{
-    ChainDevice, HostGraph, PluginRoute, PluginWorkgroup, Progress, Submitted, TrackChain,
-    collect_deadline,
+    BlockEvents, ChainDevice, HostGraph, PluginRoute, PluginWorkgroup, Progress, Submitted,
+    TrackChain, collect_deadline,
 };
 use crate::realtime::ForbidAlloc;
 use crate::sequence::render_metronome_index_before;
@@ -40,6 +40,9 @@ mod bus;
 use crate::compensation::{TrackFlow, compensate};
 use crate::delay::Delay;
 use bus::Bus;
+#[path = "playback_transport.rs"]
+mod musical_time;
+use musical_time::Timeline;
 /// Clock providers consume device frames. External synchronization may supply
 /// another provider without making the UI timer advance the transport.
 pub trait ClockSource: Send {
@@ -301,6 +304,7 @@ struct Prepared {
     plan: Plan,
     cursor: Cursor,
     tempo: TempoIndex,
+    timeline: Timeline,
     tracks: Vec<Track>,
     track_indices: Vec<(u32, usize)>,
     mixer_indices: Vec<(u128, usize)>,
@@ -409,6 +413,7 @@ impl Prepared {
             )
             .ok_or(PlaybackError::Time)?;
         let tempo = crate::plan::tempo_index(project.tempo())?;
+        let timeline = Timeline::new(project, &tempo, rate, frames, loop_bounds)?;
         let Routing { gates, parents } = track_routing(project, &plan)?;
         let bus = Bus::new(parents);
         // Group the clips once, in loaded order, rather than filtering per track.
@@ -505,6 +510,7 @@ impl Prepared {
             plan,
             cursor,
             tempo,
+            timeline,
             tracks,
             track_indices,
             mixer_indices,
@@ -779,6 +785,7 @@ impl Prepared {
         // One store after the block, including plugin completion. A decay written
         // before this point is what the UI samples for the whole callback.
         self.meters_committed = true;
+        let transport = self.timeline.fill(spans, range)?;
         let Prepared {
             tracks,
             bus,
@@ -804,6 +811,7 @@ impl Prepared {
             bus_left,
             bus_right,
             spans,
+            transport,
             range,
             frames,
             late: false,
@@ -849,6 +857,7 @@ impl Prepared {
         &mut self,
         hosts: &mut HostGraph,
         deadline: Instant,
+        position: i64,
     ) -> Result<(), PlaybackError> {
         if self.released == 0 {
             return Ok(());
@@ -873,6 +882,7 @@ impl Prepared {
         ) {
             return Err(PlaybackError::BufferTooSmall);
         }
+        let transport = self.timeline.stopped(position)?;
         for (position, track) in self.tracks.iter_mut().enumerate() {
             let plane = track
                 .plane
@@ -891,8 +901,11 @@ impl Prepared {
                     left: &[],
                     right: None,
                 },
-                filtered,
-                &[],
+                BlockEvents {
+                    source: filtered,
+                    chased: &[],
+                    transport,
+                },
                 None,
             );
         }
@@ -1051,6 +1064,7 @@ struct Block<'a> {
     bus_left: &'a mut [f64],
     bus_right: &'a mut [f64],
     spans: &'a [Span],
+    transport: &'a [Event],
     range: RenderRange,
     frames: usize,
     late: bool,
@@ -1168,8 +1182,11 @@ impl Block<'_> {
                     left: clip_plane,
                     right: clip_stereo.then_some(clip_right),
                 },
-                events,
-                chased,
+                BlockEvents {
+                    source: events,
+                    chased,
+                    transport: self.transport,
+                },
                 own,
             );
             if self.late && submitted == Submitted::Pending {
@@ -1565,7 +1582,10 @@ fn chain_of(project: &Project, prepared: &Prepared) -> Vec<TrackChain> {
                     .find(|track| track.key == planned.track_key)
                     .is_some_and(|track| track.clip_stereo),
                 devices,
-                events: demand.map(|demand| demand.events).unwrap_or(1),
+                events: demand
+                    .map(|demand| demand.events)
+                    .unwrap_or(1)
+                    .saturating_add(prepared.timeline.capacity()),
                 chase: demand.map(|demand| demand.chase).unwrap_or(1),
             })
         })
@@ -2458,7 +2478,7 @@ impl PlaybackControl {
             .collect();
         for chain in &mut pending.chain {
             if let Some(&events) = demands.get(&chain.key) {
-                chain.events = events;
+                chain.events = events.saturating_add(pending.prepared.timeline.capacity());
             }
         }
         self.reserved_events = pending.prepared.events.len();
@@ -3160,7 +3180,8 @@ impl PlaybackAudio {
                 }
             } else {
                 let flushed = self.current.released != 0;
-                self.current.flush_releases(&mut self.hosts, deadline)?;
+                self.current
+                    .flush_releases(&mut self.hosts, deadline, self.clock.position())?;
                 if flushed {
                     self.count_misses();
                 }

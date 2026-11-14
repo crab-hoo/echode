@@ -33,6 +33,12 @@ pub type PluginWorkgroup = Arc<
 >;
 use crate::mix::Signal;
 
+pub(crate) struct BlockEvents<'a> {
+    pub(crate) source: &'a [Event],
+    pub(crate) chased: &'a [Event],
+    pub(crate) transport: &'a [Event],
+}
+
 /// Where a CLAP id lives on disk, and its instrument role.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PluginRoute {
@@ -1076,8 +1082,7 @@ impl HostGraph {
         key: u32,
         source: Signal<'_>,
         clips: Signal<'_>,
-        events: &[Event],
-        chased_ons: &[Event],
+        events: BlockEvents<'_>,
         own: Option<&[f32]>,
     ) -> Submitted {
         let Some(track) = self.tracks.by_key_mut(key) else {
@@ -1092,7 +1097,7 @@ impl HostGraph {
         }
         let frames = source.left.len();
         let report = &mut self.report;
-        track.remember(report, events, chased_ons);
+        track.remember(report, events);
         track.arm_inject(clips, frames);
         track.arm_own(own, frames);
         track.prepare_input(report, 0, source, frames);
@@ -1377,9 +1382,29 @@ impl TrackHost {
         }
     }
 
-    fn remember(&mut self, report: &mut BlockReport, events: &[Event], chased_ons: &[Event]) {
+    fn remember(&mut self, report: &mut BlockReport, events: BlockEvents<'_>) {
         let key = self.key;
-        let mut dropped = copy_events(&mut self.source_events, events, |_| true);
+        let mut source = events.source.iter().peekable();
+        let mut transport = events.transport.iter().peekable();
+        self.source_events.clear();
+        let mut dropped = false;
+        loop {
+            let next = match (source.peek(), transport.peek()) {
+                (None, None) => break,
+                (Some(_), None) => source.next(),
+                (None, Some(_)) => transport.next(),
+                (Some(event), Some(time)) if event_cmp(time, event).is_le() => transport.next(),
+                _ => source.next(),
+            };
+            if self.source_events.len() == self.source_events.capacity() {
+                dropped = true;
+                break;
+            }
+            if let Some(event) = next {
+                self.source_events.push(*event);
+            }
+        }
+        let chased_ons = events.chased;
         self.chased_ons.clear();
         dropped |= copy_events(&mut self.chased_ons, chased_ons, |event| {
             event.track_key() == Some(key)

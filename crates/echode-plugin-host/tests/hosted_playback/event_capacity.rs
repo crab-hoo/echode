@@ -52,7 +52,14 @@ fn shared_event_banks_follow_density_and_only_grow_under_rtsan() {
     control.replace(&long).unwrap();
     render_content(&mut audio, &mut left, &mut right);
     control.service();
-    assert_eq!(control.plugin_event_caps(), original);
+    // Adoption additionally reserves the old live set: four slots fit the
+    // initial notes/chase/transport, five need the next power-of-two bank.
+    assert_eq!(original, [4]);
+    assert_eq!(control.plugin_event_caps(), [8]);
+    control.replace(&long).unwrap();
+    render_content(&mut audio, &mut left, &mut right);
+    control.service();
+    assert_eq!(control.plugin_event_caps(), [8], "equal density grew again");
     assert_level(left[0], 1.0);
 
     let mut dense = base.clone();

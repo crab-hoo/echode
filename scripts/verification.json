@@ -85,6 +85,12 @@
   ],
   "product_contracts": [
     {
+      "id": "plugin-musical-transport", "runner": "rust", "package": "echode-plugin-host", "target": ["--test", "hosted_playback"],
+      "test": "transport::every_stage_receives_sample_accurate_transport_across_blocks_under_rtsan", "timeout": 180,
+      "purpose": "製品のテンポ・位置を全 CLAP 段とフォルダ FX へ渡し、停止・短いループ・途中のテンポ変化をブロック長によらず保つ",
+      "negative_control": {"file": "crates/echode-engine/src/playback.rs", "old": "let transport = self.timeline.fill(spans, range)?;", "new": "let transport: &[Event] = &[];"}
+    },
+    {
       "id": "track-mix-fault", "runner": "rust", "package": "echode-plugin-host", "target": ["--test", "hosted_playback"],
       "test": "overflow::audit_nfa05_an_instrument_is_not_blamed_for_the_sum_with_its_tracks_clip", "timeout": 180,
       "purpose": "音源と配置・子の和のあふれは装置なしで記録し、モノの昇格・後続 FX・異なるブロック長で位置と解除を保つ（NFA-05）",

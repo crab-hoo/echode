@@ -342,6 +342,8 @@ enum Fault {
     ParamRescan,
     /// Reports the process transport snapshot and checks it against time-zero events.
     Transport,
+    /// Adds sample-accurate musical time to the input for engine transport regressions.
+    Timeline,
 }
 
 /// For [`Fault::RestartNested`]: activations so far, and whether the first
@@ -379,6 +381,7 @@ fn fault_code(text: &str) -> u8 {
         "note-ports" => 28,
         "params-rescan" => 29,
         "transport" => 30,
+        "timeline" => 31,
         _ if text.starts_with("restart-nested:") => 22,
         _ if text.starts_with("delay:") => 19,
         // The event counter, with the second process call held as `process-wait`.
@@ -422,6 +425,7 @@ fn fault_from_code(code: u8) -> Fault {
         28 => Fault::NotePorts,
         29 => Fault::ParamRescan,
         30 => Fault::Transport,
+        31 => Fault::Timeline,
         _ => Fault::None,
     }
 }
@@ -506,6 +510,7 @@ impl Onset {
 pub struct TestGainProcessor<'a> {
     fault: Fault,
     role: Role,
+    sample_rate: f64,
     host: HostSharedHandle<'a>,
     seen_ons: u32,
     seen_offs: u32,
@@ -588,6 +593,7 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
         Ok(Self {
             fault,
             role: main_thread.role,
+            sample_rate: audio_config.sample_rate,
             host: _host.shared(),
             seen_ons: 0,
             seen_offs: 0,
@@ -725,6 +731,10 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
                 if delay::restart_due() {
                     self.host.request_restart();
                 }
+                return Ok(ProcessStatus::Continue);
+            }
+            Fault::Timeline => {
+                transport::render_timeline(_process, &mut audio, events.input, self.sample_rate)?;
                 return Ok(ProcessStatus::Continue);
             }
             Fault::Transport => {

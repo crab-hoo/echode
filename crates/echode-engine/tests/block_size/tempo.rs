@@ -58,3 +58,61 @@ fn fractional_tempo_origin_and_metronome_match_across_blocks_under_rtsan() {
         }
     }
 }
+
+#[test]
+fn dense_transport_boundaries_leave_source_audio_block_independent_under_rtsan() {
+    use echode_engine::{LoadedClip, PlaybackCommand, PlaybackOptions, playback};
+    use std::sync::Arc;
+    let (mut project, track) = Project::new().add_track("source");
+    for tick in -20..100 {
+        project = project.with_tempo(
+            Tick::new(tick * 147),
+            Tempo::rational(if tick % 2 == 0 { 120 } else { 60 }, 1).unwrap(),
+        );
+    }
+    // These loop lengths, block shapes and PCM bound this regression only.
+    for length in [1, 2, 13, 31] {
+        let mut reference = None;
+        for block in [1, 7, 64, 127] {
+            let (mut control, mut audio) =
+                playback(&project, 48_000, block, PlaybackOptions::default()).unwrap();
+            control.set_clip_loader(Arc::new(move |_, _| {
+                Ok(vec![LoadedClip {
+                    track: track.raw(),
+                    start_sample: 0,
+                    samples: Arc::from(vec![0.125; 512]),
+                    right: None,
+                    window: None,
+                    gain: 1.0,
+                    fade_in: 0,
+                    fade_out: 0,
+                }])
+            }));
+            control
+                .command(PlaybackCommand::SetLoop {
+                    start: 0,
+                    end: length,
+                })
+                .unwrap();
+            control.command(PlaybackCommand::Play).unwrap();
+            let mut output = Vec::new();
+            while output.len() < 256 {
+                let frames = block.min(256 - output.len());
+                let mut left = vec![0.0; frames];
+                let mut right = left.clone();
+                audio.render(&mut left, &mut right);
+                assert!(
+                    !control.status().failed,
+                    "dense transport rejected a valid block"
+                );
+                output.extend(left);
+            }
+            assert!(output.iter().any(|sample| *sample != 0.0));
+            if let Some(reference) = &reference {
+                assert_eq!(&output, reference, "loop {length}, block {block}");
+            } else {
+                reference = Some(output);
+            }
+        }
+    }
+}

@@ -378,6 +378,8 @@ I/O エラーに文字列リテラルだけを渡すと、`check_typed_errors.py
 実際の応答の種類への変換は `main_requests.rs::unexpected` にまとめる。
 回帰は `refusal_tests.rs`・`main_requests_tests.rs` と、実ヘルパーを通す `tests/isolation.rs` の `invalid_parameter_id_` を使う（[ADR 0309](decisions/0309-typed-helper-request-failures.md)）。
 
+### CLAP の通知と時刻
+
 CLAP のログの固定量スロット・重大度と破棄の出力は `echode-plugin-host/src/plugin_log.rs`、拡張の登録は `threads.rs` に置く。
 満杯・競合・寿命の回帰は `plugin_log_tests.rs`、実ヘルパーの音声と起動拒否前の診断は `tests/isolation/plugin_log.rs` を使う（[ADR 0349](decisions/0349-clap-log-relay.md)）。
 CLAP の主スレッドタイマーの登録表・拡張・期限の計算と通知は `echode-plugin-host/src/plugin_timers.rs`、主ループとの接続は `threads.rs` に置く。
@@ -392,6 +394,10 @@ CLAP のノート形式の対応の公開は `echode-plugin-host/src/note_ports.
 共有領域の時刻 0 のトランスポートを `clap_process.transport` に渡す処理は `threads.rs::render_plugin` に置く。
 `events.rs` の翻訳済みイベントを借り、別の保持状態や変換を作らない。
 実ヘルパーの先頭状態・途中の更新・通知なし・リセット・ブロック長の回帰は `tests/isolation/transport.rs`、診断用の出力は `echode-test-plugin/src/transport.rs` を使う。
+製品の生成・容量の準備は `echode-engine/src/playback_transport.rs::Timeline`、全段への併合は `plugins.rs::BlockEvents` に置く。
+製品経路と全段への配布は `tests/hosted_playback/transport.rs`（必須契約 `plugin-musical-transport`）、メタデータと密度は `playback_transport_tests.rs` を使う。
+
+### ヘルパーの制御と共有領域
 
 共有メモリの作成と `SharedMemoryOperation` は `echode-sandbox/src/region.rs`、
 操作・errno・表示・unlink と close-on-exec の回帰は `region_error_tests.rs` に置く（[ADR 0311](decisions/0311-typed-shared-memory-errors.md)）。

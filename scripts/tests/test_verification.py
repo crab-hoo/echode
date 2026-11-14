@@ -2596,6 +2596,7 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(
             {c["id"] for c in contracts},
             {
+                "plugin-musical-transport",
                 "track-mix-fault",
                 "track-mix-export",
                 "track-mix-fault-ui",
