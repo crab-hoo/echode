@@ -16,7 +16,7 @@ fn clips(project: &Project, track: Id) -> Vec<Placement> {
         .find(|candidate| candidate.id == track)
         .unwrap()
         .clips
-        .clone()
+        .to_vec()
 }
 
 fn note(start: i64, length: i64) -> NoteDraft {
@@ -517,12 +517,14 @@ fn split_piece_ids_cannot_reuse_any_stored_identity() {
         match kind {
             "content" => {
                 content.id = collision;
-                track.clips[0].content = collision;
+                track.clips.update(0, |clip| clip.content = collision);
             }
             "take" => content.takes.push(collision),
             "note" => content.notes.edit(|notes| notes[0].id = collision),
             "track" => track.id = collision,
-            "clip" => track.clips[0].id = collision,
+            "clip" => {
+                track.clips.update(0, |clip| clip.id = collision);
+            }
             "device" => track.devices[0].id = collision,
             "parameter" => track.devices[0].parameters[0].id = collision,
             _ => unreachable!(),

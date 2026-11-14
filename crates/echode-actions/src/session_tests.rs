@@ -612,5 +612,8 @@ fn usage_of_a_track_edit_keeps_the_track_and_shares_the_notes() {
     let usage = session.usage();
     assert_eq!(usage.undo_steps, 2);
     assert_eq!(usage.versions.tracks, 1);
+    // The edited track shares its placement runs with the version after it
+    // (ADR 0353).
+    assert_eq!(usage.versions.placements, 0);
     assert_eq!((usage.versions.contents, usage.versions.notes), (0, 0));
 }

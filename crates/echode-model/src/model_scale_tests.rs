@@ -415,7 +415,9 @@ fn shared_content_edits_do_not_rescan_notes_per_placement() {
         let (template, contents, mut tracks) = shared_fixture(notes, placements);
         let (template, _) = template.add_track("linked");
         let mut linked = Track::clone(&template.tracks()[1]);
-        linked.clips = tracks[0].clips.split_off(placements / 2);
+        let mut kept = tracks[0].clips.to_vec();
+        linked.clips = kept.split_off(placements / 2).into();
+        tracks[0].clips = kept.into();
         tracks.push(linked);
         let project =
             Project::try_assemble(template.meter(), template.tempo().clone(), contents, tracks)
@@ -492,7 +494,7 @@ fn nested_tracks(count: usize) -> Vec<Track> {
                     .map(|parent| Id::from_raw(parent as u128 + 1)),
                 order: crate::initial_order(),
                 devices: vec![crate::test_mixer(id)],
-                clips: Vec::new(),
+                clips: Default::default(),
             }
         })
         .collect()
@@ -574,7 +576,7 @@ fn reparent_fixture(depth: usize) -> (Project, Id, Id) {
             parent,
             order: crate::initial_order(),
             devices: vec![crate::test_mixer(id.raw())],
-            clips: Vec::new(),
+            clips: Default::default(),
         })
         .collect();
     tracks.extend(chain);

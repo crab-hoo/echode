@@ -1,6 +1,6 @@
 use std::mem::size_of;
 
-use crate::{Id, MixerIds, Note, NoteDraft, Project, Tempo, Tick};
+use crate::{ClipKind, Id, Lane, MixerIds, Note, NoteDraft, Placement, Project, Tempo, Tick};
 
 /// Three tracks; the first holds one clip with `notes` notes in its first bar.
 fn project_with_notes(notes: u8) -> (Project, Id) {
@@ -189,4 +189,113 @@ fn a_tempo_edit_counts_the_replaced_points_once() {
     let kept = before.footprint_beyond(&after);
     assert_eq!((kept.tracks, kept.contents), (0, 0));
     assert!(kept.bytes > shared);
+}
+
+/// One track of `count` fixed one-bar clips two bars apart, each with its own
+/// one-note content. Ids count up, so the runs are the same on every run.
+fn project_with_many_clips(count: u128) -> (Project, Id, i64) {
+    let (project, track) = Project::new().add_track("sliced");
+    let bar = project.meter().bar_ticks().unwrap().get();
+    let mut contents = Vec::new();
+    let mut clips = Vec::new();
+    for slot in 0..count {
+        let content = Id::from_raw(2_000_000 + slot);
+        contents.push(crate::Content {
+            id: content,
+            audio: None,
+            takes: Vec::new(),
+            notes: vec![Note {
+                id: Id::from_raw(3_000_000 + slot),
+                start: Tick::new(0),
+                length: Tick::new(10),
+                pitch: 60,
+                velocity: 100,
+                release: 0,
+                articulation: None,
+            }]
+            .into(),
+            expressions: Vec::new(),
+        });
+        clips.push(Placement {
+            id: Id::from_raw(1_000_000 + slot),
+            content,
+            lane: Lane::Timeline,
+            start: Tick::new(slot as i64 * 2 * bar),
+            length: Tick::new(bar),
+            offset: Tick::new(0),
+            kind: ClipKind::Fixed,
+            gain: 1.0,
+            fade_in: 0,
+            fade_out: 0,
+        });
+    }
+    let mut sliced = crate::Track::clone(&project.tracks()[0]);
+    sliced.clips = clips.into();
+    let project = Project::try_assemble(
+        project.meter(),
+        project.tempo().clone(),
+        contents,
+        vec![sliced],
+    )
+    .unwrap();
+    (project, track, bar)
+}
+
+#[test]
+fn a_one_clip_edit_of_two_thousand_clips_keeps_a_few_runs_not_the_track() {
+    // ADR 0353: one undo step of a clip edit held every placement of the
+    // track (176 KB at 2,000 clips). The count fixes the scenario; it is not a
+    // product limit.
+    let (before, track, bar) = project_with_many_clips(2_000);
+    let clips = &before.tracks()[0].clips;
+    let target = clips[1_000].clone();
+    let gap = Tick::new(target.start.get() + bar);
+    let edits: Vec<(&str, Project)> = vec![
+        (
+            "resize",
+            before
+                .resize_clip(track, target.id, target.start, Tick::new(bar / 2))
+                .unwrap(),
+        ),
+        (
+            "move",
+            before
+                .move_clip(target.id, track, gap, Id::from_raw(9_000_000))
+                .unwrap(),
+        ),
+        (
+            "link",
+            before
+                .link_clip(target.id, track, gap, Id::from_raw(9_000_001))
+                .unwrap(),
+        ),
+        (
+            "duplicate",
+            before
+                .duplicate_clip(target.id, track, gap, Id::from_raw(9_000_002))
+                .unwrap(),
+        ),
+        (
+            "delete note",
+            before
+                .delete_note(track, before.content(target.content).unwrap().notes[0].id)
+                .unwrap(),
+        ),
+    ];
+    let longest = clips.runs().iter().map(|run| run.len()).max().unwrap();
+    assert!(longest < 1_000, "runs of up to {longest} placements");
+    for (name, after) in edits {
+        after.check_invariants().unwrap();
+        for (older, newer) in [(&before, &after), (&after, &before)] {
+            let kept = older.footprint_beyond(newer);
+            assert!(kept.tracks == 1 && kept.contents <= 1, "{name}: {kept:?}");
+            assert!(
+                kept.placements as usize <= 3 * (longest + 1),
+                "{name} kept {} of 2,000 placements",
+                kept.placements
+            );
+            // Every version still owns its content list: 8 bytes a content.
+            assert!(kept.bytes < 64 * 1_024, "{name} kept {} bytes", kept.bytes);
+        }
+    }
 }

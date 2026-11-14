@@ -86,7 +86,7 @@ macro_rules! define_track_changeset {
             }
 
             pub fn finish(&self, id: Id, clips: Vec<Placement>, devices: Vec<Device>) -> Track {
-                Track { id, $($field: self.$field.to_owned(),)+ clips, devices }
+                Track { id, $($field: self.$field.to_owned(),)+ clips: clips.into(), devices }
             }
         }
     };

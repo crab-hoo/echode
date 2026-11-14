@@ -49,7 +49,8 @@ fn project() -> Project {
                 gain: 1.0,
                 fade_in: DEFAULT_FADE_FLICKS,
                 fade_out: DEFAULT_FADE_FLICKS,
-            }],
+            }]
+            .into(),
         }],
     )
     .unwrap()
@@ -136,7 +137,8 @@ fn two_tracks() -> Project {
                     gain: 1.0,
                     fade_in: DEFAULT_FADE_FLICKS,
                     fade_out: DEFAULT_FADE_FLICKS,
-                }],
+                }]
+                .into(),
             },
             Track {
                 id: Id::from_raw(20),
@@ -155,7 +157,8 @@ fn two_tracks() -> Project {
                     gain: 1.0,
                     fade_in: DEFAULT_FADE_FLICKS,
                     fade_out: DEFAULT_FADE_FLICKS,
-                }],
+                }]
+                .into(),
             },
         ],
     )
@@ -322,7 +325,8 @@ fn a_hundred_thousand_notes_schedule_one_block_under_the_engine_budget() {
                 gain: 1.0,
                 fade_in: DEFAULT_FADE_FLICKS,
                 fade_out: DEFAULT_FADE_FLICKS,
-            }],
+            }]
+            .into(),
         }],
     )
     .expect("assemble");
@@ -405,7 +409,8 @@ fn same_start_tracks(count: usize) -> Project {
                 gain: 1.0,
                 fade_in: DEFAULT_FADE_FLICKS,
                 fade_out: DEFAULT_FADE_FLICKS,
-            }],
+            }]
+            .into(),
         })
         .collect();
     Project::try_assemble(

@@ -401,7 +401,7 @@ macro_rules! define_track {
             pub id: Id,
             $($(#[$attribute])* pub $field: $type,)+
             /// Placements on this track, in timeline order.
-            pub clips: Vec<Placement>,
+            pub clips: crate::Placements,
             /// Devices in processing order, ending with one mixer.
             pub devices: Vec<Device>,
         }
@@ -426,7 +426,7 @@ macro_rules! define_track {
             /// Joins decoded scalars to their separately resolved identity and children.
             /// This does not validate a project or repair its order.
             pub fn into_track(self, id: Id, clips: Vec<Placement>, devices: Vec<Device>) -> Track {
-                Track { id, $($field: self.$field,)+ clips, devices }
+                Track { id, $($field: self.$field,)+ clips: clips.into(), devices }
             }
         }
     };
@@ -564,7 +564,7 @@ impl Project {
             name: name.into(),
             parent: None,
             order,
-            clips: Vec::new(),
+            clips: crate::Placements::new(),
             devices: vec![Device::unity(mixer)],
         }));
         Ok(Self {
@@ -600,7 +600,7 @@ impl Project {
             name: name.into(),
             parent: anchor.parent,
             order,
-            clips: Vec::new(),
+            clips: crate::Placements::new(),
             devices: vec![Device::unity(mixer)],
         }));
         Ok(Self {
@@ -873,7 +873,7 @@ impl Project {
             name: name.into(),
             parent: Some(parent),
             order,
-            clips: Vec::new(),
+            clips: crate::Placements::new(),
             devices: vec![Device::unity(mixer)],
         }));
         Ok(Self {
@@ -967,7 +967,7 @@ impl Project {
             bar,
             || clip_id != note_id && note_id != content_id && self.ids_free([clip_id, content_id]),
         )?;
-        sort_clips(&mut track.clips);
+        sort_placements(&mut track.clips);
         tracks[index] = Arc::new(track);
         crate::placement::drop_unreferenced(&mut contents, &tracks);
         Ok(self.with_parts(contents, tracks))
@@ -1023,7 +1023,7 @@ impl Project {
         if ranges_overlap(&track.clips, start.get(), length.get()) {
             return Err(ModelError::Overlap);
         }
-        track.clips.push(Placement {
+        track.clips.insert_sorted(Placement {
             id: clip_id,
             content: content_id,
             lane: Lane::Timeline,
@@ -1035,7 +1035,6 @@ impl Project {
             fade_in,
             fade_out,
         });
-        sort_clips(&mut track.clips);
         let mut contents = self.contents.clone();
         contents.push(Arc::new(Content {
             id: content_id,
@@ -1185,7 +1184,7 @@ impl Project {
             geometry,
             bar,
         )?;
-        sort_clips(&mut track.clips);
+        sort_placements(&mut track.clips);
         tracks[index] = Arc::new(track);
         crate::placement::drop_unreferenced(&mut contents, &tracks);
         Ok(self.with_parts(contents, tracks))
@@ -1204,9 +1203,10 @@ impl Project {
         }
         let index = self.track_index(track_id)?;
         let mut track = (*self.tracks[index]).clone();
-        let Some(clip) = track.clips.iter_mut().find(|clip| clip.id == clip_id) else {
+        let Some(position) = track.clips.iter().position(|clip| clip.id == clip_id) else {
             return Err(ModelError::MissingClip);
         };
+        let mut clip = track.clips[position].clone();
         let delta = start
             .get()
             .checked_sub(clip.start.get())
@@ -1220,15 +1220,11 @@ impl Project {
         clip.start = start;
         clip.length = length;
         clip.kind = ClipKind::Fixed;
-        sort_clips(&mut track.clips);
-        let position = track
-            .clips
-            .iter()
-            .position(|clip| clip.id == clip_id)
-            .ok_or(ModelError::MissingClip)?;
-        if overlaps_others(&track.clips, position) {
+        if overlaps_others(&track.clips, &clip) {
             return Err(ModelError::Overlap);
         }
+        // Only the runs the placement leaves and enters are copied (ADR 0353).
+        track.clips.replace_sorted(position, clip);
         Ok(self.write_track(index, track))
     }
 
@@ -1260,7 +1256,7 @@ impl Project {
         self.notes_fit(source.content, origin)?;
         let index = self.track_index(track_id)?;
         let mut track = (*self.tracks[index]).clone();
-        track.clips.push(Placement {
+        let placement = Placement {
             id: clip_id,
             content: source.content,
             lane: Lane::Timeline,
@@ -1271,16 +1267,11 @@ impl Project {
             gain: source.gain,
             fade_in: source.fade_in,
             fade_out: source.fade_out,
-        });
-        sort_clips(&mut track.clips);
-        let position = track
-            .clips
-            .iter()
-            .position(|clip| clip.id == clip_id)
-            .ok_or(ModelError::MissingClip)?;
-        if overlaps_others(&track.clips, position) {
+        };
+        if overlaps_others(&track.clips, &placement) {
             return Err(ModelError::Overlap);
         }
+        track.clips.insert_sorted(placement);
         Ok(self.write_track(index, track))
     }
 
@@ -1341,12 +1332,13 @@ impl Project {
             return Err(ModelError::MissingClip);
         };
         let mut track = (*self.tracks[index]).clone();
-        let clip = track
+        let position = track
             .clips
-            .iter_mut()
-            .find(|clip| clip.id == clip_id)
+            .iter()
+            .position(|clip| clip.id == clip_id)
             .ok_or(ModelError::MissingClip)?;
-        edit(clip);
+        // The edit keeps the start, so the placement keeps its place.
+        track.clips.update(position, edit);
         Ok(self.write_track(index, track))
     }
 
@@ -1513,13 +1505,18 @@ impl Project {
                     return Err(ModelError::MissingClip);
                 }
             }
-            if track.clips.windows(2).any(|pair| {
-                #[cfg(test)]
-                crate::model_scale_tests::overlap();
-                // Scalar bounds were checked above. Unsorted non-overlapping
-                // input is still rejected by check_invariants below.
-                spans_overlap(span(&pair[0]).unwrap(), span(&pair[1]).unwrap())
-            }) {
+            if track
+                .clips
+                .iter()
+                .zip(track.clips.iter().skip(1))
+                .any(|pair| {
+                    #[cfg(test)]
+                    crate::model_scale_tests::overlap();
+                    // Scalar bounds were checked above. Unsorted non-overlapping
+                    // input is still rejected by check_invariants below.
+                    spans_overlap(span(pair.0).unwrap(), span(pair.1).unwrap())
+                })
+            {
                 return Err(ModelError::Overlap);
             }
             crate::device::validate_devices(&track.devices, &mut seen)?;
@@ -1767,21 +1764,29 @@ fn span(clip: &Placement) -> Option<(i64, i64)> {
         .map(|end| (clip.start.get(), end))
 }
 
-pub(crate) fn overlaps_others(clips: &[Placement], index: usize) -> bool {
-    let Some(range) = span(&clips[index]) else {
+/// Whether `clip` overlaps a placement of `clips` other than the one with its id.
+pub(crate) fn overlaps_others<'a>(
+    clips: impl IntoIterator<Item = &'a Placement>,
+    clip: &Placement,
+) -> bool {
+    let Some(range) = span(clip) else {
         return true;
     };
-    clips.iter().enumerate().any(|(other_index, other)| {
+    clips.into_iter().any(|other| {
         #[cfg(test)]
         crate::model_scale_tests::overlap();
-        other_index != index
+        other.id != clip.id
             && span(other).is_some_and(|other_range| spans_overlap(range, other_range))
     })
 }
 
-pub(crate) fn overlaps_span(clips: &[Placement], start: i64, end: i64) -> bool {
+pub(crate) fn overlaps_span<'a>(
+    clips: impl IntoIterator<Item = &'a Placement>,
+    start: i64,
+    end: i64,
+) -> bool {
     clips
-        .iter()
+        .into_iter()
         .any(|clip| span(clip).is_some_and(|range| spans_overlap(range, (start, end))))
 }
 
@@ -1835,18 +1840,38 @@ fn audio_length(
     Ok(Tick::new(length))
 }
 
-fn ranges_overlap(clips: &[Placement], start: i64, length: i64) -> bool {
+fn ranges_overlap<'a>(
+    clips: impl IntoIterator<Item = &'a Placement>,
+    start: i64,
+    length: i64,
+) -> bool {
     let Some(end) = start.checked_add(length) else {
         return true;
     };
-    clips.iter().any(|clip| {
+    clips.into_iter().any(|clip| {
         let clip_end = clip.start.get().saturating_add(clip.length.get());
         start < clip_end && clip.start.get() < end
     })
 }
 
+/// Timeline start, then the numeric id.
+pub(crate) fn clip_ord(left: &Placement, right: &Placement) -> std::cmp::Ordering {
+    left.start.cmp(&right.start).then(left.id.cmp(&right.id))
+}
+
 pub(crate) fn sort_clips(clips: &mut [Placement]) {
-    clips.sort_by(|left, right| left.start.cmp(&right.start).then(left.id.cmp(&right.id)));
+    clips.sort_by(clip_ord);
+}
+
+/// Sorts a track's placements, copying them only when they are out of order.
+pub(crate) fn sort_placements(clips: &mut crate::Placements) {
+    let sorted = clips
+        .iter()
+        .zip(clips.iter().skip(1))
+        .all(|(left, right)| clip_ord(left, right).is_le());
+    if !sorted {
+        clips.edit(|clips| sort_clips(clips));
+    }
 }
 
 #[cfg(test)]

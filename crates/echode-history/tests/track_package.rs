@@ -154,7 +154,7 @@ fn track_metadata_decodes_shape_without_validating_a_project() {
     let original = track(&package.project, package.target);
     let restored = TrackMetadata::from(original).into_track(
         original.id,
-        original.clips.clone(),
+        original.clips.to_vec(),
         original.devices.clone(),
     );
     assert_eq!(&restored, original);

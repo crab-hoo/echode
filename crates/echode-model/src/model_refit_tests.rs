@@ -21,7 +21,7 @@ fn linked_project(count: usize, auto_first: bool, has_auto: bool) -> Project {
         name: format!("refit {id}"),
         parent: None,
         order: crate::initial_order(),
-        clips: Vec::new(),
+        clips: Default::default(),
         devices: vec![crate::test_mixer(id)],
     };
     let mut linked = track(1000);

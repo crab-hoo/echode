@@ -43,9 +43,9 @@ Phase 0 の履歴の別モデル・形式・Git 保存は、`echode-history` の
 
 モデルは不変のスナップショットで持つ。アクションを 1 つ適用するたびに、新しい版と変更一覧（ChangeSet）を作る。
 変わっていないトラックと中身を `Arc` で共有する（[ADR 0007](../decisions/0007-s5-confirmed-phase1.md)）。
-中身のノート列（`Notes`）は、ID で決まる区切りの共有の run に分け、ノートの編集は触れた run だけを写す。
-Undo が重いと測った時に `imbl` などの永続データ構造を入れる予定だったが、区切りが並びで決まる自前の run にした（[ADR 0287](../decisions/0287-shared-note-runs.md)）。
-番号でノートを読む `get` は run の二分探索で、同じ run を続けて読む走査は `cursor` を使う。
+中身のノート列（`Notes`）とトラックの配置（`Placements`）は、ID で決まる区切りの共有の run（`Runs<T>`）に分け、編集は触れた run だけを写す。
+Undo が重いと測った時に `imbl` などの永続データ構造を入れる予定だったが、区切りが並びで決まる自前の run にした（[ADR 0287](../decisions/0287-shared-note-runs.md)、[ADR 0353](../decisions/0353-shared-placement-runs.md)）。
+番号で読む `get` は run の二分探索で、同じ run を続けて読む走査は `cursor` を使う。
 
 - **UI**: ChangeSet を受け取り、関係する画面だけを更新する。描画スレッドは任意の版を安全に読める
 - **エンジン**: ChangeSet からグラフの差分を作り、裏で組み立ててから差し替える
@@ -307,8 +307,9 @@ Serde の文面を分類せず、形の後に登録簿の項目順で意味を�
 - **トランザクションと Undo**: 操作前のスナップショットを積み、未変更トラックは `Arc` で共有する。
   連続ドラッグは 1 つの Undo 単位にまとめる（[ADR 0008](../decisions/0008-actions-undo-journal.md)）。
   段数の上限はなく、段を捨てない。段だけが持つ分は、隣の版と同じ `Arc` でない物として `Session::usage` が数える。
-  ノートの編集は触れた run だけを写し、1 万ノートのクリップでも 1 段 13〜15 KB である（[ADR 0286](../decisions/0286-history-usage-diagnostics.md)、[ADR 0287](../decisions/0287-shared-note-runs.md)）。
-  多くのノートを変える編集は 1 段がその分を持ち、総量の予算はない
+  ノートと配置の編集は触れた run だけを写し、1 万ノートのクリップでも 1 段 12〜16 KB、2,000 クリップのトラックでも約 24 KB である
+  （[ADR 0286](../decisions/0286-history-usage-diagnostics.md)、[ADR 0287](../decisions/0287-shared-note-runs.md)、[ADR 0353](../decisions/0353-shared-placement-runs.md)）。
+  多くのノートや配置を変える編集は 1 段がその分を持ち、版ごとの中身の一覧（8 バイト × 中身の数）も残る。総量の予算はない
   外部音声の取込みもトランザクション内で PCM 保存と `audio.place` へ解決し、トラック追加と 1 回の Undo にできる
   （[ADR 0145](../decisions/0145-sample-browser-file-drops.md)）。
   PCM は一時の名前で同期して待たせ、編集が受理された時だけハッシュへ改名して索引とピークを作る。

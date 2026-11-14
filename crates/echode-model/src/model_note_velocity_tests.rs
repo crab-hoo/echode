@@ -16,14 +16,17 @@ fn linked_fixture(notes: usize, velocity: u16) -> Project {
     });
     let (template, _) = template.add_track("linked");
     let mut linked = Track::clone(&template.tracks()[1]);
-    linked.clips = tracks[0].clips.split_off(2);
-    for clip in &mut linked.clips {
+    let mut kept = tracks[0].clips.to_vec();
+    let mut moved = kept.split_off(2);
+    tracks[0].clips = kept.into();
+    for clip in &mut moved {
         clip.start = crate::Tick::new(clip.start.get() + 10_000);
         clip.offset = crate::Tick::new(-7);
         clip.gain = 0.25;
         clip.fade_in = 1;
         clip.fade_out = 2;
     }
+    linked.clips = moved.into();
     tracks.push(linked);
     Project::try_assemble(template.meter(), template.tempo().clone(), contents, tracks).unwrap()
 }

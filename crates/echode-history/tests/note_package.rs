@@ -30,7 +30,8 @@ impl Package {
             gain: 1.0,
             fade_in: 0,
             fade_out: 0,
-        }];
+        }]
+        .into();
         let mut link = track.clips[0].clone();
         link.id = Id::from_raw(3);
         link.start = Tick::new(8 * 705_600);

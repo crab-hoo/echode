@@ -14,7 +14,9 @@ fn shifted_fixture(count: usize, origin: i64) -> Project {
         .iter()
         .map(|item| Track::clone(item))
         .collect();
-    tracks[0].clips[0].start = Tick::new(origin);
+    tracks[0]
+        .clips
+        .update(0, |clip| clip.start = Tick::new(origin));
     Project::try_assemble(
         template.meter(),
         template.tempo().clone(),
@@ -225,9 +227,9 @@ fn merged_auto_refit_copies_each_original_note_once() {
             .iter()
             .map(|item| Track::clone(item))
             .collect();
-        tracks[0].clips[1].kind = ClipKind::Auto;
-        tracks[0].clips[1].start = bar;
-        tracks[0].clips[1].length = bar;
+        tracks[0].clips.update(1, |clip| clip.kind = ClipKind::Auto);
+        tracks[0].clips.update(1, |clip| clip.start = bar);
+        tracks[0].clips.update(1, |clip| clip.length = bar);
         let project = Project::try_assemble(
             template.meter(),
             template.tempo().clone(),

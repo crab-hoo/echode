@@ -19,11 +19,13 @@ fn spaced_fixture(count: usize, kind: ClipKind) -> Project {
         .collect();
     contents[0].takes.push(TAKE);
     let mut track = Track::clone(&project.tracks()[0]);
-    for (index, clip) in track.clips.iter_mut().enumerate() {
-        clip.start = Tick::new(index as i64 * 4 * bar);
-        clip.length = Tick::new(bar);
-        clip.kind = kind;
-    }
+    track.clips.edit(|clips| {
+        for (index, clip) in clips.iter_mut().enumerate() {
+            clip.start = Tick::new(index as i64 * 4 * bar);
+            clip.length = Tick::new(bar);
+            clip.kind = kind;
+        }
+    });
     Project::try_assemble(
         project.meter(),
         project.tempo().clone(),

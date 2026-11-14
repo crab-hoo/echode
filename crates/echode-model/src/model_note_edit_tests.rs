@@ -148,9 +148,9 @@ fn unchanged_geometry_still_refits_and_merges_adjacent_auto_windows() {
     let template = linked_fixture(1, ClipKind::Auto);
     let bar = template.meter().bar_ticks().unwrap().get();
     let mut track = (*template.tracks()[0]).clone();
-    track.clips[1].kind = ClipKind::Auto;
-    track.clips[1].start = Tick::new(bar);
-    track.clips[1].length = Tick::new(bar);
+    track.clips.update(1, |clip| clip.kind = ClipKind::Auto);
+    track.clips.update(1, |clip| clip.start = Tick::new(bar));
+    track.clips.update(1, |clip| clip.length = Tick::new(bar));
     let project = Project::try_assemble(
         template.meter(),
         template.tempo().clone(),

@@ -81,29 +81,33 @@ impl Project {
                     parameter.id = fresh(parameter.id)?;
                 }
             }
-            for clip in &mut copy.clips {
-                clip.id = fresh(clip.id)?;
-                clip.content = match copied_contents.get(&clip.content) {
-                    Some(&content) => content,
-                    None => {
-                        let original = self.content(clip.content).ok_or(ModelError::MissingClip)?;
-                        let mut content = Content::clone(original);
-                        content.id = fresh(original.id)?;
-                        content.notes.edit(|notes| {
-                            for note in notes.iter_mut() {
-                                note.id = fresh(note.id)?;
-                            }
-                            // Notes tie-break on id, so new ids can change their order.
-                            sort_notes(notes);
-                            Ok::<_, ModelError>(())
-                        })?;
-                        copied_contents.insert(original.id, content.id);
-                        let id = content.id;
-                        contents.push(Arc::new(content));
-                        id
-                    }
-                };
-            }
+            copy.clips.edit(|clips| {
+                for clip in clips.iter_mut() {
+                    clip.id = fresh(clip.id)?;
+                    clip.content = match copied_contents.get(&clip.content) {
+                        Some(&content) => content,
+                        None => {
+                            let original =
+                                self.content(clip.content).ok_or(ModelError::MissingClip)?;
+                            let mut content = Content::clone(original);
+                            content.id = fresh(original.id)?;
+                            content.notes.edit(|notes| {
+                                for note in notes.iter_mut() {
+                                    note.id = fresh(note.id)?;
+                                }
+                                // Notes tie-break on id, so new ids can change their order.
+                                sort_notes(notes);
+                                Ok::<_, ModelError>(())
+                            })?;
+                            copied_contents.insert(original.id, content.id);
+                            let id = content.id;
+                            contents.push(Arc::new(content));
+                            id
+                        }
+                    };
+                }
+                Ok::<_, ModelError>(())
+            })?;
             copies.push(Arc::new(copy));
         }
         contents.sort_by_key(|content| content.id);

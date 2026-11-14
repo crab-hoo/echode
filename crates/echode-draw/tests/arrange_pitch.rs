@@ -198,7 +198,8 @@ fn measure_product_arrange_query() {
                 gain: 1.0,
                 fade_in: 0,
                 fade_out: 0,
-            }],
+            }]
+            .into(),
             devices: vec![test_mixer(2 + track * 1_000)],
         });
     }

@@ -382,7 +382,9 @@ fn project_with_notes(count: usize) -> Project {
     let mut track = project.tracks()[0].as_ref().clone();
     let end = (count as i64 - 1) * 48_000 + 1;
     let bar = project.meter().bar_ticks().unwrap().get();
-    track.clips[0].length = Tick::new((end + bar - 1).div_euclid(bar) * bar);
+    track.clips.update(0, |clip| {
+        clip.length = Tick::new((end + bar - 1).div_euclid(bar) * bar)
+    });
     Project::try_assemble(
         project.meter(),
         project.tempo().clone(),

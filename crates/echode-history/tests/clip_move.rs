@@ -17,7 +17,7 @@ fn clips(project: &Project, track: Id) -> Vec<Placement> {
         .find(|candidate| candidate.id == track)
         .unwrap()
         .clips
-        .clone()
+        .to_vec()
 }
 
 fn perform(session: &mut Session, request: serde_json::Value) {

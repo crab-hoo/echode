@@ -192,7 +192,7 @@ fn track(id: u128, clips: Vec<Placement>) -> Track {
         name: "bounds".into(),
         parent: None,
         order: crate::initial_order(),
-        clips,
+        clips: clips.into(),
         devices: vec![test_mixer(id)],
     }
 }

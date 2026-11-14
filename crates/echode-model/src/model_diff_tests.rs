@@ -234,9 +234,11 @@ fn rekey(before: &Project, keys: &[Id]) -> Project {
             .iter()
             .map(|track| {
                 let mut track = (**track).clone();
-                for clip in &mut track.clips {
-                    clip.content = replacements[&clip.content];
-                }
+                track.clips.edit(|clips| {
+                    for clip in clips {
+                        clip.content = replacements[&clip.content];
+                    }
+                });
                 track
             })
             .collect(),

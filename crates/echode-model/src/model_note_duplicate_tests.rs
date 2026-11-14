@@ -28,12 +28,16 @@ pub(super) fn linked_fixture(notes: usize, kind: ClipKind) -> Project {
         })
         .collect();
     let mut track = Track::clone(&template.tracks()[0]);
-    track.clips[0].kind = kind;
-    track.clips[0].length = Tick::new(if kind == ClipKind::Auto { bar } else { 100 });
-    track.clips[0].gain = 0.25;
-    track.clips[0].fade_in = 1;
-    track.clips[0].fade_out = 2;
-    track.clips[1].start = Tick::new(4 * bar);
+    track.clips.update(0, |clip| clip.kind = kind);
+    track.clips.update(0, |clip| {
+        clip.length = Tick::new(if kind == ClipKind::Auto { bar } else { 100 })
+    });
+    track.clips.update(0, |clip| clip.gain = 0.25);
+    track.clips.update(0, |clip| clip.fade_in = 1);
+    track.clips.update(0, |clip| clip.fade_out = 2);
+    track
+        .clips
+        .update(1, |clip| clip.start = Tick::new(4 * bar));
     let (template, _) = template.add_track("linked");
     let mut linked = Track::clone(&template.tracks()[1]);
     let mut link = track.clips[0].clone();

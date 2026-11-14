@@ -58,7 +58,13 @@ impl Project {
         let mut used = None;
         let mut tracks = self.tracks().to_vec();
         let mut origin = Track::clone(&tracks[source]);
-        origin.clips.retain(|placement| placement.id != clip);
+        if let Some(index) = origin
+            .clips
+            .iter()
+            .position(|placement| placement.id == clip)
+        {
+            origin.clips.remove(index);
+        }
         tracks[source] = Arc::new(origin);
         land(&mut tracks, target, landed, seed, |id| {
             used.get_or_insert_with(|| self.used_ids()).insert(id)
@@ -209,7 +215,7 @@ fn land(
         .ok_or(ModelError::InvalidClip)?;
     let mut track = Track::clone(&tracks[target]);
     let mut kept = Vec::with_capacity(track.clips.len() + 2);
-    for clip in track.clips.drain(..) {
+    for clip in track.clips.to_vec() {
         let clip_start = clip.start.get();
         let clip_end = clip_start
             .checked_add(clip.length.get())
@@ -251,7 +257,8 @@ fn land(
     }
     kept.push(landed);
     sort_clips(&mut kept);
-    track.clips = kept;
+    // Only the runs whose placements changed are kept apart (ADR 0353).
+    track.clips.edit(|clips| *clips = kept);
     tracks[target] = Arc::new(track);
     Ok(())
 }

@@ -24,7 +24,7 @@ fn track(id: u128, parent: Option<u128>, clips: Vec<Placement>) -> Track {
         parent: parent.map(Id::from_raw),
         order: crate::model::sibling_order(id as u32),
         devices: vec![crate::device::test_mixer(id)],
-        clips,
+        clips: clips.into(),
     }
 }
 
@@ -368,7 +368,9 @@ fn auto_bars_use_the_earliest_start_and_latest_end_of_shared_content() {
     fixed.length = Tick::new(1);
     let mut tracks = vec![track(1, None, vec![auto, fixed])];
     assemble(vec![content.clone()], tracks.clone()).unwrap();
-    tracks[0].clips[0].length = Tick::new(3 * bar);
+    tracks[0]
+        .clips
+        .update(0, |clip| clip.length = Tick::new(3 * bar));
     assert!(matches!(
         assemble(vec![content], tracks),
         Err(ModelError::Invariant(InvariantError::AutoBounds {

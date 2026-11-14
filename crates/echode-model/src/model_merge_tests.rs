@@ -30,7 +30,7 @@ fn merge_project(count: usize, owner_first: bool) -> Project {
         name: name.into(),
         parent: None,
         order: crate::initial_order(),
-        clips: Vec::new(),
+        clips: Default::default(),
         devices: vec![crate::test_mixer(id)],
     };
     let mut owner = track(OWNER, "auto owner");
@@ -431,7 +431,10 @@ fn multi_clip_merge_membership_keeps_reverse_chains_and_fixed_walls() {
             assert!(project.diff(&original).is_empty());
             let owner = &edited.tracks()[0];
             assert_eq!(owner.clips.len(), 2 * count - merged_count + 1);
-            assert_eq!(owner.clips[..first], project.tracks()[0].clips[..first]);
+            assert_eq!(
+                owner.clips.to_vec()[..first],
+                project.tracks()[0].clips.to_vec()[..first]
+            );
             let primary = &owner.clips[first];
             assert_eq!(primary.id, project.tracks()[0].clips[first].id);
             assert_eq!(primary.start, Tick::new(first as i64 * bar));
@@ -494,7 +497,9 @@ fn shifted_project() -> Project {
         content
             .notes
             .edit(|notes| notes[0].start = Tick::new(shift));
-        owner.clips[index].offset = Tick::new(shift);
+        owner
+            .clips
+            .update(index, |clip| clip.offset = Tick::new(shift));
     }
     Project::try_assemble(project.meter(), project.tempo().clone(), contents, tracks).unwrap()
 }
@@ -523,14 +528,18 @@ fn multi_clip_merge_rejects_link_offset_overflow_without_changing_original() {
             .find(|track| track.id == Id::from_raw(LINKED))
             .unwrap();
         // Original origins and note times fit; the translated offsets do not.
-        linked.clips = vec![linked.clips[usize::from(upper)].clone()];
+        linked.clips = vec![linked.clips[usize::from(upper)].clone()].into();
         let boundary = if upper {
             i64::MAX - 4 * bar
         } else {
             i64::MIN + 4 * bar
         };
-        linked.clips[0].start = Tick::new(boundary);
-        linked.clips[0].offset = Tick::new(boundary);
+        linked
+            .clips
+            .update(0, |clip| clip.start = Tick::new(boundary));
+        linked
+            .clips
+            .update(0, |clip| clip.offset = Tick::new(boundary));
         let project = Project::try_assemble(
             project.meter(),
             project.tempo().clone(),

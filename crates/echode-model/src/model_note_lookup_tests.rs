@@ -55,7 +55,9 @@ fn linked_fixture(count: usize) -> Project {
     linked.id = Id::from_raw(2_000_000);
     linked.order = crate::model::sibling_order(1);
     linked.devices = vec![crate::test_mixer(2_000_000)];
-    for (index, (clip, link)) in track.clips.iter_mut().zip(&mut linked.clips).enumerate() {
+    let mut clips = track.clips.to_vec();
+    let mut links = linked.clips.to_vec();
+    for (index, (clip, link)) in clips.iter_mut().zip(&mut links).enumerate() {
         clip.gain = 0.25;
         clip.fade_in = 1;
         clip.fade_out = 2;
@@ -64,6 +66,8 @@ fn linked_fixture(count: usize) -> Project {
         link.start = Tick::new(clip.start.get() + 10_000);
         link.offset = Tick::new(-7);
     }
+    track.clips = clips.into();
+    linked.clips = links.into();
     Project::try_assemble(
         project.meter(),
         project.tempo().clone(),

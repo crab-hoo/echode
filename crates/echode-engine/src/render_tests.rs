@@ -235,7 +235,8 @@ fn crowded(extra: usize) -> Project {
                 gain: 1.0,
                 fade_in: DEFAULT_FADE_FLICKS,
                 fade_out: DEFAULT_FADE_FLICKS,
-            }],
+            }]
+            .into(),
         }],
     )
     .expect("assemble")

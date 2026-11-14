@@ -11,7 +11,7 @@ fn track(id: u128, order: u32) -> Track {
         parent: None,
         order: crate::model::sibling_order(order),
         devices: vec![crate::test_mixer(id)],
-        clips: Vec::new(),
+        clips: Default::default(),
     }
 }
 
@@ -31,11 +31,13 @@ fn search_fixture(notes: usize, placements: usize) -> Project {
     last.notes.edit(|notes| notes[0].velocity = 23_123);
     last.notes.edit(|notes| notes[0].release = 54_321);
     contents.extend([second, last]);
-    for (index, clip) in tracks[0].clips.iter_mut().enumerate() {
-        if index % 2 == 1 {
-            clip.content = Id::from_raw(4);
+    tracks[0].clips.edit(|clips| {
+        for (index, clip) in clips.iter_mut().enumerate() {
+            if index % 2 == 1 {
+                clip.content = Id::from_raw(4);
+            }
         }
-    }
+    });
     let mut last_clip = tracks[0].clips[0].clone();
     last_clip.id = Id::from_raw(50_000);
     last_clip.content = Id::from_raw(7);

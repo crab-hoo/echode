@@ -295,7 +295,8 @@ fn assembled_auto_clips_fit_their_notes() {
                 Id::from_raw(5),
                 Tick::new(0),
                 Tick::quarters(4).unwrap(),
-            )],
+            )]
+            .into(),
         }],
     )
     .unwrap();
@@ -337,7 +338,7 @@ fn assembled_clips_refuse_overlap_and_duplicate_ids() {
             parent: None,
             order: sibling_order(0),
             devices: vec![crate::device::test_mixer(1)],
-            clips: vec![clip(2, 20, 0), clip(3, 30, 0)],
+            clips: vec![clip(2, 20, 0), clip(3, 30, 0)].into(),
         }],
     )
     .unwrap_err();
@@ -352,7 +353,7 @@ fn assembled_clips_refuse_overlap_and_duplicate_ids() {
             parent: None,
             order: sibling_order(0),
             devices: vec![crate::device::test_mixer(1)],
-            clips: vec![clip(1, 20, 0)],
+            clips: vec![clip(1, 20, 0)].into(),
         }],
     )
     .unwrap_err();
@@ -469,7 +470,7 @@ fn saved_folders_reject_a_cycle_and_a_missing_parent() {
         parent: parent.map(Id::from_raw),
         order: sibling_order(id as u32),
         devices: vec![crate::device::test_mixer(id)],
-        clips: Vec::new(),
+        clips: Default::default(),
     };
     let error = Project::try_assemble(
         Meter::four_four(),
@@ -616,7 +617,7 @@ fn shared_across_tracks(blocker: bool) -> (Project, Id, Id) {
                 parent: None,
                 order: sibling_order(0),
                 devices: vec![crate::device::test_mixer(1)],
-                clips: vec![window(2, 5, -4, 8, -4, ClipKind::Fixed)],
+                clips: vec![window(2, 5, -4, 8, -4, ClipKind::Fixed)].into(),
             },
             Track {
                 id: Id::from_raw(4),
@@ -624,7 +625,7 @@ fn shared_across_tracks(blocker: bool) -> (Project, Id, Id) {
                 parent: None,
                 order: sibling_order(1),
                 devices: vec![crate::device::test_mixer(4)],
-                clips: drum_clips,
+                clips: drum_clips.into(),
             },
         ],
     )
@@ -694,7 +695,7 @@ fn a_fade_that_does_not_fit_in_u32_frames_is_rejected() {
         ModelError::InvalidFade
     );
     let mut assembled = (*project.tracks()[0]).clone();
-    assembled.clips[0].fade_in = too_wide;
+    assembled.clips.update(0, |clip| clip.fade_in = too_wide);
     assert_eq!(
         Project::try_assemble(
             project.meter(),
@@ -830,7 +831,8 @@ fn unsorted_notes_are_rejected() {
             Id::from_raw(5),
             Tick::new(0),
             Tick::quarters(4).unwrap(),
-        )],
+        )]
+        .into(),
     };
     assert_eq!(
         Project::try_assemble(
@@ -912,7 +914,7 @@ fn a_bad_track_order_is_rejected() {
         parent: None,
         order,
         devices: vec![crate::device::test_mixer(id)],
-        clips: Vec::new(),
+        clips: Default::default(),
     };
     let same = sibling_order(0);
     assert_eq!(

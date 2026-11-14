@@ -297,7 +297,7 @@ fn sparse_long_notes_do_not_walk_the_whole_content() {
         name: "sparse".into(),
         parent: None,
         order: initial_order(),
-        clips: vec![clip],
+        clips: vec![clip].into(),
         devices: vec![test_mixer(12)],
     };
     let project = Project::try_assemble(

@@ -740,6 +740,7 @@ fn worker(
         redo_steps = usage.redo_steps,
         version_bytes = usage.versions.bytes,
         version_tracks = usage.versions.tracks,
+        version_placements = usage.versions.placements,
         version_contents = usage.versions.contents,
         version_notes = usage.versions.notes,
         journal_changes = usage.journal_changes,

@@ -2,6 +2,7 @@
 
 - 日付: 2026-11-09
 - 状態: 採用。R6 をここで区切る。総量の予算は下の再開の条件まで入れない。
+  2026-11-14 に配置で再開の条件に届き、同じ run を配置にも使った（[ADR 0353](0353-shared-placement-runs.md)）。
 - 対象: [統合表](../reviews/2026-11-08-open-items-register.md) の R6（[FCA-19](../reviews/2026-11-03-full-code-audit.md#fca-19-減らない記録)・MOD-12）と、[ADR 0286](0286-history-usage-diagnostics.md) の残る範囲。
 - 方針: [ADR 0276](0276-priority-order-and-delegated-decisions.md) の「段を捨てない。予算を入れる時は、古い段を Git の履歴へ移す方式に限る」。
 
@@ -79,3 +80,5 @@ Undo の段（`make spike-history` の `measure_history_usage`、各 1,000 段�
   - `measure_history_usage` か回帰で、1 つのノートやトラックの編集の 1 段が 100 KB を超えた時。
   - ログの仕組み（統合表の M4）で GUI から使用量を読めるようになり、実際の作業で段の分が 1 GB を超えた時。
 - 平均の長さ 64 は 1 つだけ測った。短くすると run の一覧が、長くすると写す量が増える。
+- 2026-11-14: 2,000 クリップのトラックでクリップの範囲を変える場面を足すと、1 段が 176.6 KB で 1 つ目の条件を超えた。
+  原因はトラックの配置の写しで、`Notes` を `Runs<T>` に一般化して配置にも使い、23.9 KB にした。再開の条件の更新は [ADR 0353](0353-shared-placement-runs.md) にある。

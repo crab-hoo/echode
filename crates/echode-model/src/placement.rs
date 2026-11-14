@@ -8,15 +8,16 @@ use crate::model::{
     ClipKind, Content, ModelError, Note, NoteDraft, NoteGeometry, Placement, Track, bars_touch,
     occupied_bars, overlaps_others, overlaps_span,
 };
+use crate::runs::Placements;
 use crate::time::Tick;
 
 // Derived from immutable placement windows during host discovery.
 struct FixedBars(Vec<(i64, i64)>);
 
 impl FixedBars {
-    fn new(clips: &[Placement], bar: i64) -> Self {
+    fn new<'a>(clips: impl IntoIterator<Item = &'a Placement>, bar: i64) -> Self {
         let mut ranges: Vec<_> = clips
-            .iter()
+            .into_iter()
             .filter_map(|clip| {
                 #[cfg(test)]
                 crate::model_scale_tests::fixed_wall_probe();
@@ -210,7 +211,7 @@ pub(super) fn edit(
 /// Grow only the edited fixed placement, not its other linked windows. Auto
 /// placements still refit to bars; shortening a note never trims a fixed window.
 fn grow_edited_window(
-    clips: &mut [Placement],
+    clips: &mut Placements,
     clip_id: Id,
     geometry: NoteGeometry,
 ) -> Result<(), ModelError> {
@@ -218,7 +219,7 @@ fn grow_edited_window(
         .iter()
         .position(|clip| clip.id == clip_id)
         .ok_or(ModelError::MissingClip)?;
-    let clip = &mut clips[index];
+    let mut clip = clips[index].clone();
     if clip.kind != ClipKind::Fixed {
         return Ok(());
     }
@@ -246,9 +247,10 @@ fn grow_edited_window(
     );
     clip.start = Tick::new(start);
     clip.length = Tick::new(end.checked_sub(start).ok_or(ModelError::InvalidClip)?);
-    if overlaps_others(clips, index) {
+    if overlaps_others(&*clips, &clip) {
         return Err(ModelError::Overlap);
     }
+    clips.replace_sorted(index, clip);
     Ok(())
 }
 
@@ -348,7 +350,7 @@ fn create_auto(
             expressions: Vec::new(),
         },
     );
-    track.clips.push(Placement::new_auto(
+    track.clips.insert_sorted(Placement::new_auto(
         fresh.clip,
         fresh.content,
         Tick::new(start),
@@ -404,10 +406,12 @@ fn merge(
         });
     }
     let removed: HashSet<Id> = retired.iter().map(|(id, _, _)| *id).collect();
-    track.clips.retain(|clip| {
-        #[cfg(test)]
-        crate::model_scale_tests::merge_placement_probe();
-        !removed.contains(&clip.id)
+    track.clips.edit(|clips| {
+        clips.retain(|clip| {
+            #[cfg(test)]
+            crate::model_scale_tests::merge_placement_probe();
+            !removed.contains(&clip.id)
+        });
     });
     let retired: HashMap<Id, i64> = retired
         .into_iter()
@@ -452,9 +456,9 @@ fn retarget(
         clip.content = to;
         Ok(())
     };
-    for clip in &mut current.clips {
-        edit(clip)?;
-    }
+    current
+        .clips
+        .edit(|clips| clips.iter_mut().try_for_each(&edit))?;
     for track in tracks.iter_mut() {
         if track.id == current.id
             || !track.clips.iter().any(|clip| {
@@ -468,9 +472,9 @@ fn retarget(
         #[cfg(test)]
         crate::model_scale_tests::refit_track_copy();
         let mut owned = (**track).clone();
-        for clip in &mut owned.clips {
-            edit(clip)?;
-        }
+        owned
+            .clips
+            .edit(|clips| clips.iter_mut().try_for_each(&edit))?;
         *track = Arc::new(owned);
     }
     Ok(())
@@ -504,7 +508,7 @@ fn refit_auto(
             crate::model_scale_tests::refit_track_copy();
             let mut owned = (*tracks[slot]).clone();
             let owner = refit_current(contents, tracks, &mut owned, content, bar)?;
-            crate::model::sort_clips(&mut owned.clips);
+            crate::model::sort_placements(&mut owned.clips);
             // Merge may have retargeted fixed windows on the edited track too.
             // Index once: each fixed window may hold local edits we must retain.
             if let Some(retargeted) = tracks.iter().find(|track| {
@@ -521,16 +525,18 @@ fn refit_auto(
                         (clip.id, clip)
                     })
                     .collect();
-                for clip in &mut current.clips {
-                    #[cfg(test)]
-                    crate::model_scale_tests::refit_sync_probe();
-                    if let Some(retargeted) = placements.get(&clip.id)
-                        && clip.content != retargeted.content
-                    {
-                        clip.content = retargeted.content;
-                        clip.offset = retargeted.offset;
+                current.clips.edit(|clips| {
+                    for clip in clips {
+                        #[cfg(test)]
+                        crate::model_scale_tests::refit_sync_probe();
+                        if let Some(retargeted) = placements.get(&clip.id)
+                            && clip.content != retargeted.content
+                        {
+                            clip.content = retargeted.content;
+                            clip.offset = retargeted.offset;
+                        }
                     }
-                }
+                });
             }
             tracks[slot] = Arc::new(owned);
             return Ok(owner);
@@ -563,15 +569,15 @@ fn refit_current(
 
 /// Discover against published, start-sorted, non-overlapping windows. Their bar
 /// starts and ends are monotone too, even for sub-bar moves and negative times.
-fn refit_hosts(
-    clips: &[Placement],
+fn refit_hosts<'a>(
+    clips: impl IntoIterator<Item = &'a Placement> + Copy,
     index: usize,
     mut span: (i64, i64),
     bar: i64,
 ) -> Result<Vec<usize>, ModelError> {
     let mut candidates = Vec::new();
     let mut split = 0;
-    for (slot, clip) in clips.iter().enumerate() {
+    for (slot, clip) in clips.into_iter().enumerate() {
         if slot == index || clip.kind != ClipKind::Auto {
             continue;
         }
@@ -640,15 +646,16 @@ fn note_bars(
 
 fn refit_one(
     contents: &[Arc<Content>],
-    clips: &mut [Placement],
+    clips: &mut Placements,
     index: usize,
     bar: i64,
 ) -> Result<(), ModelError> {
-    let found = notes(contents, clips[index].content)?;
+    let mut clip = clips[index].clone();
+    let found = notes(contents, clip.content)?;
     if found.is_empty() {
         return Err(ModelError::InvalidNote);
     }
-    let origin = origin(&clips[index])?;
+    let origin = origin(&clip)?;
     let mut min_bar = i64::MAX;
     let mut max_bar = i64::MIN;
     for note in found {
@@ -666,26 +673,30 @@ fn refit_one(
         .and_then(|index| index.checked_mul(bar))
         .and_then(|local| origin.checked_add(local))
         .ok_or(ModelError::InvalidNote)?;
-    clips[index].offset = Tick::new(
+    clip.offset = Tick::new(
         new_start
             .checked_sub(origin)
             .ok_or(ModelError::InvalidNote)?,
     );
-    clips[index].start = Tick::new(new_start);
-    clips[index].length = Tick::new(
+    clip.start = Tick::new(new_start);
+    clip.length = Tick::new(
         new_end
             .checked_sub(new_start)
             .ok_or(ModelError::InvalidNote)?,
     );
-    if overlaps_others(clips, index) {
+    if overlaps_others(&*clips, &clip) {
         return Err(ModelError::Overlap);
     }
+    // Only the runs the placement leaves and enters are copied (ADR 0353).
+    clips.replace_sorted(index, clip);
     Ok(())
 }
 
 fn remove_auto(tracks: &mut [Arc<Track>], current: &mut Track, content: Id) {
     let remove = |clip: &Placement| clip.content == content && clip.kind == ClipKind::Auto;
-    current.clips.retain(|clip| !remove(clip));
+    current
+        .clips
+        .edit(|clips| clips.retain(|clip| !remove(clip)));
     for track in tracks.iter_mut() {
         if track.id == current.id || !track.clips.iter().any(remove) {
             continue;
@@ -693,7 +704,7 @@ fn remove_auto(tracks: &mut [Arc<Track>], current: &mut Track, content: Id) {
         #[cfg(test)]
         crate::model_scale_tests::delete_track_copy();
         let mut owned = (**track).clone();
-        owned.clips.retain(|clip| !remove(clip));
+        owned.clips.edit(|clips| clips.retain(|clip| !remove(clip)));
         *track = Arc::new(owned);
     }
 }

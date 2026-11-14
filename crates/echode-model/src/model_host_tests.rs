@@ -10,12 +10,14 @@ pub(super) fn reverse_project(count: usize, wall: bool, shift_bars: i64) -> Proj
         .iter()
         .map(|track| (**track).clone())
         .collect();
-    for (index, clip) in tracks[0].clips.iter_mut().take(count).enumerate() {
-        clip.start = Tick::new((shift_bars + index as i64) * bar);
-        if wall && index == count / 2 {
-            clip.kind = ClipKind::Fixed;
+    tracks[0].clips.edit(|clips| {
+        for (index, clip) in clips.iter_mut().take(count).enumerate() {
+            clip.start = Tick::new((shift_bars + index as i64) * bar);
+            if wall && index == count / 2 {
+                clip.kind = ClipKind::Fixed;
+            }
         }
-    }
+    });
     Project::try_assemble(
         template.meter(),
         template.tempo().clone(),

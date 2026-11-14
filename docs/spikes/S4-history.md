@@ -39,3 +39,4 @@ make spike-history
 （[ADR 0211](../decisions/0211-opt-in-history-spike.md)）。
 2026-11-09 から、製品の `Session` で Undo の段が持つメモリの推定も出す。値と場面は [ADR 0286](../decisions/0286-history-usage-diagnostics.md) にある。
 同日、ノートを共有の run に分けた後の値（ノートの移動の場面を含む）は [ADR 0287](../decisions/0287-shared-note-runs.md) にある。
+2026-11-14 に多くのクリップの場面と 1 回の編集の時間を足した。配置も run に分けた前後の値は [ADR 0353](../decisions/0353-shared-placement-runs.md) にある。

@@ -10,7 +10,7 @@ fn track(id: usize, parent: Option<usize>) -> Arc<Track> {
         parent: parent.map(|id| Id::from_raw(id as u128)),
         order: crate::initial_order(),
         devices: Vec::new(),
-        clips: Vec::new(),
+        clips: Default::default(),
     })
 }
 

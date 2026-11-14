@@ -342,8 +342,9 @@ MCP の要求 ID と通知は `McpSession::reply` が接続前に振り分ける
 （[ADR 0115 のメタデータ回帰](decisions/0115-phase2-mcp.md#新-mcp-の要求ごとのメタデータの回帰補強2026-10-29)）。
 
 Undo の段が持つ分の推定は `echode-model/src/footprint.rs`、段の並びをたどる集計は `echode-actions` の `Session::usage` に置く。
-中身のノートの共有の run（`Notes`）は `echode-model/src/notes.rs` にあり、区切りの規則と共有の回帰は `notes_tests.rs` にある（[ADR 0287](decisions/0287-shared-note-runs.md)）。
-ノートを変える処理は `splice`・`update`・`insert_sorted`・`replace_sorted` を使い、全体を写す `edit` は多くのノートを変える時だけにする。
+中身のノート（`Notes`）とトラックの配置（`Placements`）の共有の run（`Runs<T>`）は `echode-model/src/runs.rs` にあり、区切りの規則と共有の回帰は `runs_tests.rs` にある
+（[ADR 0287](decisions/0287-shared-note-runs.md)、[ADR 0353](decisions/0353-shared-placement-runs.md)）。
+ノートや配置を変える処理は `splice`・`update`・`remove`・`insert_sorted`・`replace_sorted` を使い、全体を写す `edit`・`retain` は多くを変える時だけにする。
 `history.usage` は `DocumentHost::history_usage` を文書のスレッドで答え、場面ごとの計測は `crates/echode-actions/tests/history_usage.rs` にある
 （[ADR 0286](decisions/0286-history-usage-diagnostics.md)）。
 

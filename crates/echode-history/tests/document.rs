@@ -646,7 +646,8 @@ fn schema_1_project() -> Project {
                 gain: 1.0,
                 fade_in: DEFAULT_FADE_FLICKS,
                 fade_out: DEFAULT_FADE_FLICKS,
-            }],
+            }]
+            .into(),
         }],
     )
     .unwrap()
