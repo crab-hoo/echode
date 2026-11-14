@@ -313,7 +313,45 @@ impl Cursor {
         inherited: &mut [Event],
     ) -> Result<(usize, usize), PlayError> {
         let (mut struck, mut kept) = (0, 0);
+        self.visit_chased(
+            plan,
+            |_| true,
+            |event, was_inherited| {
+                if was_inherited {
+                    push_event(inherited, &mut kept, event)
+                } else {
+                    push_event(fresh, &mut struck, event)
+                }
+            },
+        )?;
+        Ok((struck, kept))
+    }
+
+    /// Current sounding notes for processors recovering from lost events.
+    /// Only selected tracks' live sets are visited; score history is not scanned.
+    /// Unlike `chase_events`, all these voices go to the recovering processors,
+    /// regardless of whether an older plan had already delivered their ons.
+    pub fn held_events(
+        &self,
+        plan: &Plan,
+        out: &mut [Event],
+        include: impl FnMut(u32) -> bool,
+    ) -> Result<usize, PlayError> {
+        let mut count = 0;
+        self.visit_chased(plan, include, |event, _| push_event(out, &mut count, event))?;
+        Ok(count)
+    }
+
+    fn visit_chased(
+        &self,
+        plan: &Plan,
+        mut include: impl FnMut(u32) -> bool,
+        mut emit: impl FnMut(Event, bool) -> Result<(), PlayError>,
+    ) -> Result<(), PlayError> {
         for (cursor, track) in self.tracks.iter().zip(&plan.tracks) {
+            if !include(track.track_key) {
+                continue;
+            }
             for (slot, index) in cursor.live().iter().enumerate() {
                 visit_note();
                 let Some(note) = track.notes.get(*index as usize) else {
@@ -322,21 +360,19 @@ impl Cursor {
                 if self.position.is_some_and(|landing| note.off <= landing) {
                     continue;
                 }
-                let event = Event::note_on(
-                    0,
-                    track.track_key,
-                    note.note_id,
-                    note.pitch,
-                    unit_velocity(note.velocity),
-                );
-                if slot < cursor.inherited {
-                    push_event(inherited, &mut kept, event)?;
-                } else {
-                    push_event(fresh, &mut struck, event)?;
-                }
+                emit(
+                    Event::note_on(
+                        0,
+                        track.track_key,
+                        note.note_id,
+                        note.pitch,
+                        unit_velocity(note.velocity),
+                    ),
+                    slot < cursor.inherited,
+                )?;
             }
         }
-        Ok((struck, kept))
+        Ok(())
     }
 
     /// Takes over from `previous`, the cursor of `previous_plan`, at `sample`.

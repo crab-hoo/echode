@@ -1214,7 +1214,7 @@ fn audio_loop(
     seen_alarm: &mut u64,
 ) -> Result<(), HostError> {
     loop {
-        if adopt(bridge, Some(buffers)) {
+        if adopt(bridge, Some(buffers), *seen_request) {
             *seen_request = 0;
             *seen_alarm = bridge.root.alarm();
         }
@@ -1320,7 +1320,7 @@ fn handoff_pending(bridge: &Bridge) -> bool {
 }
 
 #[cfg_attr(feature = "rtsan", rtsan_standalone::nonblocking)]
-fn adopt(bridge: &Bridge, buffers: Option<&mut Box<PluginBuffers>>) -> bool {
+fn adopt(bridge: &Bridge, buffers: Option<&mut Box<PluginBuffers>>, seen_request: u64) -> bool {
     let _guard = crate::realtime::ForbidAlloc::enter();
     // The control thread publishes buffers before the mapping. Only this thread
     // removes pending pointers; retired storage is freed by control after release.
@@ -1331,8 +1331,12 @@ fn adopt(bridge: &Bridge, buffers: Option<&mut Box<PluginBuffers>>) -> bool {
     let cancel = bridge.cancel_pending.swap(false, Ordering::AcqRel);
     if !cancel
         && bridge.buffers_live.load(Ordering::Acquire)
+        // Acquire activation before reading the old publication counter: the
+        // parent publishes its last old block before activating the new region.
+        // Drain those events before retiring the old mapping.
         // SAFETY: only this thread can retire this pending mapping.
-        && unsafe { (*pending).published() } == 0
+        && (unsafe { (*pending).published() } == 0
+            || current_region(bridge).published() > seen_request)
     {
         return false;
     }
@@ -1917,7 +1921,7 @@ fn wait_for_layout(bridge: &Bridge) -> Result<(), HostError> {
         if bridge.stop.load(Ordering::Acquire) {
             return Ok(());
         }
-        if !adopt(bridge, None) && handoff_pending(bridge) {
+        if !adopt(bridge, None, 0) && handoff_pending(bridge) {
             std::thread::yield_now();
             continue;
         }

@@ -6,7 +6,10 @@
 //! `ECHODE_TEST_FAULT=process-wait:<socket>` holds the second process call until
 //! a test releases it. The connection is created during activation, off RT.
 //! `ECHODE_TEST_FAULT=count-wait:<socket>` holds that call the same way and
-//! counts note events as `count` does.
+//! counts note events as `count` does. `onset-wait:<socket>` instead renders a
+//! resettable test voice, to distinguish note recovery from event replay.
+//! `onset-wait-twice:<socket>` holds process calls two and four, to delay a
+//! recovery chase as well as the original block.
 //! `ECHODE_TEST_FAULT=nan` writes 0.5, then NaN from frame 10 of its second
 //! block on, until a CLAP reset; afterwards it writes 0.5 again.
 //! `ECHODE_TEST_FAULT=huge` writes a finite 2.0e38 to every output.
@@ -295,6 +298,8 @@ fn fault_code(text: &str) -> u8 {
         _ if text.starts_with("delay:") => 19,
         // The event counter, with the second process call held as `process-wait`.
         _ if text.starts_with("count-wait:") => 5,
+        _ if text.starts_with("onset-wait:") => 12,
+        _ if text.starts_with("onset-wait-twice:") => 12,
         _ if text.starts_with("claim:") => 21,
         _ => 0,
     }
@@ -424,7 +429,8 @@ pub struct TestGainProcessor<'a> {
     reset_gate_used: bool,
     // Off-RT connection; this deliberately broken plugin holds its second block.
     process_gate: Option<std::os::unix::net::UnixStream>,
-    process_gate_ready: bool,
+    process_calls: usize,
+    process_gate_twice: bool,
     /// For [`Fault::Nan`]: blocks processed, and whether a reset cleared it.
     nan_blocks: u32,
     nan_cleared: bool,
@@ -489,6 +495,8 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
                     fault
                         .strip_prefix("process-wait:")
                         .or_else(|| fault.strip_prefix("count-wait:"))
+                        .or_else(|| fault.strip_prefix("onset-wait:"))
+                        .or_else(|| fault.strip_prefix("onset-wait-twice:"))
                         .map(str::to_owned)
                 })
                 .map(|path| {
@@ -497,7 +505,9 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
                         .expect("process gate timeout");
                     gate
                 }),
-            process_gate_ready: false,
+            process_calls: 0,
+            process_gate_twice: std::env::var("ECHODE_TEST_FAULT")
+                .is_ok_and(|fault| fault.starts_with("onset-wait-twice:")),
             nan_blocks: 0,
             nan_cleared: false,
             delay,
@@ -532,7 +542,8 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
         mut audio: Audio,
         events: Events,
     ) -> Result<ProcessStatus, PluginError> {
-        if self.process_gate_ready
+        self.process_calls += 1;
+        if (self.process_calls == 2 || (self.process_gate_twice && self.process_calls == 4))
             && let Some(mut gate) = self.process_gate.take()
         {
             use std::io::{Read, Write};
@@ -540,8 +551,10 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
             let mut release = [0];
             gate.read_exact(&mut release).expect("process release");
             gate.write_all(&[2]).expect("process finished");
+            if self.process_gate_twice && self.process_calls == 2 {
+                self.process_gate = Some(gate);
+            }
         }
-        self.process_gate_ready = true;
         match self.fault {
             Fault::Process => return Err(PluginError::Message("process refused")),
             Fault::Crash => std::process::abort(),

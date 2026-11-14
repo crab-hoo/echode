@@ -695,7 +695,7 @@ impl Prepared {
         deadline: Instant,
         range: RenderRange,
     ) -> Result<(), PlaybackError> {
-        hosts.begin_block();
+        let recover_notes = hosts.begin_block();
         let mut count = self.released;
         self.released = 0;
         let count = if range.started_before.is_some() {
@@ -714,6 +714,15 @@ impl Prepared {
                     .map_err(play_error)?;
                 count += fresh;
                 self.chased_len = inherited;
+            } else if recover_notes && spans.first().is_some_and(|span| span.release_at.is_none()) {
+                // A loop-head span releases the old live set at offset zero.
+                // Chasing it as well would sort an on after its own off.
+                self.chased_len = self
+                    .cursor
+                    .held_events(&self.plan, &mut self.chased_ons, |key| {
+                        hosts.needs_notes(key)
+                    })
+                    .map_err(play_error)?;
             }
             let rest = self
                 .events

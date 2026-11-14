@@ -59,6 +59,85 @@ fn visits(action: impl FnOnce()) -> usize {
     NOTE_VISITS.with(|counter| counter.get())
 }
 
+#[test]
+fn recovery_chases_only_selected_tracks_live_notes_without_scanning_the_score() {
+    for count in [64, 1_024] {
+        let mut plan = score(count);
+        let mut unrelated = plan.tracks[0].clone();
+        unrelated.track = 52;
+        unrelated.track_key = 8;
+        // This unrelated live set, like the score history, must not be visited
+        // while recovering the first track's two held voices.
+        unrelated
+            .notes
+            .iter_mut()
+            .for_each(|note| note.off += 100_000);
+        plan.tracks.push(unrelated);
+        let landing = count as i64 * 10 + 50;
+        let mut cursor = plan.cursor();
+        cursor.catch_up(&plan, landing);
+        // Two slots bound this fixture's selected live set, not product voices.
+        let mut events = [SILENT; 2];
+        let work = visits(|| {
+            let count = cursor
+                .held_events(&plan, &mut events, |key| key == 7)
+                .unwrap();
+            assert_eq!(count, 2);
+            assert!(
+                events
+                    .iter()
+                    .all(|event| event.is_note_on() && event.track_key() == Some(7))
+            );
+        });
+        assert_eq!(work, 2);
+        assert_eq!(
+            cursor.held_events(&plan, &mut events[..1], |key| key == 7),
+            Err(PlayError::BufferTooSmall)
+        );
+        // The inherited/fresh distinction is not a delivery receipt after loss.
+        let mut next = plan.cursor();
+        next.take_over(&plan, &mut cursor, &plan, landing, true, &mut [])
+            .unwrap();
+        assert_eq!(
+            next.held_events(&plan, &mut events, |key| key == 7)
+                .unwrap(),
+            2
+        );
+        let mut inherited = [SILENT; 2];
+        // Ordinary adoption still classifies these same voices as inherited.
+        let selected = Plan {
+            tracks: vec![plan.tracks[0].clone()],
+        };
+        let mut selected_cursor = selected.cursor();
+        selected_cursor.catch_up(&selected, landing);
+        let mut selected_next = selected.cursor();
+        selected_next
+            .take_over(
+                &selected,
+                &mut selected_cursor,
+                &selected,
+                landing,
+                true,
+                &mut [],
+            )
+            .unwrap();
+        assert_eq!(
+            selected_next
+                .chase_events(&selected, &mut [], &mut inherited)
+                .unwrap(),
+            (0, 2)
+        );
+        assert_eq!(inherited, events);
+        // A voice ending exactly at the next landing must not be struck again.
+        next.catch_up(&plan, count as i64 * 10 + 100);
+        assert_eq!(
+            next.held_events(&plan, &mut events, |key| key == 7)
+                .unwrap(),
+            0
+        );
+    }
+}
+
 fn span(start: i64, frames: u32) -> Span {
     Span {
         start,

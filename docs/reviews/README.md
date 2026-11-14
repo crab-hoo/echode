@@ -153,6 +153,7 @@
   再起動の途中の `request_restart` で、ヘルパーの制御スレッドが以後の要求に答えない（RTA-02）。
   2 ブロックを超えて遅れたヘルパーへ送れなかったブロックと、共有領域の交換の直前のブロックは、イベントごと消える（RTA-04・RTA-03）。
   RTA-01〜04 を `audit_rta*` で再現した。機器のコールバック・Swift・Metal には確定した指摘がない。
+  RTA-03・04 は [ADR 0341](../decisions/0341-recover-notes-after-helper-overrun.md) で対応した。領域交換は公開済みを処理してから行い、未公開のノートは現在の発音へ戻す。
 - CLAP バンドル・停止時リセット・自然な発音: [ADR 0093](../decisions/0093-product-contract-gate.md)、[ADR 0099](../decisions/0099-transport-plugin-state.md)、[ADR 0106](../decisions/0106-natural-plugin-onsets.md)。
 - macOS ヘルパー通知・Workgroup 引き継ぎ: [2026-10-17 macOS 境界監査](2026-10-17-macos-helper-audit.md)、[ADR 0111](../decisions/0111-macos-helper-notices.md)、[ADR 0113](../decisions/0113-product-macos-workgroup-and-caches.md)。
 - フォルダ型ドラムラックと FX チェイン: [ADR 0116](../decisions/0116-folder-drum-rack.md)、[ADR 0118](../decisions/0118-track-fx-chain-editing.md)。

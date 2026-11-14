@@ -347,6 +347,20 @@ struct Instance {
 }
 
 impl Stage {
+    fn needs_notes(&self) -> bool {
+        !self.bypassed && self.awaiting_notes && !self.needs_restart && !self.chase_pending
+    }
+
+    /// Some score events never reached this stage. Reset before its next
+    /// successful publication and chase the current voices, not stale events.
+    fn recover_notes(&mut self) {
+        self.host.request_reset();
+        self.awaiting_notes = true;
+        self.chase_in_buffer = false;
+        self.chase_pending = false;
+        self.block_complete = false;
+    }
+
     fn rendered(&self) -> &[Vec<f32>] {
         if self.bypassed {
             &self.bypass_output
@@ -460,12 +474,22 @@ impl HostGraph {
             .is_some_and(|mut host| host.has_exited())
     }
 
-    pub(crate) fn begin_block(&mut self) {
+    /// Returns whether a processor needs the cursor's current sounding notes.
+    pub(crate) fn begin_block(&mut self) -> bool {
+        let mut needs_notes = false;
         for stage in self.tracks.iter().flat_map(|track| &track.stages) {
             stage.instance.failure.store(0, Ordering::Release);
+            needs_notes |= stage.needs_notes();
         }
         self.report.export_reason = 0;
         self.report.misses.clear();
+        needs_notes
+    }
+
+    pub(crate) fn needs_notes(&self, key: u32) -> bool {
+        self.tracks
+            .by_key(key)
+            .is_some_and(|track| track.stages.iter().any(Stage::needs_notes))
     }
 
     /// Mark every live processor, including downstream effects. Each helper
@@ -721,11 +745,7 @@ impl HostGraph {
                 if stage.bypassed != previous.bypassed {
                     // The helper may still hold voices from before bypass.
                     // Reset on its audio thread, then chase only current notes.
-                    stage.host.request_reset();
-                    stage.awaiting_notes = true;
-                    stage.chase_in_buffer = false;
-                    stage.chase_pending = false;
-                    stage.block_complete = false;
+                    stage.recover_notes();
                     stage.needs_restart = false;
                 }
             }
@@ -1294,6 +1314,17 @@ impl TrackHost {
     /// Marks this block missed at the current stage and names it for export.
     fn miss(&mut self, report: &mut BlockReport, reason: u8) {
         report.note_miss(self.stages.get(self.stage), reason);
+        if !self.source_events.is_empty() {
+            // A late, published block still reaches this helper. Stages after
+            // it did not receive the block at all; a failed submission includes
+            // the current stage too. Neither may retain the old voice state.
+            let first = self.stage + usize::from(reason == MISS_DEADLINE);
+            for stage in self.stages.iter_mut().skip(first) {
+                if !stage.bypassed {
+                    stage.recover_notes();
+                }
+            }
+        }
         self.run = Run::Missed;
     }
 
@@ -1415,7 +1446,7 @@ impl TrackHost {
         if stage.bypassed {
             return;
         }
-        let include_chase = stage.awaiting_notes && !stage.needs_restart && !stage.chase_pending;
+        let include_chase = stage.needs_notes();
         stage.routed.clear();
         let chase = if include_chase {
             chased_ons.as_slice()
@@ -1452,7 +1483,11 @@ impl TrackHost {
         // A note-on that starts in this block is ordinary source, not chase.
         // Once that block is heard, the helper already has the voice, so a
         // later chase must not play it again.
-        stage.block_complete = !dropped && (include_chase || !stage.awaiting_notes);
+        // A successful later block also acknowledges an earlier published
+        // chase: the helper processes its generations in order, even across
+        // mapping changes. Repeating that chase would strike each voice twice.
+        stage.block_complete =
+            !dropped && (include_chase || stage.chase_pending || !stage.awaiting_notes);
         report.dropped_events |= dropped;
     }
 

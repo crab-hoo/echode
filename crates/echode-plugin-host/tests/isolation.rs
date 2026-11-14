@@ -592,13 +592,9 @@ fn audit_rta01_a_callback_requested_in_process_under_rtsan() {
     }
 }
 
-/// RTA-03. The callback may publish a block while the helper is still inside
-/// an earlier one it gave up waiting for, so that the plugin still hears the
-/// later block's events. When a prepared mapping is activated meanwhile, the
-/// helper moves to it as soon as the earlier block returns and never
-/// processes the block already published on the old mapping.
+/// RTA-03. A mapping change must drain every published block, including those
+/// queued behind a late process call, before retiring the old mapping.
 #[test]
-#[ignore = "RTA-03: a block published before a mapping change is never processed"]
 fn audit_rta03_a_block_published_before_a_mapping_change_is_processed() {
     use std::io::{Read, Write};
     // The socket and the block length bound only this regression.
