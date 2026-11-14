@@ -42,6 +42,7 @@ use clap_sys::ext::state::{CLAP_EXT_STATE, clap_host_state, clap_plugin_state};
 use clap_sys::plugin::clap_plugin;
 use clap_sys::stream::{clap_istream, clap_ostream};
 
+mod audio_ports;
 mod delay;
 mod gui;
 mod host_log;
@@ -145,6 +146,7 @@ impl Plugin for TestGain {
                     | Fault::ThreadCheck
                     | Fault::TimerSupport
                     | Fault::TailChanged
+                    | Fault::AudioPorts
             )
         {
             builder.register::<PluginStateExt>();
@@ -198,6 +200,10 @@ impl DefaultPluginFactory for TestGain {
         if fault_now() == Fault::TailChanged {
             tail::initialize(host.shared())?;
         }
+        if fault_now() == Fault::AudioPorts {
+            audio_ports::probe(host.shared(), 1);
+            host.shared().request_callback();
+        }
         let timer_probe = (fault_now() == Fault::TimerSupport)
             .then(|| timer_support::Probe::new(host))
             .transpose()?;
@@ -245,6 +251,9 @@ impl PluginMainThread<'_, ()> for TestMain {
     fn on_main_thread(&self) {
         if fault_now() == Fault::ThreadCheck {
             let _ = thread_check::check(self.host.shared(), thread_check::CALLBACK);
+        }
+        if fault_now() == Fault::AudioPorts {
+            audio_ports::probe(self.host.shared(), 2);
         }
         if gui::CLOSE.swap(false, Ordering::AcqRel) {
             gui::report_closed();
@@ -311,6 +320,8 @@ enum Fault {
     TimerSupport,
     /// Changes its declared tail from process after a state load.
     TailChanged,
+    /// Checks supported audio-port rescans during initialization and on main.
+    AudioPorts,
 }
 
 /// For [`Fault::RestartNested`]: activations so far, and whether the first
@@ -344,6 +355,7 @@ fn fault_code(text: &str) -> u8 {
         "host-log" | "host-log-refuse" => 24,
         "timer-support" => 25,
         "tail-changed" => 26,
+        "audio-ports" => 27,
         _ if text.starts_with("restart-nested:") => 22,
         _ if text.starts_with("delay:") => 19,
         // The event counter, with the second process call held as `process-wait`.
@@ -383,6 +395,7 @@ fn fault_from_code(code: u8) -> Fault {
         24 => Fault::HostLog,
         25 => Fault::TimerSupport,
         26 => Fault::TailChanged,
+        27 => Fault::AudioPorts,
         _ => Fault::None,
     }
 }
@@ -501,6 +514,9 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
     ) -> Result<Self, PluginError> {
         if fault_now() == Fault::ThreadCheck {
             thread_check::check(_host.shared(), thread_check::ACTIVATE)?;
+        }
+        if fault_now() == Fault::AudioPorts {
+            audio_ports::activated();
         }
         if fault_now() == Fault::Latency {
             latency::activated(&main_thread.host);
@@ -891,6 +907,7 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
             | Fault::HostLog
             | Fault::TimerSupport
             | Fault::TailChanged
+            | Fault::AudioPorts
             | Fault::Activate
             | Fault::Generate
             | Fault::SlowSave
@@ -1199,7 +1216,11 @@ unsafe extern "C" fn port_get(
             };
             *info = clap_audio_port_info {
                 id: index,
-                name: [0; clap_sys::string_sizes::CLAP_NAME_SIZE],
+                name: if fault_now() == Fault::AudioPorts {
+                    audio_ports::name()
+                } else {
+                    [0; clap_sys::string_sizes::CLAP_NAME_SIZE]
+                },
                 flags: if index == 0 {
                     CLAP_AUDIO_PORT_IS_MAIN
                 } else {
@@ -1298,6 +1319,17 @@ unsafe extern "C" fn state_save(plugin: *const clap_plugin, stream: *const clap_
                 return false;
             };
             write(stream, bytes.as_ptr().cast::<c_void>(), bytes.len() as u64) == bytes.len() as i64
+        };
+    }
+    if fault_now() == Fault::AudioPorts {
+        let bytes = audio_ports::snapshot();
+        // SAFETY: the live host supplied this output stream and the local bytes
+        // remain readable for the duration of its write callback.
+        return unsafe {
+            (*stream).write.is_some_and(|write| {
+                write(stream, bytes.as_ptr().cast::<c_void>(), bytes.len() as u64)
+                    == bytes.len() as i64
+            })
         };
     }
     let byte = if fault_now() == Fault::ThreadCheck {

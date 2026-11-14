@@ -217,7 +217,8 @@ CLAP の遅延の取得とデバイス列の表示は [ADR 0246](decisions/0246-
 `clap.timer-support` は停止中・窓なしでも主スレッドから通知し、callback 中の登録・解除を扱う（[ADR 0351](decisions/0351-clap-main-thread-timers.md)）。
 `clap.tail` の実行中の変更と再有効化後の値を反映し、書出しの自動長を更新する。
 短い曲も確定前に値を問い合わせる（[ADR 0352](decisions/0352-live-clap-tails-and-export-fence.md)）。
-`audio-ports`・`note-ports` のホスト側は残る。
+`clap.audio-ports` のホスト側は名前の更新だけを許可し、音声を再起動しない（[ADR 0355](decisions/0355-clap-audio-port-name-rescans.md)）。
+構造の変更と `note-ports` のホスト側は残る。
 フォルダバスは Reaper と同じ意味にし、センド・サイドチェインより先に FCA-06 の解決として実装した（[ADR 0277](decisions/0277-reaper-style-folder-bus.md)）。
 
 - フォルダの入れ子、センド／リターン、サイドチェーン、PDC（クリップ FX や重なる配置の合流を含む）を制御側の実行計画へ組み込む。循環の拒否、チャンネルの意味、加算順序、レイテンシ変更と計画交換を定義する。

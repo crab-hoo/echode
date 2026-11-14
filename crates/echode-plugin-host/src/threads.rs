@@ -793,6 +793,7 @@ impl HostHandlers for EchodeHost {
     type AudioProcessor<'a> = ();
 
     fn declare_extensions(builder: &mut HostExtensions<Self>, shared: &Self::Shared<'_>) {
+        builder.register::<crate::audio_ports::HostAudioPorts>();
         builder.register::<HostState>();
         builder.register::<HostGui>();
         builder.register::<HostParams>();

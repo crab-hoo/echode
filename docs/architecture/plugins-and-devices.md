@@ -35,7 +35,8 @@ CLAP の遅延は有効化の直後にメインスレッドで読み、初回の
 `clap.tail.changed` は主スレッドへ中継して最新値を読み、再有効化後も更新する。
 親は `PluginControl` の共有 atomic に値を集約し、ゼロと無限値も反映する。
 書出しの確定前には番号付きの問合せで読み直す（[ADR 0352](../decisions/0352-live-clap-tails-and-export-fence.md)）。
-`audio-ports`・`note-ports` のホスト側は残る。
+`clap.audio-ports` のホスト側は名前の更新だけを対応と答え、保持しない名前の通知で再起動しない。
+構造の変更と `note-ports` のホスト側は未対応である（[ADR 0355](../decisions/0355-clap-audio-port-name-rescans.md)）。
 
 ### 9.2 プロセスの分け方
 

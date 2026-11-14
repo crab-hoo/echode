@@ -246,6 +246,19 @@ bit 7 が立つ時は誤った判定で、下位 bit の不足は未到達の区
 `cargo test -q -p echode-plugin-host --lib plugin_timers::` は時刻を引数で進め、期限と ID の境界を検証する。
 第三者だけの遅れは名前・版・要求周期・窓やモーダルの操作を記録し、ヘルパーの主スレッドの処理と分ける（[ADR 0351](../decisions/0351-clap-main-thread-timers.md)、UC-82）。
 
+### CLAP の音声ポートの変更が反映されない
+
+`clap.audio-ports` のホスト側は `CLAP_AUDIO_PORTS_RESCAN_NAMES` だけを対応と答える。
+名前はまだ保持・表示しないため、名前の通知では再起動や親のグラフ再作成は起きない。
+リスト・チャンネル数などの構造変更と `note-ports` のホスト側は未対応である（[ADR 0355](../decisions/0355-clap-audio-port-name-rescans.md)）。
+まずプラグインが問い合わせたフラグと、通知時に実際に変えた項目を区別する。
+非対応の変更を許可したとみなして再起動を繰り返さず、初期のポート宣言・機器なしのヘルパー回帰と比較する。
+公開する対応フラグは `echode-plugin-host/src/audio_ports.rs`、実ヘルパーの回帰は次である。
+
+```sh
+cargo test -q -p echode-plugin-host --test isolation audio_ports::
+```
+
 ### CLAP が鳴らない・走査失敗
 
 プラグイン ID、バンドル走査（macOS の `.clap` ディレクトリを含む）、キャッシュ、ヘルパー起動、入出力バスを追う。走査失敗時は子の終了コードとシグナルを確認する。本体プロセスにプラグインをロードして切り分けてはいけない。
