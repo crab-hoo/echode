@@ -44,6 +44,7 @@ use clap_sys::stream::{clap_istream, clap_ostream};
 
 mod delay;
 mod gui;
+mod host_log;
 mod latency;
 mod params;
 mod thread_check;
@@ -177,6 +178,9 @@ impl DefaultPluginFactory for TestGain {
         if fault_now() == Fault::ThreadCheck {
             thread_check::initialize(host.shared())?;
         }
+        if fault_now() == Fault::HostLog {
+            host_log::initialize(host.shared())?;
+        }
         Ok(TestMain {
             role: current_role(),
             // SAFETY: load runs on this same main thread, while the host is still alive.
@@ -279,6 +283,8 @@ enum Fault {
     RestartNested,
     /// Requires the host's thread checks throughout the plugin lifecycle.
     ThreadCheck,
+    /// Logs through the host from initialization, background and audio threads.
+    HostLog,
 }
 
 /// For [`Fault::RestartNested`]: activations so far, and whether the first
@@ -309,6 +315,7 @@ fn fault_code(text: &str) -> u8 {
         "huge" => 20,
         "restart-nested" => 22,
         "thread-check" => 23,
+        "host-log" | "host-log-refuse" => 24,
         _ if text.starts_with("restart-nested:") => 22,
         _ if text.starts_with("delay:") => 19,
         // The event counter, with the second process call held as `process-wait`.
@@ -345,6 +352,7 @@ fn fault_from_code(code: u8) -> Fault {
         21 => Fault::Claim,
         22 => Fault::RestartNested,
         23 => Fault::ThreadCheck,
+        24 => Fault::HostLog,
         _ => Fault::None,
     }
 }
@@ -584,6 +592,9 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
         if self.fault == Fault::ThreadCheck {
             thread_check::check(self.host, thread_check::PROCESS)?;
             self.host.request_callback();
+        }
+        if self.fault == Fault::HostLog {
+            host_log::process(self.host)?;
         }
         self.process_calls += 1;
         if (self.process_calls == 2 || (self.process_gate_twice && self.process_calls == 4))
@@ -841,6 +852,7 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
             }
             Fault::None
             | Fault::ThreadCheck
+            | Fault::HostLog
             | Fault::Activate
             | Fault::Generate
             | Fault::SlowSave

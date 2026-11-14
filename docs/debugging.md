@@ -99,6 +99,7 @@ make debug-report
   - 音源なしのノート・Sine Pad が鳴らない
   - 同梱 CLAP の初回だけ RTSan が malloc を検出する
   - CLAP がスレッド判定で初期化・処理を拒む
+  - CLAP の診断が見えない・`clap.log` に切詰めや破棄が出る
   - CLAP が鳴らない・走査失敗
   - ヘルパーの応答が `window title is not text` / `parameter text is not UTF-8` で切れる
   - ヘルパーの応答が `launch failure is malformed` で切れる

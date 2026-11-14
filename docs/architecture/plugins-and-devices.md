@@ -25,7 +25,9 @@ CLAP の遅延は有効化の直後にメインスレッドで読み、初回の
 `clap.thread-check` は、生成したスレッドの `ThreadId` と既存の処理スレッドの TLS で答える。
 初期化・有効化・メイン callback は前者、start・process・reset・stop は後者で判定し、プラグインの補助スレッドを音声扱いしない。
 問合せはロック・確保・IPC をしない。比較用の同一スレッド処理も音声区間を明示する（[ADR 0347](../decisions/0347-clap-thread-check.md)）。
-`clap.log` など残る主要なホスト拡張は未接続である。
+`clap.log` は任意スレッドの診断を固定量のスロットへ写し、制御側だけがプラグイン ID・重大度付きで stderr へ書く。
+先頭 1,024 byte の切詰めと、満杯・競合の破棄を明示し、音声側では確保・ロック・書込みをしない。
+詳細は [ADR 0349](../decisions/0349-clap-log-relay.md)。`timer-support` 等のホスト拡張は未接続である。
 
 ### 9.2 プロセスの分け方
 

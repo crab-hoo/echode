@@ -377,6 +377,9 @@ I/O エラーに文字列リテラルだけを渡すと、`check_typed_errors.py
 実際の応答の種類への変換は `main_requests.rs::unexpected` にまとめる。
 回帰は `refusal_tests.rs`・`main_requests_tests.rs` と、実ヘルパーを通す `tests/isolation.rs` の `invalid_parameter_id_` を使う（[ADR 0309](decisions/0309-typed-helper-request-failures.md)）。
 
+CLAP のログの固定量スロット・重大度と破棄の出力は `echode-plugin-host/src/plugin_log.rs`、拡張の登録は `threads.rs` に置く。
+満杯・競合・寿命の回帰は `plugin_log_tests.rs`、実ヘルパーの音声と起動拒否前の診断は `tests/isolation/plugin_log.rs` を使う（[ADR 0349](decisions/0349-clap-log-relay.md)）。
+
 共有メモリの作成と `SharedMemoryOperation` は `echode-sandbox/src/region.rs`、
 操作・errno・表示・unlink と close-on-exec の回帰は `region_error_tests.rs` に置く（[ADR 0311](decisions/0311-typed-shared-memory-errors.md)）。
 

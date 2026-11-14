@@ -14,6 +14,8 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+#[path = "isolation/plugin_log.rs"]
+mod plugin_log;
 #[path = "isolation/state_saves.rs"]
 mod state_saves;
 

@@ -458,6 +458,10 @@ PDC と `clap.log`・`clap.thread-check` 等の拡張は残り、実画面・第
 `isolation.rs` の `clap_thread_check_*_under_rtsan` は初期化・有効化・メイン callback、音声の start・process・reset、補助スレッドを別プロセスで照合する。
 `clap.log` 等は残り、第三者 CLAP の実機の互換性は UC-80 に残す。
 
+2026-11-14 の追加対応: [ADR 0349](../decisions/0349-clap-log-relay.md) で `clap.log` を接続した。
+`isolation/plugin_log.rs` は任意スレッドの診断と起動拒否前のログを実ヘルパーで照合する。
+`plugin_log_tests.rs` は満杯・競合・境界・並行消費を確認する。`timer-support` 等は残り、第三者のログの互換は UC-81 に残す。
+
 ### FCA-08: 締め切り超過の急な無音
 
 - `HostGraph::apply`（plugins.rs 922 行）は、間に合わなかったトラックを 0 で埋める。次のブロックで元の音へ戻る。

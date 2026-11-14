@@ -9,6 +9,7 @@ use crate::extension::table;
 use crate::gui::GuiRequests;
 use crate::main_requests::{MainReply, MainRequest, MainRequests};
 use crate::main_signal::MainSignal;
+use crate::plugin_log::PluginLog;
 use crate::relay::{RelayOutput, RelayRing};
 use crate::{HostError, LoadError, gui, host_info, load_entry};
 use clack_host::events::io::{EventBuffer, InputEvents};
@@ -204,6 +205,8 @@ struct Bridge {
     param_flushed: AtomicU64,
     /// Values and gestures from the plugin's output events.
     relay: RelayRing,
+    /// Diagnostics from any plugin thread, formatted only off audio.
+    plugin_log: PluginLog,
     /// The plugin asked for `flush` while no block may come.
     flush_request: AtomicBool,
     /// The plugin asked the host to read its parameters again.
@@ -656,6 +659,42 @@ unsafe impl ExtensionImplementation<EchodeHost> for HostLatency {
 unsafe extern "C" fn host_latency_changed(_host: *const clap_host) {}
 
 #[derive(Copy, Clone)]
+struct HostLog;
+
+// SAFETY: this identifier names the CLAP host log extension.
+unsafe impl Extension for HostLog {
+    const IDENTIFIERS: &[&CStr] = &[clap_sys::ext::log::CLAP_EXT_LOG];
+    type ExtensionSide = HostExtensionSide;
+    unsafe fn from_raw(_raw: RawExtension<Self::ExtensionSide>) -> Self {
+        Self
+    }
+}
+
+// SAFETY: the table has the official `clap_host_log` C layout. Logging only
+// copies into shared diagnostic slots, regardless of the calling thread.
+unsafe impl ExtensionImplementation<EchodeHost> for HostLog {
+    const IMPLEMENTATION: RawExtensionImplementation =
+        RawExtensionImplementation::new(&clap_sys::ext::log::clap_host_log {
+            log: Some(host_log),
+        });
+}
+
+unsafe extern "C" fn host_log(
+    host: *const clap_host,
+    severity: clap_sys::ext::log::clap_log_severity,
+    message: *const c_char,
+) {
+    // SAFETY: the plugin returns its live host pointer and keeps the CLAP
+    // message valid until this callback returns. No main-thread handler is used.
+    unsafe {
+        with_bridge(host, |bridge| {
+            bridge.plugin_log.push(severity, message);
+            bridge.bump_control();
+        });
+    }
+}
+
+#[derive(Copy, Clone)]
 struct HostThreadCheck;
 
 // SAFETY: this identifier names the CLAP host thread-check extension.
@@ -706,6 +745,7 @@ impl HostHandlers for EchodeHost {
         builder.register::<HostParams>();
         builder.register::<HostLatency>();
         builder.register::<HostThreadCheck>();
+        builder.register::<HostLog>();
     }
 }
 
@@ -827,6 +867,7 @@ fn serve_region(
         param_generation: AtomicU64::new(0),
         param_flushed: AtomicU64::new(0),
         relay: RelayRing::new(),
+        plugin_log: PluginLog::new(),
         flush_request: AtomicBool::new(false),
         rescan_request: AtomicBool::new(false),
         gui: GuiRequests::default(),
@@ -867,6 +908,7 @@ fn serve_region(
         Some(path) => match load_plugin(path, plugin_id, Arc::clone(&bridge)) {
             Ok(plugin) => Some(plugin),
             Err(error) => {
+                bridge.plugin_log.emit();
                 reject_launch(control.as_mut(), &error);
                 return Err(error.into());
             }
@@ -900,6 +942,7 @@ fn serve_region(
                 Ok(stopped) => stopped,
                 Err(error) => {
                     let error = LoadError::Instance(error);
+                    bridge.plugin_log.emit();
                     reject_launch(control.as_mut(), &error);
                     return Err(error.into());
                 }
@@ -1062,6 +1105,7 @@ fn load_plugin(
         })
         .ok_or_else(|| LoadError::NoPlugin(path.to_path_buf()))?;
     let plugin_id = descriptor.id().ok_or(LoadError::NoPluginId)?;
+    bridge.plugin_log.identify(plugin_id);
     let instance = PluginInstance::<EchodeHost>::new(
         move |_| HostShared {
             bridge: Some(Arc::clone(&bridge)),
@@ -1531,6 +1575,7 @@ fn control_thread(bridge: &Bridge, mut socket: Option<Socket>) -> Result<(), Hos
     let mut seen = 0u64;
     let mut restarted = 0u64;
     loop {
+        bridge.plugin_log.emit();
         if bridge.stop.load(Ordering::Acquire) {
             return Ok(());
         }
@@ -1789,6 +1834,7 @@ fn pause(bridge: &Bridge, socket: Option<&Socket>, seen: u64) -> u64 {
 
 fn wait_control(bridge: &Bridge, seen: u64) -> u64 {
     bridge.main_signal.relay();
+    bridge.plugin_log.emit();
     echode_sandbox::wait_until_ne(&bridge.control_alarm, seen, SyncFlags::THREAD)
         .unwrap_or(seen.wrapping_add(1))
 }

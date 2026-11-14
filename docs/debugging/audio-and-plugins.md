@@ -223,6 +223,19 @@ bit 7 が立つ時は誤った判定で、下位 bit の不足は未到達の区
 `extension is unavailable` は登録の欠落、`reported the wrong thread` は ID・TLS・実際の呼出し元の不一致として分ける。
 第三者だけの症状はプラグイン名・版とヘルパーの stderr を記録し、本体へ読み込んで調べない（[ADR 0347](../decisions/0347-clap-thread-check.md)）。
 
+### CLAP の診断が見えない・`clap.log` に切詰めや破棄が出る
+
+`clap.log plugin="ID" severity=... code=... truncated=... message="..."` はヘルパーの stderr に出る。
+親は終了時の末尾だけを製品のログへ残すので、実行中のヘルパーの収集と `echode.ndjson` を混同しない。
+`truncated=true` は先頭 1,024 byte の診断上限に達した記録で、途中の UTF-8 は置換する。
+`dropped=N` は 64 スロットの満杯または別スレッドとの競合で落とした件数で、音声処理の失敗数ではない。
+大量の記録や異常終了で失った診断の復元と、スレッド間の順序の保証はしない。
+重大度の fatal / misbehaving も記録だけで、停止や自動ミュートの要求とは扱わない。
+実装は `echode-plugin-host/src/plugin_log.rs`、登録と制御側の取出しは `threads.rs` にある。
+`cargo test -q -p echode-plugin-host --test isolation plugin_log::` で、実ヘルパーの音声と初期化拒否直前の記録を機器なしに確認する。
+スロットの寿命・満杯・競合は `cargo test -q -p echode-plugin-host --lib plugin_log::tests` で確認する。
+第三者の診断はプラグイン ID・名前・版、重大度、切詰め・破棄の有無を記録する（[ADR 0349](../decisions/0349-clap-log-relay.md)、UC-81）。
+
 ### CLAP が鳴らない・走査失敗
 
 プラグイン ID、バンドル走査（macOS の `.clap` ディレクトリを含む）、キャッシュ、ヘルパー起動、入出力バスを追う。走査失敗時は子の終了コードとシグナルを確認する。本体プロセスにプラグインをロードして切り分けてはいけない。
