@@ -33,6 +33,7 @@ mod error;
 #[cfg(feature = "spike")]
 mod graph;
 mod mix;
+mod output_guard;
 mod outputs;
 mod plan;
 mod playback;

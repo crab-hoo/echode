@@ -116,6 +116,8 @@ pub enum Stopped {
 pub enum AuditionFault {
     /// The output device changed under the audition.
     DeviceChanged,
+    /// The audition's final device signal became non-finite or exceeded +18 dBFS.
+    OutputGuard,
     /// Where and why the audition callback panicked (ADR 0238).
     Panicked(String),
     /// The output closed while the file was loading.
@@ -293,6 +295,9 @@ impl fmt::Display for AuditionFault {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::DeviceChanged => formatter.write_str("the output device changed"),
+            Self::OutputGuard => formatter.write_str(
+                "sample audition muted: output exceeded +18 dBFS or became non-finite; select a sample to try again",
+            ),
             Self::Panicked(reason) => write!(formatter, "the audition callback panicked: {reason}"),
             Self::ClosedWhileLoading => {
                 formatter.write_str("the audition output closed during loading")

@@ -600,9 +600,23 @@ fn service(
             entry.starved_frames = control.starved_frames()
         });
     }
+    // Completion is published after the guard result, even for a sound that
+    // reached EOF within the faulting block. Read in that order as well.
+    let ended = control.ended();
+    if let Some((request, id)) = *sounding
+        && control.auto_muted() == Some(id)
+    {
+        log::warn!(target: "echode_audio_io::audition", "request {request}: {}", AuditionFault::OutputGuard);
+        shared.update(
+            request,
+            AuditionPhase::Failed,
+            Some(AuditionFault::OutputGuard.into()),
+        );
+        *sounding = None;
+    }
     if let Some((request, id)) = *sounding
         && control.heard() != Some(id)
-        && control.ended() >= id
+        && ended >= id
     {
         shared.update(request, AuditionPhase::Ended, None);
         *sounding = None;
@@ -907,7 +921,11 @@ unsafe fn mix(callback: &AuditionCallback, buffers: &mut [AudioBuffer], host: u6
     }
     left.fill(0.0);
     right.fill(0.0);
-    state.audio.mix(left, right);
+    if callback.channels == 1 {
+        state.audio.mix_mono(left, right);
+    } else {
+        state.audio.mix(left, right);
+    }
     // A newly adopted sound started at this block's first frame.
     let started = state.audio.started();
     if started != state.noted {
@@ -916,7 +934,7 @@ unsafe fn mix(callback: &AuditionCallback, buffers: &mut [AudioBuffer], host: u6
     }
     // SAFETY: `clear_buffers` accepted these buffers (`valid`) for `frames` frames, which `left`
     // and `right` hold.
-    unsafe { crate::stream::write_planes(buffers, left, right, callback.channels == 1) };
+    unsafe { crate::stream::write_planes(buffers, left, right, false) };
 }
 
 #[cfg(test)]

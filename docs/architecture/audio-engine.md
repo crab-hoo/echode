@@ -258,6 +258,9 @@ P2 のトラック追加位置・フォルダ展開／折りたたみ時の挿�
 - **サンプルの試聴**: 文書ごとの試聴スレッドが復号・SRC・専用 IOProc を持ち、文書ワーカーとプロジェクトの出力ストリームを通らない。
   `AuditionAudio` は等倍の素材を先頭から加算し、置換・停止は 5 ms で消す。HAL がプロジェクトの IOProc と加算する
   （[ADR 0135](../decisions/0135-sample-audition.md)）。
+  音量・置換の和・モノ変換の後を、マスターと共通の `output_guard::first_fault` で調べる。
+  非有限値か +18 dBFS 超過の最初の標本から止め、次の試聴まで無音を保つ。声を返却し、復号側も先読みの待ちを終える。
+  `AuditionControl::auto_muted` の要求 ID から `AuditionFault::OutputGuard` を報告し、EOF は異常の公開より後に出す（[ADR 0344](../decisions/0344-sample-audition-output-guard.md)）。
   復号・SRC は少しずつ進め、長い素材は有限の先読みリングから全復号前に鳴らす。
   同じ読込みから部分波形を作り、音声側は不足と EOF を区別する
   （[ADR 0151](../decisions/0151-streaming-sample-audition.md)）。

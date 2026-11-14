@@ -1,6 +1,63 @@
 use super::*;
 
 #[test]
+fn the_guard_keeps_the_prefix_latches_and_recovers_without_an_old_tail_under_rtsan() {
+    // These lengths exercise faults within and on block boundaries only.
+    for block in [1, 7, 64, 512] {
+        let (mut control, mut audio) = audition_pair(RATE).unwrap();
+        let mut samples = vec![0.25; 1024];
+        samples[70] = -100.0;
+        let bad = control.play(AuditionSound::new(samples.into(), None).unwrap());
+        let (left, right) = render(&mut audio, 1024, block);
+        assert_eq!(&left[..70], &[0.25; 70]);
+        assert_eq!(&right[..70], &[0.25; 70]);
+        assert!(left[70..].iter().chain(&right[70..]).all(|s| *s == 0.0));
+        assert_eq!(control.auto_muted(), Some(bad));
+        assert_eq!(control.ended(), bad);
+        assert!(control.heard().is_none());
+        control.stop();
+        let (left, right) = render(&mut audio, 512, block);
+        assert!(left.iter().chain(&right).all(|s| *s == 0.0));
+        control.service();
+        assert!(control.idle());
+        assert_eq!(control.auto_muted(), Some(bad));
+        let good = control.play(AuditionSound::new(vec![0.5; 1024].into(), None).unwrap());
+        let (left, right) = render(&mut audio, 512, block);
+        assert_eq!(left, vec![0.5; 512]);
+        assert_eq!(right, left);
+        assert_eq!(control.heard(), Some(good));
+        assert_ne!(control.auto_muted(), Some(good));
+    }
+}
+
+#[test]
+fn the_guard_checks_replacement_sums_and_the_mono_device_value_under_rtsan() {
+    for mono in [false, true] {
+        let (mut control, mut audio) = audition_pair(RATE).unwrap();
+        let sound = || AuditionSound::new(vec![6.0; 1024].into(), None).unwrap();
+        let first = control.play(sound());
+        let (mut left, mut right) = ([0.0; 1], [0.0; 1]);
+        if mono {
+            audio.mix_mono(&mut left, &mut right);
+            assert_eq!(left, [0.0]);
+            assert_eq!(right, [0.0]);
+            assert_eq!(control.auto_muted(), Some(first));
+        } else {
+            audio.mix(&mut left, &mut right);
+            assert_eq!(left, [6.0]);
+            assert_eq!(control.auto_muted(), None);
+            let second = control.play(sound());
+            left.fill(0.0);
+            right.fill(0.0);
+            audio.mix(&mut left, &mut right);
+            assert_eq!(left, [0.0]);
+            assert_eq!(right, [0.0]);
+            assert_eq!(control.auto_muted(), Some(second));
+        }
+    }
+}
+
+#[test]
 fn audition_gain_ramps_only_its_sound_and_can_retarget_without_a_jump_under_rtsan() {
     let (mut control, mut audio) = audition_pair(RATE).unwrap();
     control.set_gain(0.5).unwrap();

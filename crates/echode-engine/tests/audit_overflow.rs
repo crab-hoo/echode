@@ -262,7 +262,6 @@ fn audit_nfa04_the_engine_refuses_a_cached_track_with_a_nan() {
 /// finite file 40 dB past full scale reaches the device as it is, where the
 /// master would have auto-muted (ADR 0282).
 #[test]
-#[ignore = "NFA-06: the sample audition output has no runaway guard"]
 fn audit_nfa06_an_audition_past_the_guard_does_not_reach_the_device() {
     use echode_engine::{AuditionSound, audition_pair};
     let (mut control, mut audio) = audition_pair(RATE).unwrap();
@@ -283,7 +282,6 @@ fn audit_nfa06_an_audition_past_the_guard_does_not_reach_the_device() {
 /// two are added in `f32`. Two finite sounds can leave an infinity in the
 /// device buffer.
 #[test]
-#[ignore = "NFA-06: two audition voices can sum to an infinity in the device buffer"]
 fn audit_nfa06_an_audition_never_writes_an_infinity() {
     use echode_engine::{AuditionSound, audition_pair};
     let (mut control, mut audio) = audition_pair(RATE).unwrap();

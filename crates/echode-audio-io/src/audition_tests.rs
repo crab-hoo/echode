@@ -1,4 +1,6 @@
 use super::*;
+#[path = "audition_guard_tests.rs"]
+mod guard_tests;
 use std::sync::atomic::AtomicUsize;
 
 // Rates, lengths and buffer sizes below shape these device-free fixtures only.

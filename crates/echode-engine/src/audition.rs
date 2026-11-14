@@ -116,6 +116,8 @@ struct Shared {
     heard: AtomicU64,
     /// The newest sound that reached its end, faded out or was replaced unheard.
     ended: AtomicU64,
+    /// The newest request stopped by the output guard. Kept across normal ends.
+    muted: AtomicU64,
     starved_frames: AtomicU64,
     gain: AtomicU32,
 }
@@ -139,6 +141,9 @@ pub struct AuditionAudio {
     fade_frames: u32,
     shared: Arc<Shared>,
     started: u64,
+    /// Published only after this block's guard has examined the final output.
+    ended: u64,
+    muted: bool,
     gain: Gain,
 }
 
@@ -226,6 +231,8 @@ pub fn audition_pair(sample_rate: u32) -> Result<(AuditionControl, AuditionAudio
             fade_frames: (sample_rate / 200).max(2),
             shared,
             started: 0,
+            ended: 0,
+            muted: false,
             gain: Gain {
                 current: 1.0,
                 start: 1.0,
@@ -300,6 +307,12 @@ impl AuditionControl {
         self.shared.starved_frames.load(Ordering::Acquire)
     }
 
+    /// The newest sound stopped by the output guard, if any. A later play has
+    /// a different id; servicing or ending a sound does not erase the reason.
+    pub fn auto_muted(&self) -> Option<u64> {
+        Some(self.shared.muted.load(Ordering::Acquire)).filter(|id| *id != 0)
+    }
+
     /// Nothing is waiting, sounding, fading or left to free.
     pub fn idle(&self) -> bool {
         self.waiting.is_none() && self.in_flight == 0
@@ -309,8 +322,21 @@ impl AuditionControl {
 impl AuditionAudio {
     /// Adds the heard and fading sounds to `left` and `right`. Messages are
     /// adopted at the start of the block. Never allocates or frees.
+    /// Mutes from the first non-finite or runaway output frame until a new play,
+    /// reporting that sound through [`AuditionControl::auto_muted`].
     #[cfg_attr(feature = "rtsan", rtsan_standalone::nonblocking)]
     pub fn mix(&mut self, left: &mut [f32], right: &mut [f32]) {
+        self.mix_output(left, right, false);
+    }
+
+    /// Mixes for a mono device: both returned planes contain its equal-power
+    /// downmix. The guard examines that final value, not the stereo inputs.
+    #[cfg_attr(feature = "rtsan", rtsan_standalone::nonblocking)]
+    pub fn mix_mono(&mut self, left: &mut [f32], right: &mut [f32]) {
+        self.mix_output(left, right, true);
+    }
+
+    fn mix_output(&mut self, left: &mut [f32], right: &mut [f32], mono: bool) {
         let _guard = ForbidAlloc::enter();
         self.gain.retarget(
             f32::from_bits(self.shared.gain.load(Ordering::Acquire)),
@@ -320,6 +346,7 @@ impl AuditionAudio {
             self.release_current();
             if let Message::Play { id, sound } = message {
                 self.started = id;
+                self.muted = false;
                 self.shared.starved_frames.store(0, Ordering::Release);
                 self.current = Some(Voice {
                     id,
@@ -334,6 +361,13 @@ impl AuditionAudio {
         let (Some(left), Some(right)) = (left.get_mut(..frames), right.get_mut(..frames)) else {
             return;
         };
+        // A fault retires both voices without fading: neither the decoder nor
+        // a later play may bring the offending tail back into the device.
+        if self.muted {
+            left.fill(0.0);
+            right.fill(0.0);
+            return;
+        }
         let fade_frames = self.fade_frames;
         if let Some(voice) = &mut self.fading
             && voice.add_fading(left, right, fade_frames, &self.gain)
@@ -350,9 +384,32 @@ impl AuditionAudio {
                 self.retire(voice);
             }
         }
+        if mono {
+            for (left, right) in left.iter_mut().zip(right.iter_mut()) {
+                let sample = (*left + *right) * std::f32::consts::FRAC_1_SQRT_2;
+                *left = sample;
+                *right = sample;
+            }
+        }
+        if let Some((first, _)) = crate::output_guard::first_fault(left, right) {
+            for plane in [left, right] {
+                if let Some(rest) = plane.get_mut(first..) {
+                    rest.fill(0.0);
+                }
+            }
+            self.muted = true;
+            self.shared.muted.store(self.started, Ordering::Release);
+            if let Some(voice) = self.current.take() {
+                self.retire(voice);
+            }
+            if let Some(voice) = self.fading.take() {
+                self.retire(voice);
+            }
+        }
         let heard = self.current.as_ref().map_or(0, |voice| voice.id);
         self.shared.heard.store(heard, Ordering::Release);
         self.gain.advance(frames);
+        self.shared.ended.store(self.ended, Ordering::Release);
     }
 
     /// The newest sound adopted so far, or 0. It started at the first frame
@@ -377,7 +434,7 @@ impl AuditionAudio {
 
     fn retire(&mut self, voice: Voice) {
         // Ids only grow, so a fade that outlasts a newer, shorter sound keeps it ended.
-        self.shared.ended.fetch_max(voice.id, Ordering::AcqRel);
+        self.ended = self.ended.max(voice.id);
         if let Err(PushError::Full(sound)) = self.retired.push(voice.sound) {
             // The in-flight count makes this unreachable. Leaking keeps a free
             // off this thread if that accounting is ever broken.

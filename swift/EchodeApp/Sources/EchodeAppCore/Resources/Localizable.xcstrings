@@ -395,6 +395,12 @@
         "ja": { "stringUnit": { "state": "translated", "value": "試聴出力を準備できません" } }
       }
     },
+    "Sample audition stopped": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Sample audition stopped" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "サンプルの試聴を停止しました" } }
+      }
+    },
     "Sample preview unavailable": {
       "localizations": {
         "en": { "stringUnit": { "state": "translated", "value": "Sample preview unavailable" } },

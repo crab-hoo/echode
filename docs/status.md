@@ -136,7 +136,7 @@
   ドラッグの実操作・見え方・VoiceOver はユーザー確認待ち（UC-06）。
 - **サンプルブラウザのクリック（UIF-05・09）**: クリックの遅れとフォーカスが直ったかはユーザー確認待ち（UC-15）。
   遅れの量は未計測である（[ADR 0143](decisions/0143-browser-click-and-audition-timing.md)）。
-- **サンプルの試聴**: 選択時は素の音で、プラグインのヘルパーを起動しない（[ADR 0135](decisions/0135-sample-audition.md)）。
+- **試聴**: プラグインを使わない。過大出力で止まり、次の試聴で戻る（[ADR 0344](decisions/0344-sample-audition-output-guard.md)、UC-78）。
   表示中は無音の試聴出力を保つ（[ADR 0152](decisions/0152-browser-audition-controls.md)）。
   隣の行の先読みと、長いファイルの読込み時間の計測はしていない（[ADR 0163](decisions/0163-sample-overview.md)）。
   2 つの IOProc の加算と機器切替時の挙動、聴感は実機でのユーザー確認待ち（UC-16、[ADR 0135](decisions/0135-sample-audition.md)）。

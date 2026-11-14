@@ -112,6 +112,8 @@ GPU は M4 の Apple9 ファミリーを基準とする（[ADR 0112](../decision
   一覧の下には選択した音声素材の全体の波形・長さを 1 つ表示する。全体は `SampleOverviews` が選択で読み、直近のものを保持する。
   読込み中だけ試聴の部分波形を使い、選択と違うパスの報告は使わない
   （[ADR 0151](../decisions/0151-streaming-sample-audition.md)、[ADR 0163](../decisions/0163-sample-overview.md)）。
+  試聴の失敗は完成した波形を隠さず、下の説明・ツールチップ・アクセシビリティ値へ出す。
+  次の試聴か選択変更で古い理由を除く（[ADR 0344](../decisions/0344-sample-audition-output-guard.md)）。
   一覧にフォーカスがある時の Space は、一覧がワークスペースの「再生／停止」を呼ぶ（[ADR 0160](../decisions/0160-ordered-transport-requests.md)）。
   自動試聴のオン／オフと音量はウィンドウ設定に保持し、右矢印・ボタン・波形クリックの手動試聴は設定と独立して使える。
   ブラウザの表示・文書の交換で無音の出力を準備し、表示中は保持する（[ADR 0152](../decisions/0152-browser-audition-controls.md)）。

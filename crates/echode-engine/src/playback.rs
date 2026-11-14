@@ -120,9 +120,7 @@ pub struct MasterAutoMute {
 /// The master level a device output treats as a fault: +18 dBFS, eight times
 /// full scale. The converter already clips at 0 dBFS, so only a signal that
 /// has run away reaches this (ADR 0282).
-pub const MASTER_GUARD_DBFS: f32 = 18.0;
-/// `MASTER_GUARD_DBFS` as a linear amplitude.
-const MASTER_GUARD: f32 = 7.943_282;
+pub use crate::output_guard::GUARD_DBFS as MASTER_GUARD_DBFS;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PlaybackStatus {
@@ -3218,19 +3216,7 @@ impl PlaybackAudio {
         let from = if self.master_mute.is_some() {
             0
         } else {
-            let Some((first, peak)) =
-                left.iter()
-                    .zip(right.iter())
-                    .enumerate()
-                    .find_map(|(frame, (left, right))| {
-                        // `f32::max` drops a NaN, so test each channel for one first.
-                        let peak = [*left, *right]
-                            .into_iter()
-                            .find(|sample| sample.is_nan())
-                            .unwrap_or_else(|| left.abs().max(right.abs()));
-                        (peak.is_nan() || peak > MASTER_GUARD).then_some((frame, peak))
-                    })
-            else {
+            let Some((first, peak)) = crate::output_guard::first_fault(left, right) else {
                 return;
             };
             self.master_mute = Some(MasterAutoMute {

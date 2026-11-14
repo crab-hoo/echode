@@ -39,6 +39,29 @@ struct SamplePreviewTests {
         #expect(view.waveform == nil)
     }
 
+    @Test func contractAuditionFailureRemainsVisibleWithACompleteWaveform() throws {
+        let view = SamplePreviewView()
+        let url = URL(fileURLWithPath: "/samples/kick.wav")
+        let ready = try status(complete: true)
+        let waveform = try #require(ready.waveform)
+        let error = "sample audition muted: output exceeded +18 dBFS or became non-finite; select a sample to try again"
+        let json: [String: Any] = [
+            "request": 1, "handled": 1, "path": url.path, "phase": "failed", "error": error, "history": [],
+        ]
+        let failed = try JSONDecoder().decode(AuditionStatus.self, from: JSONSerialization.data(withJSONObject: json))
+        view.show(url: url, status: failed, overview: .ready(waveform))
+        #expect(view.waveform == waveform)
+        #expect(view.toolTip == error)
+        #expect((view.accessibilityValue() as? String)?.contains(text("Sample audition stopped")) == true)
+        #expect((view.accessibilityValue() as? String)?.contains(error) == true)
+        view.show(url: URL(fileURLWithPath: "/samples/snare.wav"), status: failed, overview: .ready(waveform))
+        #expect(view.toolTip == nil)
+        #expect((view.accessibilityValue() as? String)?.contains(error) == false)
+        view.show(url: url, status: ready, overview: .ready(waveform))
+        #expect(view.toolTip == nil)
+        #expect((view.accessibilityValue() as? String)?.contains(error) == false)
+    }
+
     /// Selecting a sample reads its whole waveform without an audition. It
     /// stays after the audition stops, switching back shows it without reading
     /// again, and a changed file is read again (ADR 0163). The reads go through

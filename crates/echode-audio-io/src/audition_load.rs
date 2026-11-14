@@ -131,6 +131,11 @@ fn load(
                 if !outputs.is_open() {
                     return Err(AuditionFault::ClosedWhileLoading.into());
                 }
+                if waiting.is_none() && sounding.is_none() {
+                    // The output guard stopped this stream. Do not wait for a
+                    // retired consumer to make room in the PCM ring.
+                    return Ok(());
+                }
                 // Backpressure waits only on this control thread. Selection and
                 // document closure cancel it without waiting for the callback.
                 std::thread::sleep(Duration::from_millis(1));
@@ -164,6 +169,9 @@ fn load(
         service(shared, outputs, sounding, &mut idle_since);
         if !outputs.is_open() {
             return Err(AuditionFault::ClosedWhileLoading.into());
+        }
+        if waiting.is_none() && sounding.is_none() {
+            return Ok(());
         }
     }
 }

@@ -54,10 +54,10 @@ final class SamplePreviewView: NSView {
         if case .ready(let whole) = overview { waveform = whole } else { waveform = current?.waveform }
         startFrame = current?.history.last?.startFrame ?? 0
         label.stringValue = url.lastPathComponent
-        if case .failed(let error) = overview, waveform == nil {
-            detail.stringValue = text("Sample preview unavailable")
+        if let error = current?.error {
+            detail.stringValue = text("Sample audition stopped")
             toolTip = error
-        } else if let error = current?.error, waveform == nil {
+        } else if case .failed(let error) = overview, waveform == nil {
             detail.stringValue = text("Sample preview unavailable")
             toolTip = error
         } else if let waveform, waveform.sampleRate > 0 {
@@ -73,7 +73,7 @@ final class SamplePreviewView: NSView {
                 current?.phase == .loading || overview == .loading ? "Loading sample" : "Preview not loaded")
             toolTip = nil
         }
-        setAccessibilityValue("\(label.stringValue), \(detail.stringValue)")
+        setAccessibilityValue("\(label.stringValue), \(detail.stringValue)\(current?.error.map { ", \($0)" } ?? "")")
         needsLayout = true
         needsDisplay = true
     }

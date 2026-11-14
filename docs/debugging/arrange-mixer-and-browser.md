@@ -227,10 +227,14 @@ PCM と索引の残存は従来の仕様で、モデルの部分更新とは別�
 ### サンプルの試聴が鳴らない・古い素材が鳴る・止まらない
 
 スナップショットの音声状態 `audition` の `request`・`handled`・`phase`・`error`・`sample_rate` を見る。
-`handled` が `request` に届かなければ試聴スレッドが処理前、`failed` は復号か出力準備の失敗、`sample_rate` が空なら出力は閉じている。
+`handled` が `request` に届かなければ試聴スレッドが処理前、`failed` は復号・出力準備か出力ガードの停止、`sample_rate` が空なら出力は閉じている。
 機器の通知を受けると出力を閉じ、`stopped` と機器変更のエラーを残す。
 ボイスは `echode-engine` の試聴の単体回帰、スレッドとコールバックは必須契約 `sample-audition` で切り分ける
 （[ADR 0135](../decisions/0135-sample-audition.md)）。
+
+`error` に `sample audition muted` があれば、+18 dBFS 超過か非有限値を最終出力で検出した。素材・試聴音量・モノ機器の加算を調べる。
+出力は開いたまま次の試聴で解除する。古い音のフェードは戻さない。完成した波形があっても停止の説明と理由を表示する。
+`sample-audition-guard`・`sample-audition-guard-mono`・`sample-audition-fault-ui` で、先読み中の停止・再試聴・実出力の形・表示を切り分ける（[ADR 0344](../decisions/0344-sample-audition-output-guard.md)）。
 
 ### 試聴が遅れる・意図しない試聴が鳴る・クリックでフォーカスが移らない
 

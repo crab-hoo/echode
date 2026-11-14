@@ -1061,6 +1061,9 @@ class PolicyTests(unittest.TestCase):
         self.assertTrue(contracts["sample-audition-position"]["test"].endswith("_under_rtsan"))
         self.assertEqual(contracts["sample-audition-gain"]["package"], "echode-engine")
         self.assertEqual(contracts["sample-audition-controls-ui"]["suite"], "SampleAuditionControlTests")
+        self.assertEqual(contracts["sample-audition-guard"]["package"], "echode-audio-io")
+        self.assertTrue(contracts["sample-audition-guard-mono"]["test"].endswith("_under_rtsan"))
+        self.assertEqual(contracts["sample-audition-fault-ui"]["suite"], "SamplePreviewTests")
         for path in ("crates/echode-audio-io/src/audition_load.rs", "crates/echode-engine/src/audition.rs"):
             self.assertTrue({"check", "check-product-contracts", "rtsan"} <= self.selected(path))
         for path in (
@@ -2683,6 +2686,9 @@ class PolicyTests(unittest.TestCase):
                 "sample-audition-resident",
                 "sample-audition-position",
                 "sample-audition-gain",
+                "sample-audition-guard",
+                "sample-audition-guard-mono",
+                "sample-audition-fault-ui",
                 "sample-audition-controls-ui",
                 "sample-audition-stream",
                 "sample-audition-loading",
