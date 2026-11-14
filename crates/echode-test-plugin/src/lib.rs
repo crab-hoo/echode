@@ -46,6 +46,7 @@ mod delay;
 mod gui;
 mod latency;
 mod params;
+mod thread_check;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Role {
@@ -135,7 +136,7 @@ impl Plugin for TestGain {
             builder.register::<PluginAudioPorts>();
         }
         if matches!(current_role(), Role::State | Role::Params)
-            || fault_now() == Fault::RestartNested
+            || matches!(fault_now(), Fault::RestartNested | Fault::ThreadCheck)
         {
             builder.register::<PluginStateExt>();
         }
@@ -173,6 +174,9 @@ impl DefaultPluginFactory for TestGain {
         host: HostMainThreadHandle<'a>,
         _shared: &'a Self::Shared<'a>,
     ) -> Result<Self::MainThread<'a>, PluginError> {
+        if fault_now() == Fault::ThreadCheck {
+            thread_check::initialize(host.shared())?;
+        }
         Ok(TestMain {
             role: current_role(),
             // SAFETY: load runs on this same main thread, while the host is still alive.
@@ -213,6 +217,9 @@ impl TestMain {
 
 impl PluginMainThread<'_, ()> for TestMain {
     fn on_main_thread(&self) {
+        if fault_now() == Fault::ThreadCheck {
+            let _ = thread_check::check(self.host.shared(), thread_check::CALLBACK);
+        }
         if gui::CLOSE.swap(false, Ordering::AcqRel) {
             gui::report_closed();
             return;
@@ -270,6 +277,8 @@ enum Fault {
     /// Requests a restart in its first block, and a second one while the
     /// host is still inside that restart's activation.
     RestartNested,
+    /// Requires the host's thread checks throughout the plugin lifecycle.
+    ThreadCheck,
 }
 
 /// For [`Fault::RestartNested`]: activations so far, and whether the first
@@ -299,6 +308,7 @@ fn fault_code(text: &str) -> u8 {
         "large-state" => 18,
         "huge" => 20,
         "restart-nested" => 22,
+        "thread-check" => 23,
         _ if text.starts_with("restart-nested:") => 22,
         _ if text.starts_with("delay:") => 19,
         // The event counter, with the second process call held as `process-wait`.
@@ -334,6 +344,7 @@ fn fault_from_code(code: u8) -> Fault {
         20 => Fault::Huge,
         21 => Fault::Claim,
         22 => Fault::RestartNested,
+        23 => Fault::ThreadCheck,
         _ => Fault::None,
     }
 }
@@ -450,6 +461,9 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
         _shared: &'a (),
         audio_config: PluginAudioConfiguration,
     ) -> Result<Self, PluginError> {
+        if fault_now() == Fault::ThreadCheck {
+            thread_check::check(_host.shared(), thread_check::ACTIVATE)?;
+        }
         if fault_now() == Fault::Latency {
             latency::activated(&main_thread.host);
         }
@@ -529,7 +543,17 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
         })
     }
 
+    fn start_processing(&mut self) -> Result<(), PluginError> {
+        if self.fault == Fault::ThreadCheck {
+            thread_check::check(self.host, thread_check::START)?;
+        }
+        Ok(())
+    }
+
     fn reset(&mut self) {
+        if self.fault == Fault::ThreadCheck {
+            let _ = thread_check::check(self.host, thread_check::RESET);
+        }
         self.onset = Onset::default();
         if let Some(line) = &mut self.delay {
             line.reset();
@@ -557,6 +581,10 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
         mut audio: Audio,
         events: Events,
     ) -> Result<ProcessStatus, PluginError> {
+        if self.fault == Fault::ThreadCheck {
+            thread_check::check(self.host, thread_check::PROCESS)?;
+            self.host.request_callback();
+        }
         self.process_calls += 1;
         if (self.process_calls == 2 || (self.process_gate_twice && self.process_calls == 4))
             && let Some(mut gate) = self.process_gate.take()
@@ -812,6 +840,7 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
                 return Ok(ProcessStatus::Continue);
             }
             Fault::None
+            | Fault::ThreadCheck
             | Fault::Activate
             | Fault::Generate
             | Fault::SlowSave
@@ -1221,7 +1250,11 @@ unsafe extern "C" fn state_save(plugin: *const clap_plugin, stream: *const clap_
             write(stream, bytes.as_ptr().cast::<c_void>(), bytes.len() as u64) == bytes.len() as i64
         };
     }
-    let byte = STATE_BYTE.load(Ordering::Acquire);
+    let byte = if fault_now() == Fault::ThreadCheck {
+        thread_check::snapshot()
+    } else {
+        STATE_BYTE.load(Ordering::Acquire)
+    };
     if fault_now() == Fault::LargeState {
         // SAFETY: `stream` is the host's non-null output stream for this save.
         return unsafe { save_large_state(stream, byte) };

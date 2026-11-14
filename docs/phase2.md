@@ -213,6 +213,7 @@ PDC は、トラックとフォルダの合流点の遅延線で揃え、書出�
 計算は遅延グラフの最長経路で、計画ごとに検証してから公開し、循環と持てない遅延は断る（[ADR 0340](decisions/0340-latency-graph.md)）。
 センド・サイドチェイン・ドラム用の MIDI 配布は未接続で、合流はこのグラフの辺として足す。
 CLAP の遅延の取得とデバイス列の表示は [ADR 0246](decisions/0246-plugin-latency-reporting.md) で接続した。
+`clap.thread-check` は [ADR 0347](decisions/0347-clap-thread-check.md) で接続した。`clap.log` 等のホスト拡張は残る。
 フォルダバスは Reaper と同じ意味にし、センド・サイドチェインより先に FCA-06 の解決として実装した（[ADR 0277](decisions/0277-reaper-style-folder-bus.md)）。
 
 - フォルダの入れ子、センド／リターン、サイドチェーン、PDC（クリップ FX や重なる配置の合流を含む）を制御側の実行計画へ組み込む。循環の拒否、チャンネルの意味、加算順序、レイテンシ変更と計画交換を定義する。

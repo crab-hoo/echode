@@ -198,6 +198,17 @@ RTSan が `CFRunLoopSourceSignal` の中の `pthread_mutex_lock` を報告する
 回帰は `cargo test -q -p echode-plugin-host --test isolation audit_rta01` と `cargo test -q -p echode-plugin-host --lib main_signal::tests`。
 全体の段階の `make rtsan` では、同じ隔離回帰が `under_rtsan` の名前で処理区間のロックも検査する。
 
+### CLAP がスレッド判定で初期化・処理を拒む
+
+`clap.thread-check` のメイン判定は生成時の `HostShared.main_thread`、音声判定は `ON_AUDIO` の TLS から返す。
+前者を初回のメイン callback で決めると、初期化・有効化中の問合せに間に合わない。
+後者は start・reset・stop も含む処理スレッド全体で立ち、プラグインの補助スレッドでは立たない。
+`cargo test -q -p echode-plugin-host --test isolation clap_thread_check_` で機器なしに各区間を照合する。
+検査用の `thread-check` fault は、成功した 7 区間と失敗のビットを 1 byte の状態として保存する。
+bit 7 が立つ時は誤った判定で、下位 bit の不足は未到達の区間である（`echode-test-plugin/src/thread_check.rs`）。
+`extension is unavailable` は登録の欠落、`reported the wrong thread` は ID・TLS・実際の呼出し元の不一致として分ける。
+第三者だけの症状はプラグイン名・版とヘルパーの stderr を記録し、本体へ読み込んで調べない（[ADR 0347](../decisions/0347-clap-thread-check.md)）。
+
 ### CLAP が鳴らない・走査失敗
 
 プラグイン ID、バンドル走査（macOS の `.clap` ディレクトリを含む）、キャッシュ、ヘルパー起動、入出力バスを追う。走査失敗時は子の終了コードとシグナルを確認する。本体プロセスにプラグインをロードして切り分けてはいけない。

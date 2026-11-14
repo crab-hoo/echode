@@ -196,6 +196,7 @@ pub fn measure_in_process(
             },
         )
         .map_err(HostError::Instance)?;
+    let audio_thread = threads::AudioFlag::enter();
     let mut started = stopped
         .start_processing()
         .map_err(|_| HostError::StartRefused)?;
@@ -236,6 +237,7 @@ pub fn measure_in_process(
     }
     let elapsed = started_at.elapsed();
     let stopped = started.stop_processing();
+    drop(audio_thread);
     instance.deactivate(stopped);
     let _ = output[0][0];
     Ok(elapsed)

@@ -84,7 +84,7 @@
 ### プラグイン・デバイスビュー
 
 - **CLAP バンドルの互換性**: 音源とエフェクトは同じ隔離チェインを通る。macOS のディレクトリ形式のバンドルも走査・処理できる。
-  全メーカーの互換性と実機の聴感は保証しない（[ADR 0093](decisions/0093-product-contract-gate.md)）。
+  第三者互換と聴感は未保証（UC-80、[ADR 0093](decisions/0093-product-contract-gate.md)）。
 - **遅いプラグインの走査**: 5 秒で答えないバンドルは後で 120 秒待ち、なお答えなければ次の起動まで出ない（UC-65、[ADR 0285](decisions/0285-scan-timeouts-are-not-verdicts.md)）。
 - **オフライン書出し（CLI-A1）**: ステレオ・u32 フレームまで、ヘルパーは 1 ブロック 60 秒待つ。出力先は元パッケージの外へ固定する（[ADR 0260](decisions/0260-pinned-gui-export-destination.md)）。
   取消は処理の区切りを待つ。画面・VO は UC-53〜61、聴感は UC-52・57（[ADR 0258](decisions/0258-peak-export-normalization.md)）。

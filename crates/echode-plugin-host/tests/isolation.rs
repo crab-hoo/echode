@@ -347,6 +347,45 @@ fn a_restart_while_idle_wakes_the_processing_thread() {
 }
 
 #[test]
+fn clap_thread_check_distinguishes_main_audio_and_background_threads_under_rtsan() {
+    let mut host = spawn_plugin(Some("thread-check"), SessionLayout::stereo());
+    for frames in [1, 32, 127, 256] {
+        // These buffers cover this fixture's block lengths, not a product limit.
+        let input = stereo(frames, 0.1);
+        let mut output = [vec![0.0; frames], vec![0.0; frames]];
+        let planes: [&[f32]; 2] = [&input[0], &input[1]];
+        host.request_reset();
+        host.process(&planes, &mut outs(&mut output), Duration::from_secs(2))
+            .expect("thread-check probe must process on the audio thread");
+        for (source, rendered) in input.iter().zip(&output) {
+            for (source, rendered) in source.iter().zip(rendered) {
+                assert!((rendered - source * 2.0).abs() < 1.0e-6);
+            }
+        }
+    }
+    let started = Instant::now();
+    loop {
+        let state = host
+            .control_handle()
+            .capture_state()
+            .expect("thread-check probe state");
+        // init, background, activate, start, process, reset, main callback;
+        // bit 7 records any wrong answer, including void lifecycle callbacks.
+        assert_eq!(state.len(), 1);
+        assert_eq!(state[0] & 0x80, 0, "thread-check reported the wrong thread");
+        if state[0] == 0x7f {
+            break;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "thread-check lifecycle probes did not complete: {state:?}; {}",
+            host.stderr_log()
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
 fn a_callback_runs_on_the_main_thread_and_a_restart_still_answers() {
     let plugin = plugin_dylib();
     let mut host = spawn(Some(&plugin), Some("callback"));

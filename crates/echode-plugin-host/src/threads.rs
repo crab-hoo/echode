@@ -78,10 +78,10 @@ thread_local! {
     static PARAM_FLAGS: RefCell<Option<HashMap<u32, u32>>> = const { RefCell::new(None) };
 }
 
-struct AudioFlag;
+pub(crate) struct AudioFlag;
 
 impl AudioFlag {
-    fn enter() -> Self {
+    pub(crate) fn enter() -> Self {
         ON_AUDIO.with(|flag| flag.set(true));
         Self
     }
@@ -372,11 +372,16 @@ impl Bridge {
 
 pub(crate) struct HostShared {
     bridge: Option<Arc<Bridge>>,
+    /// The creating thread, available before the first main-loop callback.
+    main_thread: ThreadId,
 }
 
 impl HostShared {
     pub(crate) fn inert() -> Self {
-        Self { bridge: None }
+        Self {
+            bridge: None,
+            main_thread: thread::current().id(),
+        }
     }
 }
 
@@ -649,6 +654,47 @@ unsafe impl ExtensionImplementation<EchodeHost> for HostLatency {
 // CLAP permits this notice only during activation. Every successful activation
 // reads latency before returning the processor to audio, even without a notice.
 unsafe extern "C" fn host_latency_changed(_host: *const clap_host) {}
+
+#[derive(Copy, Clone)]
+struct HostThreadCheck;
+
+// SAFETY: this identifier names the CLAP host thread-check extension.
+unsafe impl Extension for HostThreadCheck {
+    const IDENTIFIERS: &[&CStr] = &[clap_sys::ext::thread_check::CLAP_EXT_THREAD_CHECK];
+    type ExtensionSide = HostExtensionSide;
+    unsafe fn from_raw(_raw: RawExtension<Self::ExtensionSide>) -> Self {
+        Self
+    }
+}
+
+// SAFETY: the implementation has the `clap_host_thread_check` C layout for
+// this extension's identifier. Both callbacks only access shared state.
+unsafe impl ExtensionImplementation<EchodeHost> for HostThreadCheck {
+    const IMPLEMENTATION: RawExtensionImplementation =
+        RawExtensionImplementation::new(&clap_sys::ext::thread_check::clap_host_thread_check {
+            is_main_thread: Some(host_is_main_thread),
+            is_audio_thread: Some(host_is_audio_thread),
+        });
+}
+
+unsafe extern "C" fn host_is_main_thread(host: *const clap_host) -> bool {
+    // SAFETY: the plugin returns this instance's live host pointer. `handle`
+    // accesses only the shared handler, even when called from another thread.
+    unsafe {
+        HostWrapper::<EchodeHost>::handle(host, |wrapper| {
+            Ok(thread::current().id() == wrapper.shared().main_thread)
+        })
+    }
+    .unwrap_or(false)
+}
+
+unsafe extern "C" fn host_is_audio_thread(host: *const clap_host) -> bool {
+    // SAFETY: as above, this instance's host pointer is live and only shared
+    // state is accessed. The TLS flag covers start, reset, process, and stop.
+    unsafe { HostWrapper::<EchodeHost>::handle(host, |_| Ok(ON_AUDIO.with(Cell::get))) }
+        .unwrap_or(false)
+}
+
 impl HostHandlers for EchodeHost {
     type Shared<'a> = HostShared;
     type MainThread<'a> = HostMain<'a>;
@@ -659,6 +705,7 @@ impl HostHandlers for EchodeHost {
         builder.register::<HostGui>();
         builder.register::<HostParams>();
         builder.register::<HostLatency>();
+        builder.register::<HostThreadCheck>();
     }
 }
 
@@ -1018,6 +1065,7 @@ fn load_plugin(
     let instance = PluginInstance::<EchodeHost>::new(
         move |_| HostShared {
             bridge: Some(Arc::clone(&bridge)),
+            main_thread: thread::current().id(),
         },
         host_main,
         &entry,

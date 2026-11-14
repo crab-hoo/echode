@@ -97,6 +97,7 @@ make debug-report
   - トラックやマスターが急に無音になり、再生し直すと戻る
   - 音源なしのノート・Sine Pad が鳴らない
   - 同梱 CLAP の初回だけ RTSan が malloc を検出する
+  - CLAP がスレッド判定で初期化・処理を拒む
   - CLAP が鳴らない・走査失敗
   - ヘルパーの応答が `window title is not text` / `parameter text is not UTF-8` で切れる
   - ヘルパーの応答が `launch failure is malformed` で切れる

@@ -53,7 +53,9 @@
   取りこぼしの減衰・復帰（FCA-08）は [ADR 0245](../decisions/0245-plugin-deadline-fades.md) で接続した。実機の聴感は UC-50 に残す。
   監査時の計測は [規模の計測](../evidence/2026-11-03-scale-measurements.md) に置く。
   時間換算の重複とテンポ境界ごとの再探索（FCA-13）は [ADR 0275](../decisions/0275-shared-integer-tempo-index.md) で共通の不変索引へ集めた。
-  遅延の取得・通知・表示（FCA-07）の先行分は [ADR 0246](../decisions/0246-plugin-latency-reporting.md)、PDC は [ADR 0339](../decisions/0339-plugin-delay-compensation.md) と [ADR 0340](../decisions/0340-latency-graph.md)（遅延グラフと検証）。残るホスト拡張は未接続。
+  遅延の取得・通知・表示（FCA-07）の先行分は [ADR 0246](../decisions/0246-plugin-latency-reporting.md)、
+  PDC は [ADR 0339](../decisions/0339-plugin-delay-compensation.md) と [ADR 0340](../decisions/0340-latency-graph.md)（遅延グラフと検証）。
+  `thread-check` は [ADR 0347](../decisions/0347-clap-thread-check.md)。`log` 等は未接続。
   ジャーナルの末尾確認（FCA-14）は [ADR 0252](../decisions/0252-bounded-journal-tail-repair.md) で全件読込みをなくした。まとめ書きは行わず、編集ごとの同期を保つ（[ADR 0276](../decisions/0276-priority-order-and-delegated-decisions.md)）。
   未使用の計画受渡しと音声側へ届かない命令（FCA-11）は [ADR 0253](../decisions/0253-product-only-playback-commands.md) で削除した。
   手書き FFI（FCA-12）は [ADR 0265](../decisions/0265-symbol-scoped-foreign-declarations.md) で既存バインディングへ移し、許可をシンボル単位にした。
