@@ -12,7 +12,7 @@
   有限の値の積と和が f32 を超えると、フェーダー・フォルダバス・マスターが黙って 0 にする（NFA-01〜03）。
   書出しは無音のファイルを成功として書き、機器では自動ミュートの記録が残らない。機器へ大音量が出るという主張は成立しない。
   試聴の出力にガードがなく（NFA-06）、遅延線に残った NaN が解除の直後にトラックをもう一度止める（NFA-07）。
-  NFA-01〜07 を `audit_nfa*` で再現した。
+  NFA-01〜07 を `audit_nfa*` で再現した。NFA-07 は [ADR 0340](../decisions/0340-latency-graph.md) で直した。
 - [2026-11-13 実装の詳細監査](2026-11-13-detailed-implementation-audit.md): DIA-01〜13。
   PCA・IQA が読んでいない層（カーソル、隔離の制御、文書ワーカー、保管、API）を精読した。
   失敗の後に状態を戻さない経路（確定の失敗で編集中のまま、DIA-02。断られた保存で印が消える、DIA-04）と、
@@ -25,6 +25,7 @@
 - [2026-11-13 全体の横断監査](2026-11-13-professional-cross-audit.md): PCA-01〜10。
   PDC・フォルダバスを含む現行コードの精読で、新しい実装の誤りは見つからなかった。
   書出しの途中で遅延が変わるとずれたファイルを成功として書く（PCA-01）を `audit_pca01*` で再現した。
+  PCA-01 と PDC の回帰の不足（PCA-05）は [ADR 0340](../decisions/0340-latency-graph.md) で対応した。
   実機・聴感の確認待ち 74 件に確認済みが 0 件（PCA-02）、入口の資料が上限まで 6 バイト（PCA-03）、`full` の赤の滞留（PCA-07）を挙げた。
 - [2026-11-08 監査の未完了項目の統合](2026-11-08-open-items-register.md): 10/8・SPG・XCA・外部監査・FCA ほかの未完了を束ねた。
   重複と古い状態を整理し、残りを堅牢性・保守性・効率・機能に付随・ユーザーの担当の 38 行に分けた。
@@ -51,7 +52,7 @@
   取りこぼしの減衰・復帰（FCA-08）は [ADR 0245](../decisions/0245-plugin-deadline-fades.md) で接続した。実機の聴感は UC-50 に残す。
   監査時の計測は [規模の計測](../evidence/2026-11-03-scale-measurements.md) に置く。
   時間換算の重複とテンポ境界ごとの再探索（FCA-13）は [ADR 0275](../decisions/0275-shared-integer-tempo-index.md) で共通の不変索引へ集めた。
-  遅延の取得・通知・表示（FCA-07）の先行分は [ADR 0246](../decisions/0246-plugin-latency-reporting.md)、PDC は [ADR 0339](../decisions/0339-plugin-delay-compensation.md)。残るホスト拡張は未接続。
+  遅延の取得・通知・表示（FCA-07）の先行分は [ADR 0246](../decisions/0246-plugin-latency-reporting.md)、PDC は [ADR 0339](../decisions/0339-plugin-delay-compensation.md) と [ADR 0340](../decisions/0340-latency-graph.md)（遅延グラフと検証）。残るホスト拡張は未接続。
   ジャーナルの末尾確認（FCA-14）は [ADR 0252](../decisions/0252-bounded-journal-tail-repair.md) で全件読込みをなくした。まとめ書きは行わず、編集ごとの同期を保つ（[ADR 0276](../decisions/0276-priority-order-and-delegated-decisions.md)）。
   未使用の計画受渡しと音声側へ届かない命令（FCA-11）は [ADR 0253](../decisions/0253-product-only-playback-commands.md) で削除した。
   手書き FFI（FCA-12）は [ADR 0265](../decisions/0265-symbol-scoped-foreign-declarations.md) で既存バインディングへ移し、許可をシンボル単位にした。

@@ -162,8 +162,8 @@ AudioToolbox の失敗は `MediaError` の操作別の変種で、`Property` は
 `AudioState` の `auto_muted_tracks` は NaN・無限大を返した装置と標本、`master_auto_mute` は +18 dBFS を超えた値と標本を示す。
 再生の開始で解除し、そのトラックのプラグインをリセットする。書出しでは `plugin_failure` が `PluginBlockFailureReason::NonFinite` を返し、表示は `returned a NaN or an infinity` になる。
 記録がないのに無音の時は、有限の値の積か和が f32 を超えて 0 になった可能性がある（フェーダー、フォルダバス、マスター）。
-素材とプラグインの出力に 1e31 を超える値がないかを見る。再生し直しても親トラックが戻らない時は、PDC の遅延線に残った NaN を疑う。
-どちらも未修正で、再現は `audit_nfa*` にある（[監査](../reviews/2026-11-13-finite-overflow-audit.md)）。
+素材とプラグインの出力に 1e31 を超える値がないかを見る。未修正で、再現は `audit_nfa*` にある（[監査](../reviews/2026-11-13-finite-overflow-audit.md)）。
+装置の出力は PDC の遅延線へ入る前に調べるので、線に NaN は残らない（NFA-07、[ADR 0340](../decisions/0340-latency-graph.md)）。
 試験用プラグインの `huge` は有限の 2.0e38 を、`nan` は NaN を書く。
 
 ### 音源なしのノート・Sine Pad が鳴らない
@@ -532,12 +532,19 @@ I/O は `CliIoOperation` とパス・元の errno、引数は `ArgumentError` �
 
 ### プラグインの遅延表示が更新されない・音がずれる
 
-値は出力レートのサンプル数で、再生と書出しはこの値で合流点を揃える（[ADR 0339](../decisions/0339-plugin-delay-compensation.md)）。
+値は出力レートのサンプル数で、再生と書出しはこの値で合流点を揃える（[ADR 0339](../decisions/0339-plugin-delay-compensation.md)、[ADR 0340](../decisions/0340-latency-graph.md)）。
 未取得・オフライン・一覧取得失敗は値を隠し、拡張または `get` がないプラグインは 0 と報告する。
 音がずれる時は、まず `PlaybackStatus::latency_samples`（採用した計画のマスターの遅れ）と `PlaybackControl::latency_samples` を、報告値の和と比べる。
 報告値どおりに揃っていて耳でずれるなら、プラグインの報告値が実際の遅れと違う。報告値を変えた再起動の後に古ければ、`service` が計画を作り直したか（`follow_latency`）を調べる。
-フォルダでは、子の到着・自分の配置音声・最初の音源が出会う時刻を `compensation.rs` の計算で確かめる。オフラインの装置は 0 として扱う。
-書出しの先頭がずれる時は、`render_with_plugins` が公開した計画の遅れの分を捨てたかを見る。テスト用 CLAP の `delay:<frames>` は報告値と同じだけ実際に遅らせる。
+フォルダでは、子の到着・自分の配置音声・最初の音源が出会う時刻を `compensation.rs` の `compensate` で確かめる。オフラインの装置は 0 として扱う。
+経路をグラフとして見る時は、`Solution` の `lags`（各節の入力が時間軸から遅れるフレーム数）と `delays`（各辺の線の長さ）を読む。
+計画が断られる時は `take_preparation_error` の種類で分ける。
+`Latency` は桁あふれか、線の合計が機器の物理メモリの 4 分の 1（`delay.rs::budget`）を超えた。装置の報告値を疑う。
+`Feedback` は経路の循環、`Misaligned` は `Solution::verify` の失敗で、後者は `compensate` の写し方かソルバーの誤りである（装置のせいではない）。
+どれも前の計画が鳴り続ける。
+書出しの先頭がずれる時は、`render_with_plugins` が公開した計画の遅れの分を捨てたかを見る。
+書出しは `compensation_changes` か `latency_settled` が変わると先頭から描き直し、進捗は 0 へ戻る。8 回で落ち着かなければ `UnsettledLatency` で終わる。
+テスト用 CLAP の `delay:<frames>` は報告値と同じだけ実際に遅らせ、`claim:<frames>` は報告するだけで遅らせない。
 `device.parameters` の `latency_samples` と、活動列の同名フィールドを比べる。
 初回が 0 のままなら `threads.rs::query_latency` と `Ports`、再起動後だけ古ければ `PluginRestarted` の受信と親の保持を調べる。
 親の値が新しければ、Swift の文書 ID・デバイス ID と `DeviceParameterState` を調べる。

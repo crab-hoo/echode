@@ -37,7 +37,7 @@ mod faders;
 use faders::{Routing, track_routing};
 #[path = "playback_bus.rs"]
 mod bus;
-use crate::compensation::{TrackLatency, compensate};
+use crate::compensation::{TrackFlow, compensate};
 use crate::delay::Delay;
 use bus::Bus;
 /// Clock providers consume device frames. External synchronization may supply
@@ -1565,45 +1565,60 @@ fn chain_of(project: &Project, prepared: &Prepared) -> Vec<TrackChain> {
         .collect()
 }
 
-/// Plans delay compensation for `prepared` from the helpers' reported latency
-/// and sizes its delay lines on this thread (ADR 0339). Returns the instrument
-/// delay of each hosted track for the audio graph, and what was planned.
+/// Plans delay compensation for `prepared` from one reading of the helpers'
+/// reported latency and sizes its delay lines on this thread (ADR 0339,
+/// ADR 0340). Returns the instrument delay of each hosted track for the audio
+/// graph, and what was planned.
 fn compensate_plan(
     prepared: &mut Prepared,
     hosts: &HostGraph,
     frames: usize,
 ) -> Result<(Vec<(u32, Delay)>, Compensated), PlaybackError> {
-    let reported = hosts.track_latencies();
-    let latency_of = |key: u32| {
-        reported
-            .binary_search_by_key(&key, |entry| entry.0)
-            .ok()
-            .and_then(|index| reported.get(index))
-            .map(|entry| entry.1)
-    };
-    let latencies: Vec<TrackLatency> = prepared
+    let reported = hosts.latencies();
+    let flows: Vec<TrackFlow<'_>> = prepared
         .tracks
         .iter()
-        .map(|track| latency_of(track.key).unwrap_or_default())
+        .zip(prepared.bus.parents())
+        .map(|(track, parent)| TrackFlow {
+            parent: *parent,
+            // A cached track reads its finished audio and runs no device.
+            clips: track.cache.is_none() && !track.clips.is_empty(),
+            devices: reported.of(track.key),
+        })
         .collect();
-    let plan = compensate(prepared.bus.parents(), &latencies)?;
+    if flows.len() != prepared.tracks.len() {
+        return Err(PlaybackError::BufferTooSmall);
+    }
+    let plan = compensate(&flows)?;
+    // Refused before anything is reserved: a helper may report any number.
+    let lines = plan
+        .tracks
+        .iter()
+        .flat_map(|delays| [delays.source, delays.instrument, delays.output])
+        .chain([plan.clicks]);
+    let mut footprint = 0u64;
+    for delay in lines {
+        footprint = footprint
+            .checked_add(Delay::footprint(delay, frames)?)
+            .ok_or(PlaybackError::Latency(plan.latency))?;
+    }
+    if footprint > crate::delay::budget() {
+        return Err(PlaybackError::Latency(plan.latency));
+    }
     let mut instruments = Vec::new();
     for (track, delays) in prepared.tracks.iter_mut().zip(&plan.tracks) {
-        // Only placed audio passes the source line; children meet at theirs.
-        if !track.clips.is_empty() {
-            track.source_delay = Delay::new(delays.source, frames)?;
-        }
+        track.source_delay = Delay::new(delays.source, frames)?;
         track.output_delay = Delay::new(delays.output, frames)?;
-        if hosts.starts_with_instrument(track.key) && delays.instrument != 0 {
+        if delays.instrument != 0 {
             instruments.push((track.key, Delay::new(delays.instrument, frames)?));
         }
     }
-    prepared.clicks_delay = Delay::new(plan.latency, frames)?;
+    prepared.clicks_delay = Delay::new(plan.clicks, frames)?;
     prepared.latency = plan.latency;
     Ok((
         instruments,
         Compensated {
-            reported: hosts.reported_latencies(),
+            reported: reported.reported(),
             latency: plan.latency,
             tail: plan.tail,
         },
@@ -1700,6 +1715,9 @@ pub struct PlaybackControl {
     save_controls: Vec<(u128, echode_sandbox::PluginControl)>,
     /// What the most recently published plan's delay compensation used.
     compensated: Compensated,
+    /// Published plans whose compensation was planned from other latencies
+    /// than the plan before them.
+    compensation_changes: u64,
     /// The audio thread's notes, logged on this thread (ADR 0322).
     audio_log: AudioLog,
 }
@@ -1972,6 +1990,7 @@ fn transport_pair(
         plugin_saves: Vec::new(),
         save_controls: Vec::new(),
         compensated: Compensated::default(),
+        compensation_changes: 0,
         audio_log,
     };
     let audio = PlaybackAudio {
@@ -2087,6 +2106,23 @@ impl PlaybackControl {
     /// in device frames. An export drops this many frames first (ADR 0339).
     pub fn latency_samples(&self) -> u64 {
         self.compensated.latency
+    }
+
+    /// How many published plans were compensated from other latencies than
+    /// the plan before them. A render that must stay aligned from its first
+    /// frame to its last starts over when this moves (ADR 0340).
+    pub fn compensation_changes(&self) -> u64 {
+        self.compensation_changes
+    }
+
+    /// Every helper still reports the latency the published plan compensates,
+    /// and no other plan is on its way. While this is false, a path is heard
+    /// at another time than the plan aligned it to (ADR 0340).
+    pub fn latency_settled(&self) -> bool {
+        self.held.is_none()
+            && self.preparing.is_none()
+            && self.media.is_none()
+            && !self.hosts.latency_differs(&self.compensated.reported)
     }
 
     pub fn set_routes(&mut self, host_bin: &std::path::Path, routes: &[PluginRoute]) {
@@ -2497,6 +2533,11 @@ impl PlaybackControl {
             .push(update)
             .map_err(|_| PlaybackError::BufferTooSmall)?;
         self.published_plan = pending.revision;
+        if compensated.reported != self.compensated.reported
+            || compensated.latency != self.compensated.latency
+        {
+            self.compensation_changes = self.compensation_changes.wrapping_add(1);
+        }
         self.compensated = compensated;
         Ok(())
     }

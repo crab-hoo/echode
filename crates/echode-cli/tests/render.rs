@@ -796,18 +796,19 @@ fn a_compensated_export_starts_every_track_at_the_projects_start() {
 }
 
 /// PCA-01: a helper that restarts with another latency during an export is
-/// followed by a new plan, but the export keeps the frames it decided to drop
-/// before the restart. Everything after the restart then lands late by the
-/// difference, here 48 - 16 = 32 frames.
+/// followed by a new plan. The export kept the frames it had decided to drop
+/// before the restart, so everything after it landed late by the difference,
+/// here 48 - 16 = 32 frames. The export is now drawn again from its start
+/// with the new compensation (ADR 0340), so every frame is in place,
+/// including those of the block the restart took.
 #[test]
-#[ignore = "PCA-01: an export does not follow a latency that changes while it renders"]
 fn audit_pca01_an_export_stays_aligned_when_a_plugin_restarts_with_another_latency() {
     let _lock = PLUGIN_ENV.lock().unwrap();
     let directory = scratch();
     std::fs::create_dir_all(&directory).unwrap();
     let _env = PluginEnv::set(&directory.join("clap-scan.jsonl"));
     write_plugin_cache(&directory.join("clap-scan.jsonl"), &plugin_dylib());
-    // Two seconds, so the restart is long over before the frames checked below.
+    // Two seconds of a ramp, every frame of which is compared below.
     let frames = 96_000usize;
     let ramp = |frame: usize| 0.25 * frame as f32 / frames as f32;
     let source = directory.join("ramp.wav");
@@ -842,18 +843,86 @@ fn audit_pca01_an_export_stays_aligned_when_a_plugin_restarts_with_another_laten
     // delays and reports 48.
     let _fault = FaultFile::set("dev.echode.test-gain", "delay:16:48");
     let wav = output_path("restarted-latency.wav");
-    render_to_wav(&directory, &wav, 48_000, Some(frames as u32)).unwrap();
+    // The restart takes the helper some tens of milliseconds, about as long
+    // as these two seconds take to draw. Twenty seconds are drawn, so the
+    // restart arrives while the export is still drawing and the second
+    // drawing is the one compared. The rest of the file is silence.
+    render_to_wav(&directory, &wav, 48_000, Some(10 * frames as u32)).unwrap();
     let exported = wav_lefts(&wav, frames);
-    for frame in [frames - 4_800, frames - 1] {
-        let heard = exported[frame];
+    for (frame, heard) in exported.iter().enumerate() {
         let expected = 2.0 * ramp(frame);
         assert!(
             (heard - expected).abs() < 1.0e-5,
             "frame {frame}: heard {heard}, expected {expected}, \
              32 frames late would be {}",
-            2.0 * ramp(frame - 32)
+            2.0 * ramp(frame.saturating_sub(32))
         );
     }
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
+/// A plugin that reports another latency after every restart, and asks for
+/// one in every block, never lets an export stay aligned. The export ends
+/// with an error that says so, rather than never or with a shifted file.
+#[test]
+fn an_export_whose_plugin_never_settles_its_latency_is_an_error() {
+    let _lock = PLUGIN_ENV.lock().unwrap();
+    let directory = scratch();
+    std::fs::create_dir_all(&directory).unwrap();
+    let _env = PluginEnv::set(&directory.join("clap-scan.jsonl"));
+    write_plugin_cache(&directory.join("clap-scan.jsonl"), &plugin_dylib());
+    let (project, track) = Project::new().add_track("restless");
+    let project = project
+        .add_clap_device(track, Id::from_raw(53), "dev.echode.test-gain")
+        .unwrap();
+    write_package(&directory, &project).unwrap();
+    let _fault = FaultFile::set("dev.echode.test-gain", "latency");
+    let wav = output_path("unsettled-latency.wav");
+    let _ = std::fs::remove_file(&wav);
+    // A restart takes the helper some tens of milliseconds, about as long as
+    // two seconds of audio take to draw here. Ten minutes leave each drawing
+    // hundreds of times that, so a restart always arrives during it; every
+    // drawing ends at that restart, long before its last frame. The export
+    // itself has no such length.
+    let result = render_to_wav(&directory, &wav, 48_000, Some(28_800_000));
+    assert!(
+        matches!(result, Err(echode_cli::CliError::UnsettledLatency)),
+        "{:?}",
+        result.err().map(|error| error.to_string())
+    );
+    assert!(!wav.exists(), "a refused export left a file");
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
+/// PCA-05: a latency on one track neither shortens nor lengthens an export
+/// whose length comes from another track's declared tail, and moves none of
+/// its frames.
+#[test]
+fn a_latency_on_another_track_changes_no_frame_of_an_export_with_a_tail() {
+    let _lock = PLUGIN_ENV.lock().unwrap();
+    let directory = scratch();
+    std::fs::create_dir_all(&directory).unwrap();
+    let _env = PluginEnv::set(&directory.join("clap-scan.jsonl"));
+    write_plugin_cache(&directory.join("clap-scan.jsonl"), &plugin_dylib());
+    // The Sine Pad declares a tail of 19,200 frames at this rate.
+    let (plain, empty) = reference_project().add_track("empty");
+    let delayed = plain
+        .add_clap_device(empty, Id::from_raw(62), "dev.echode.test-gain")
+        .unwrap();
+    let _delay = FaultFile::set("dev.echode.test-gain", "delay:64");
+    let mut exports = Vec::new();
+    for (index, project) in [&plain, &delayed].into_iter().enumerate() {
+        let package = directory.join(index.to_string());
+        write_package(&package, project).unwrap();
+        let wav = output_path("tail-and-latency.wav");
+        render_to_wav(&package, &wav, 48_000, None).unwrap();
+        exports.push(support::chunk(&std::fs::read(&wav).unwrap(), b"data").to_vec());
+    }
+    assert!(exports[0].iter().any(|byte| *byte != 0));
+    // One quarter note at 120 BPM, then the declared tail.
+    assert_eq!(exports[0].len(), (24_000 + 19_200) * 8);
+    assert_eq!(exports[0].len(), exports[1].len());
+    assert!(exports[0] == exports[1], "a frame moved");
     let _ = std::fs::remove_dir_all(&directory);
 }
 

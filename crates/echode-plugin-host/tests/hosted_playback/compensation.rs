@@ -1,9 +1,10 @@
-//! Plugin delay compensation through real helpers (ADR 0339).
+//! Plugin delay compensation through real helpers (ADR 0339, ADR 0340).
 //!
 //! The test plugin's `delay:<frames>` fault delays its main audio by the
 //! latency it reports, so a path's arrival at master is measurable. Every
-//! clip here is a one-frame impulse, so a misaligned path shows as a second
-//! impulse rather than a level.
+//! clip here is a one-frame impulse unless a test says otherwise, so a
+//! misaligned path shows as a second impulse rather than a level.
+//! `claim:<frames>` reports a latency and delays nothing.
 use super::*;
 
 /// Only this fixture's sections; the engine has no length limit.
@@ -94,6 +95,9 @@ fn sibling_tracks_meet_at_master_for_every_block_size_under_rtsan() {
             assert_impulse(&right, 57, -0.1875, &context);
             assert_eq!(control.latency_samples(), 37);
             assert_eq!(control.status().latency_samples, 37);
+            // Nothing moved, so an export of this plan is drawn once.
+            assert!(control.latency_settled());
+            assert_eq!(control.compensation_changes(), 0);
         }
     }
 }
@@ -205,6 +209,8 @@ fn a_restart_with_another_latency_moves_the_compensation() {
         assert!(control.take_preparation_error().is_none());
     }
     assert_eq!(control.latency_samples(), 48);
+    assert!(control.latency_settled());
+    assert_eq!(control.compensation_changes(), 1);
     control.command(PlaybackCommand::Locate(0)).unwrap();
     let mut heard = Vec::new();
     while heard.len() < 3 * block {
@@ -243,4 +249,256 @@ fn the_metronome_waits_with_the_music_under_rtsan() {
     assert!(dry.iter().any(|sample| *sample != 0.0));
     assert!(late[..37].iter().all(|sample| *sample == 0.0));
     assert_eq!(late[37..], dry[..dry.len() - 37]);
+}
+
+/// PCA-05: a loop's wrap does not clear the lines, so what entered them
+/// before the wrap is still heard, and each pass is heard once.
+#[test]
+fn a_loop_plays_each_impulse_once_per_pass_for_every_block_size_under_rtsan() {
+    let (project, delayed) = Project::new().add_track("delayed");
+    let (project, dry) = project.add_track("dry");
+    let project = project
+        .add_clap_device(delayed, Id::generate(), "dev.echode.test-gain")
+        .unwrap();
+    let routes = [delay_route("dev.echode.test-gain", "600", false)];
+    // Clear of the seam's fades, and inside the lines at the wrap: the
+    // impulse is heard 200 frames into the next pass. These lengths only
+    // size this fixture.
+    let (length, at, late, passes) = (1_200usize, 800usize, 600usize, 4usize);
+    for block in BLOCKS {
+        let (mut control, mut audio) =
+            playback_with_plugins(&project, 48_000, block, &host_bin(), &routes).unwrap();
+        control.set_clip_loader(impulses(vec![
+            (delayed, at as i64, 0.5, 0.5),
+            (dry, at as i64, 0.125, 0.125),
+        ]));
+        control.replace(&project).unwrap();
+        control
+            .command(PlaybackCommand::SetLoop {
+                start: 0,
+                end: length as i64,
+            })
+            .unwrap();
+        control.command(PlaybackCommand::Play).unwrap();
+        let (mut left, mut right) = (vec![0.0; block], vec![0.0; block]);
+        let mut heard = Vec::new();
+        while heard.len() < passes * length {
+            render_content(&mut audio, &mut left, &mut right);
+            heard.extend_from_slice(&left);
+            assert!(!control.status().failed);
+        }
+        for (frame, sample) in heard.iter().enumerate() {
+            let expected = if frame % length == (at + late) % length && frame >= late {
+                0.625
+            } else {
+                0.0
+            };
+            assert!(
+                (sample - expected).abs() < 1.0e-6,
+                "block {block}: frame {frame} is {sample}, expected {expected}"
+            );
+        }
+    }
+}
+
+/// PCA-05: a live stop keeps processing, so what the lines and the plugin
+/// held when the transport stopped still arrives, and both paths together.
+#[test]
+fn what_the_lines_hold_at_a_live_stop_still_arrives_together_under_rtsan() {
+    let (project, delayed) = Project::new().add_track("delayed");
+    let (project, dry) = project.add_track("dry");
+    let project = project
+        .add_clap_device(delayed, Id::generate(), "dev.echode.test-gain")
+        .unwrap();
+    let routes = [delay_route("dev.echode.test-gain", "37", false)];
+    let block = 64; // This test's scratch size, not an engine limit.
+    let (mut control, mut audio) =
+        playback_with_plugins(&project, 48_000, block, &host_bin(), &routes).unwrap();
+    // Played in the second block and due in the third, after the stop.
+    control.set_clip_loader(impulses(vec![
+        (delayed, 100, 0.5, 0.5),
+        (dry, 100, 0.25, 0.25),
+    ]));
+    control.replace(&project).unwrap();
+    control.command(PlaybackCommand::Play).unwrap();
+    let (mut left, mut right) = (vec![0.0; block], vec![0.0; block]);
+    let mut heard = Vec::new();
+    let mut live = |audio: &mut echode_engine::PlaybackAudio, heard: &mut Vec<f32>| {
+        audio.render_live_gated_until(
+            &mut left,
+            &mut right,
+            Instant::now() + Duration::from_secs(10),
+            true,
+        );
+        heard.extend_from_slice(&left);
+    };
+    for _ in 0..2 {
+        live(&mut audio, &mut heard);
+    }
+    control.command(PlaybackCommand::Stop).unwrap();
+    for _ in 0..8 {
+        live(&mut audio, &mut heard);
+    }
+    assert!(!control.status().playing);
+    assert_impulse(&heard, 137, 0.75, "across the stop");
+}
+
+/// A helper may report any latency. One that no machine can hold is refused
+/// before a line is reserved, at opening and for a later plan, and the plan
+/// already playing keeps playing (ADR 0340).
+#[test]
+fn a_latency_no_machine_can_hold_is_refused_and_the_old_plan_keeps_playing() {
+    let (mut project, liar) = Project::new().add_track("claims");
+    // Enough tracks to wait for the claim that their lines pass any machine.
+    let mut dry = Vec::new();
+    for index in 0..8 {
+        let (next, track) = project.add_track(format!("dry {index}"));
+        project = next;
+        dry.push(track);
+    }
+    let claimed = project
+        .add_clap_device(liar, Id::generate(), "dev.echode.test-gain")
+        .unwrap();
+    let routes = [PluginRoute {
+        clap_id: "dev.echode.test-gain".into(),
+        path: plugin_dylib(),
+        instrument: false,
+        fault: Some(format!("claim:{}", u32::MAX)),
+        state: None,
+    }];
+    let block = 64; // This test's scratch size, not an engine limit.
+    assert!(matches!(
+        playback_with_plugins(&claimed, 48_000, block, &host_bin(), &routes),
+        Err(echode_engine::PlaybackError::Latency(_))
+    ));
+
+    let (mut control, mut audio) =
+        playback_with_plugins(&project, 48_000, block, &host_bin(), &routes).unwrap();
+    let level = Arc::new(move |_: &Project, _: u32| {
+        Ok(vec![LoadedClip {
+            track: dry[0].raw(),
+            start_sample: 0,
+            samples: Arc::from(vec![0.25f32; 48_000]),
+            right: Some(Arc::from(vec![0.25f32; 48_000])),
+            window: None,
+            gain: 1.0,
+            fade_in: 0,
+            fade_out: 0,
+        }])
+    });
+    control.set_clip_loader(level);
+    control.replace(&project).unwrap();
+    control.command(PlaybackCommand::Play).unwrap();
+    let (mut left, mut right) = (vec![0.0; block], vec![0.0; block]);
+    render_content(&mut audio, &mut left, &mut right);
+    assert!(left.iter().all(|sample| (*sample - 0.25).abs() < 1.0e-6));
+    let mut refused = control.replace(&claimed).err();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while refused.is_none() {
+        assert!(Instant::now() < deadline, "the plan was not refused");
+        render_content(&mut audio, &mut left, &mut right);
+        control.service();
+        refused = control.take_preparation_error();
+    }
+    assert!(
+        matches!(refused, Some(echode_engine::PlaybackError::Latency(_))),
+        "{refused:?}"
+    );
+    for _ in 0..4 {
+        render_content(&mut audio, &mut left, &mut right);
+        assert!(left.iter().all(|sample| (*sample - 0.25).abs() < 1.0e-6));
+    }
+    assert!(!control.status().failed);
+    assert_eq!(control.latency_samples(), 0);
+}
+
+/// PCA-05: an edit while playing adds a slower path, so every other line
+/// grows. The new lines keep reading what the old ones held, at the new
+/// delay, and nothing is heard at a place no path puts it.
+#[test]
+fn a_longer_line_still_plays_what_the_old_one_held() {
+    let (project, delayed) = Project::new().add_track("delayed");
+    let (project, dry) = project.add_track("dry");
+    let before = project
+        .add_clap_device(delayed, Id::generate(), "dev.echode.test-gain")
+        .unwrap();
+    let (after, slow) = before.add_track("slow");
+    let after = after
+        .add_clap_device(slow, Id::generate(), "dev.echode.test-gain")
+        .unwrap();
+    let routes = [
+        delay_route("dev.echode.test-gain", "37", false),
+        delay_route("dev.echode.test-gain", "600", false),
+    ];
+    // An impulse on both tracks every 100 frames, for as long as the new
+    // helper may take to start. These numbers only size this fixture.
+    let (period, block, total) = (100usize, 64usize, 4_000_000i64);
+    let train = (0..total / period as i64).flat_map(|index| {
+        let at = index * period as i64;
+        [(delayed, at, 0.5, 0.5), (dry, at, 0.25, 0.25)]
+    });
+    let (mut control, mut audio) =
+        playback_with_plugins(&before, 48_000, block, &host_bin(), &routes).unwrap();
+    control.set_clip_loader(impulses(train.collect()));
+    control.replace(&before).unwrap();
+    control.command(PlaybackCommand::Play).unwrap();
+    let (mut left, mut right) = (vec![0.0; block], vec![0.0; block]);
+    let mut heard = Vec::new();
+    for _ in 0..4 {
+        render_content(&mut audio, &mut left, &mut right);
+        heard.extend_from_slice(&left);
+    }
+    control.replace(&after).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    // The first frame the new plan rendered.
+    let swap = loop {
+        assert!(Instant::now() < deadline, "the new plan was not adopted");
+        assert!(control.take_preparation_error().is_none());
+        let from = heard.len();
+        render_content(&mut audio, &mut left, &mut right);
+        heard.extend_from_slice(&left);
+        control.service();
+        if control.status().latency_samples == 600 {
+            break from;
+        }
+    };
+    while heard.len() < swap + 1_400 {
+        render_content(&mut audio, &mut left, &mut right);
+        heard.extend_from_slice(&left);
+    }
+    assert!(!control.status().failed);
+    let level = |frame: usize| heard[frame];
+    let near = |value: f32, expected: f32| (value - expected).abs() < 1.0e-6;
+    for frame in 0..swap {
+        let expected = if frame >= 37 && (frame - 37) % period == 0 {
+            0.75
+        } else {
+            0.0
+        };
+        assert!(
+            near(level(frame), expected),
+            "before the swap, frame {frame}"
+        );
+    }
+    let mut kept = 0;
+    for frame in swap..swap + 600 {
+        // The new delay is a whole number of periods, so a path that plays
+        // an impulse of the train plays it on a multiple of the period.
+        let on_an_impulse = frame % period == 0;
+        let value = level(frame);
+        assert!(
+            near(value, 0.0) || (on_an_impulse && (near(value, 0.25) || near(value, 0.75))),
+            "frame {frame}, {} after the swap, is {value}",
+            frame - swap
+        );
+        kept += usize::from(on_an_impulse && !near(value, 0.0));
+    }
+    assert!(kept != 0, "nothing the old line held was heard");
+    for frame in swap + 600..heard.len() {
+        let expected = if frame % period == 0 { 0.75 } else { 0.0 };
+        assert!(
+            near(level(frame), expected),
+            "after the swap, frame {frame}"
+        );
+    }
 }

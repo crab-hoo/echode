@@ -20,7 +20,7 @@ use echode_sandbox::{
 };
 
 use crate::PlaybackError;
-use crate::compensation::TrackLatency;
+use crate::compensation::DeviceLatency;
 use crate::delay::Delay;
 use crate::plugin_state::{PluginState, holds};
 
@@ -146,6 +146,34 @@ pub(crate) enum Progress {
     Finished,
     /// The deadline passed. Every pending track was abandoned and reported.
     Late,
+}
+
+/// One reading of every hosted device's latency and tail (ADR 0340).
+pub(crate) struct Latencies {
+    /// In graph order.
+    devices: Vec<DeviceLatency>,
+    /// `(key, from, to)` into `devices`, sorted by key.
+    tracks: Vec<(u32, usize, usize)>,
+}
+
+impl Latencies {
+    /// A track's devices in chain order. Empty when no helper runs it.
+    pub(crate) fn of(&self, key: u32) -> &[DeviceLatency] {
+        self.tracks
+            .binary_search_by_key(&key, |entry| entry.0)
+            .ok()
+            .and_then(|index| self.tracks.get(index))
+            .and_then(|&(_, from, to)| self.devices.get(from..to))
+            .unwrap_or_default()
+    }
+
+    /// Each device's latency in graph order, to compare with later reports.
+    pub(crate) fn reported(&self) -> Vec<(u128, u32)> {
+        self.devices
+            .iter()
+            .map(|device| (device.device, device.latency))
+            .collect()
+    }
 }
 
 struct TrackHost {
@@ -339,11 +367,31 @@ impl Stage {
         }
     }
 
+    /// What the device itself wrote, before placed audio and children join
+    /// it: the mono plane a promotion reads, or the rendered planes.
+    fn own_mut(&mut self) -> &mut [Vec<f32>] {
+        if !self.bypassed && !self.promoted.is_empty() {
+            let main = self.output.len().min(1);
+            self.output.get_mut(..main).unwrap_or_default()
+        } else {
+            self.rendered_mut()
+        }
+    }
+
     /// The planes of the first output port, the track's audio.
     fn main_output_mut(&mut self) -> &mut [Vec<f32>] {
         let main = self.main_outputs.min(self.output.len());
         self.output.get_mut(..main).unwrap_or_default()
     }
+}
+
+/// Which of a stage's planes to check for a NaN or an infinity.
+#[derive(Clone, Copy)]
+enum Planes {
+    /// What the device itself wrote.
+    Own,
+    /// What the next stage and the track read.
+    Heard,
 }
 
 pub(crate) struct PreparationCheckpoint(Vec<(Arc<Instance>, bool)>);
@@ -746,48 +794,31 @@ impl HostGraph {
         Ok(())
     }
 
-    /// Each hosted track's reported device latency and declared tails, sorted
-    /// by key (ADR 0339). Control only: reading a tail locks the helper.
-    pub(crate) fn track_latencies(&self) -> Vec<(u32, TrackLatency)> {
-        let mut latencies: Vec<_> = self
-            .tracks
-            .iter()
-            .map(|track| {
-                let mut latency = TrackLatency::default();
-                for (index, stage) in track.stages.iter().enumerate() {
-                    let frames = u64::from(stage.instance.control.latency_samples());
-                    if index == 0 && stage.instrument {
-                        latency.instrument = frames;
-                    } else {
-                        latency.chain = latency.chain.saturating_add(frames);
-                        if stage.bypassed {
-                            latency.bypassed = latency.bypassed.saturating_add(frames);
-                        }
-                    }
-                    if !stage.bypassed {
-                        latency.tail = latency
-                            .tail
-                            .saturating_add(stage.instance.host().tail_samples());
-                    }
-                }
-                (track.key, latency)
-            })
-            .collect();
-        latencies.sort_unstable_by_key(|entry| entry.0);
-        latencies
-    }
-
-    /// Each device's reported latency, in graph order.
-    pub(crate) fn reported_latencies(&self) -> Vec<(u128, u32)> {
-        self.tracks
-            .iter()
-            .flat_map(|track| &track.stages)
-            .map(|stage| (stage.device, stage.instance.control.latency_samples()))
-            .collect()
+    /// Every hosted device's reported latency and declared tail, read once
+    /// (ADR 0340). A plan's delays and the values a later restart is compared
+    /// with both come from this one reading, so a helper that restarts while
+    /// a plan is prepared is still noticed. Control only: reading a tail locks
+    /// the helper.
+    pub(crate) fn latencies(&self) -> Latencies {
+        let mut devices = Vec::with_capacity(self.stage_index.len());
+        let mut tracks = Vec::with_capacity(self.tracks.len());
+        for track in self.tracks.iter() {
+            let from = devices.len();
+            devices.extend(track.stages.iter().map(|stage| DeviceLatency {
+                device: stage.device,
+                latency: stage.instance.control.latency_samples(),
+                tail: stage.instance.host().tail_samples(),
+                instrument: stage.instrument,
+                bypassed: stage.bypassed,
+            }));
+            tracks.push((track.key, from, devices.len()));
+        }
+        tracks.sort_unstable_by_key(|entry| entry.0);
+        Latencies { devices, tracks }
     }
 
     /// A helper reported a latency other than `reported`, which
-    /// [`Self::reported_latencies`] returned for the same graph.
+    /// [`Latencies::reported`] returned for the same graph.
     pub(crate) fn latency_differs(&self, reported: &[(u128, u32)]) -> bool {
         let mut stages = self.tracks.iter().flat_map(|track| &track.stages);
         let mut reported = reported.iter();
@@ -800,14 +831,6 @@ impl HostGraph {
                 _ => return true,
             }
         }
-    }
-
-    /// The track's first device is an instrument, which hears no input.
-    pub(crate) fn starts_with_instrument(&self, key: u32) -> bool {
-        self.tracks
-            .by_key(key)
-            .and_then(|track| track.stages.first())
-            .is_some_and(|stage| stage.instrument)
     }
 
     /// Silences every instrument's compensation at a discontinuity that also
@@ -1517,8 +1540,13 @@ impl TrackHost {
     fn advance(&mut self, report: &mut BlockReport) {
         let frames = self.frames;
         let stage_index = self.stage;
-        self.mix_injected(stage_index, frames);
-        self.contain_nonfinite(stage_index, frames);
+        // The device's own output first: a delay line is memory, and a NaN
+        // kept there would outlive the reset that releases the auto-mute
+        // (NFA-07). Then the sum with the placed audio and the children.
+        self.contain_nonfinite(stage_index, frames, Planes::Own);
+        if self.mix_injected(stage_index, frames) {
+            self.contain_nonfinite(stage_index, frames, Planes::Heard);
+        }
         if let Some(stage) = self.stages.get_mut(stage_index) {
             if stage.block_complete {
                 stage.awaiting_notes = false;
@@ -1539,16 +1567,20 @@ impl TrackHost {
     }
 
     /// Zeroes a stage's output from its first NaN or infinity, so the next
-    /// plugin and the track never receive one, and names the stage once.
-    fn contain_nonfinite(&mut self, stage_index: usize, frames: usize) {
+    /// plugin, the track and the delay lines never receive one, and names the
+    /// stage once.
+    fn contain_nonfinite(&mut self, stage_index: usize, frames: usize, planes: Planes) {
         let Some(stage) = self.stages.get_mut(stage_index) else {
             return;
         };
         if stage.bypassed {
             return;
         }
-        // The planes the next stage and the track read, promoted or not.
-        let output = stage.rendered_mut();
+        let output = match planes {
+            Planes::Own => stage.own_mut(),
+            // The planes the next stage and the track read, promoted or not.
+            Planes::Heard => stage.rendered_mut(),
+        };
         let frames = bounded(output, frames);
         let Some(first) = output
             .iter()
@@ -1585,7 +1617,10 @@ impl TrackHost {
     ///
     /// A promoted mono instrument is rewritten from its own output every
     /// block, so its planes never hold a previous block's audio.
-    fn mix_injected(&mut self, stage_index: usize, frames: usize) {
+    ///
+    /// Returns whether the stage is an instrument, whose planes this may have
+    /// changed.
+    fn mix_injected(&mut self, stage_index: usize, frames: usize) -> bool {
         let TrackHost {
             stages,
             inject,
@@ -1598,10 +1633,10 @@ impl TrackHost {
             ..
         } = self;
         let Some(stage) = stages.get_mut(stage_index) else {
-            return;
+            return false;
         };
         if !stage.instrument {
-            return;
+            return false;
         }
         if stage_index == 0 {
             delay_instrument(stage, instrument_delay, frames);
@@ -1635,7 +1670,7 @@ impl TrackHost {
                         dry * std::f32::consts::FRAC_1_SQRT_2 + source.sample(channel, frame, true);
                 }
             }
-            return;
+            return true;
         }
         let output = stage.rendered_mut();
         if gate.is_some() {
@@ -1646,7 +1681,7 @@ impl TrackHost {
             }
         }
         if !live {
-            return;
+            return true;
         }
         let main = output.len();
         let frames = bounded(output, frames.min(inject.len()));
@@ -1659,6 +1694,7 @@ impl TrackHost {
                 *sample += source.sample(channel, frame, main == 2);
             }
         }
+        true
     }
 
     fn hand_off(
@@ -2034,12 +2070,7 @@ fn delay_instrument(stage: &mut Stage, delay: &mut Delay, frames: usize) {
     if delay.frames() == 0 {
         return;
     }
-    let planes = if !stage.bypassed && !stage.promoted.is_empty() {
-        let main = stage.output.len().min(1);
-        stage.output.get_mut(..main).unwrap_or_default()
-    } else {
-        stage.rendered_mut()
-    };
+    let planes = stage.own_mut();
     let frames = bounded(planes, frames);
     match planes {
         [left, right, ..] => {

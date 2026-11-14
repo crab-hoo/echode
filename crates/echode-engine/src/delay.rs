@@ -68,15 +68,22 @@ impl Delay {
             return Ok(Self::default());
         }
         let frames = usize::try_from(delay).map_err(|_| PlaybackError::Latency(delay))?;
-        let capacity = frames
-            .checked_add(block.max(1))
-            .and_then(usize::checked_next_power_of_two)
-            .ok_or(PlaybackError::Latency(delay))?;
         Ok(Self {
-            ring: Ring::zeroed(capacity, delay)?,
+            ring: Ring::zeroed(capacity(delay, block)?, delay)?,
             older: Ring::default(),
             delay: frames,
         })
+    }
+
+    /// Bytes [`Self::new`] reserves for the same arguments.
+    pub(crate) fn footprint(delay: u64, block: usize) -> Result<u64, PlaybackError> {
+        if delay == 0 {
+            return Ok(0);
+        }
+        u64::try_from(capacity(delay, block)?)
+            .ok()
+            .and_then(|frames| frames.checked_mul(PLANES * size_of::<f32>() as u64))
+            .ok_or(PlaybackError::Latency(delay))
     }
 
     pub(crate) fn frames(&self) -> usize {
@@ -175,6 +182,41 @@ impl Delay {
         } else {
             std::mem::swap(&mut self.older, &mut previous.ring);
         }
+    }
+}
+
+/// Left and right.
+const PLANES: u64 = 2;
+
+/// Frames of a ring for `delay`: a power of two that also holds one block.
+fn capacity(delay: u64, block: usize) -> Result<usize, PlaybackError> {
+    usize::try_from(delay)
+        .ok()
+        .and_then(|frames| frames.checked_add(block.max(1)))
+        .and_then(usize::checked_next_power_of_two)
+        .ok_or(PlaybackError::Latency(delay))
+}
+
+/// Bytes one plan's delay lines may hold together: a quarter of the
+/// machine's memory, so the plan playing and the plan replacing it fit in
+/// half of it.
+///
+/// A helper may report any latency, and every other path is delayed by the
+/// longest one. Reserving and zeroing whatever that asks for would stall the
+/// control thread and the machine long before an allocation failed, so a
+/// plan past this is refused instead (ADR 0340). Without a reading of the
+/// machine's memory only a failed reservation refuses.
+pub(crate) fn budget() -> u64 {
+    // SAFETY: `sysconf` only reads its argument and returns a number.
+    let (pages, size) = unsafe {
+        (
+            libc::sysconf(libc::_SC_PHYS_PAGES),
+            libc::sysconf(libc::_SC_PAGESIZE),
+        )
+    };
+    match (u64::try_from(pages), u64::try_from(size)) {
+        (Ok(pages), Ok(size)) if pages != 0 && size != 0 => pages.saturating_mul(size) / 4,
+        _ => u64::MAX,
     }
 }
 

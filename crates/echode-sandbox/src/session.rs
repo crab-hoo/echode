@@ -199,7 +199,7 @@ impl PluginControl {
     }
 
     /// Last latency declared by the live helper, in device-rate samples.
-    /// This is metadata only; the engine does not compensate it yet.
+    /// The engine aligns every path by this value (ADR 0339).
     pub fn latency_samples(&self) -> u32 {
         self.latency_samples.load(Ordering::Acquire)
     }

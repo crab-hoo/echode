@@ -22,6 +22,9 @@ pub enum CliError {
     MissingPluginHost,
     MissingPlugins(Vec<String>),
     PluginPlaybackFailed,
+    /// A plugin kept changing its latency, so no drawing of the export
+    /// stayed aligned from its first frame to its last (ADR 0340).
+    UnsettledLatency,
     InfiniteTail,
     ExportLengthOverflow,
     WavStereo,
@@ -144,6 +147,7 @@ impl fmt::Display for CliError {
             Self::MissingPluginHost => "plugin host is missing",
             Self::MissingPlugins(ids) => return write!(f, "missing plugin: {}", ids.join(", ")),
             Self::PluginPlaybackFailed => "plugin playback failed",
+            Self::UnsettledLatency => "a plugin kept changing its latency during the export",
             Self::InfiniteTail => "infinite plugin tail; specify --tail-frames or --frames",
             Self::ExportLengthOverflow => "export length overflowed",
             Self::WavStereo => "wav data must be stereo",

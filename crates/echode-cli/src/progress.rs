@@ -23,6 +23,12 @@ impl RenderProgress {
         self.emit("rendering");
     }
 
+    /// The export is drawn again from its first frame.
+    pub(crate) fn restart(&mut self) {
+        self.rendered = 0;
+        self.percent = 0;
+    }
+
     pub(crate) fn advance(&mut self, frames: u32) {
         self.rendered += frames;
         let percent = u64::from(self.rendered) * 100 / u64::from(self.total.max(1));

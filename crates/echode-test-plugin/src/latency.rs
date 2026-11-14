@@ -1,4 +1,5 @@
-//! Latency metadata: synthetic for `latency`, the real length for `delay`.
+//! Latency metadata: synthetic for `latency`, the real length for `delay`,
+//! a number without a delay for `claim`.
 //! One helper owns one instance.
 use clack_plugin::extensions::prelude::*;
 use clap_sys::ext::latency::{CLAP_EXT_LATENCY, clap_host_latency, clap_plugin_latency};
@@ -27,6 +28,17 @@ pub(crate) fn activated(host: &HostMainThreadHandle<'_>) {
             }
         }
     }
+}
+
+static CLAIMED: AtomicU32 = AtomicU32::new(0);
+
+/// Reads the `<frames>` of `claim:<frames>`. A malformed number claims none.
+pub(crate) fn claim(frames: &str) {
+    CLAIMED.store(frames.parse().unwrap_or(0), Ordering::Relaxed);
+}
+
+pub(crate) fn claimed() -> u32 {
+    CLAIMED.load(Ordering::Relaxed)
 }
 
 /// A fixed latency for this activation, read on the activating thread.

@@ -1,7 +1,7 @@
 # ADR 0339: プラグインの遅延を合流点の遅延線で揃える（PDC）
 
 日付: 2026-11-13
-状態: 採用。聴感と第三者プラグインは UC-74、遅延表示は UC-51
+状態: 採用。計算の式・報告値の読み方・書出しの途中の変化は [ADR 0340](0340-latency-graph.md) が置き換えた。聴感と第三者プラグインは UC-74、遅延表示は UC-51
 関連: [ADR 0246](0246-plugin-latency-reporting.md)、[ADR 0277](0277-reaper-style-folder-bus.md)、[ADR 0338](0338-folder-bus.md)、
 [ADR 0120](0120-device-bypass.md)、[ADR 0003](0003-audio-thread-does-not-wait.md)、
 [FCA-07](../reviews/2026-11-03-full-code-audit.md#fca-07-プラグインの遅延と主要なホスト拡張)、[P2-03](../phase2.md#p2-03-ルーティングフォルダバスpdc)

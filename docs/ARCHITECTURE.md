@@ -183,6 +183,7 @@ I/O スレッド、Audio Workgroup 参加ワーカー、先読みワーカー、
 ### 7.3 レイテンシ補正（PDC）
 
 全ノードのレイテンシから合流点の遅延を計算し、Phase 2 のクリップ FX も経路に含める。トラック・フォルダ・マスターの合流は [ADR 0339](decisions/0339-plugin-delay-compensation.md) で接続した。
+計算は遅延グラフの最長経路で、計画ごとに不変条件で検証してから公開する（[ADR 0340](decisions/0340-latency-graph.md)）。
 
 ### 7.4 先読み処理
 

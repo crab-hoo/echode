@@ -11,7 +11,8 @@
 //! `ECHODE_TEST_FAULT=large-state` saves the state byte repeated
 //! [`LARGE_STATE`] times and loads only that shape, marking itself dirty.
 //! `ECHODE_TEST_FAULT=delay:<frames>` is a real delay that reports its length
-//! as latency; see [`delay`].
+//! as latency; see [`delay`]. `ECHODE_TEST_FAULT=claim:<frames>` reports
+//! `<frames>` of latency and delays nothing, as a plugin with a wrong report.
 
 use std::ffi::{CStr, c_void};
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -133,7 +134,7 @@ impl Plugin for TestGain {
         if current_role() == Role::Order || fault_now() == Fault::TailLegacy {
             builder.register::<PluginNotePorts>();
         }
-        if matches!(fault_now(), Fault::Latency | Fault::Delay) {
+        if matches!(fault_now(), Fault::Latency | Fault::Delay | Fault::Claim) {
             builder.register::<latency::PluginLatency>();
         }
     }
@@ -252,6 +253,8 @@ enum Fault {
     /// Writes a finite 2.0e38 to every output: far too loud, but neither a
     /// NaN nor an infinity.
     Huge,
+    /// Reports a latency and delays nothing. See [`latency::claim`].
+    Claim,
 }
 
 fn fault_code(text: &str) -> u8 {
@@ -276,6 +279,7 @@ fn fault_code(text: &str) -> u8 {
         "large-state" => 18,
         "huge" => 20,
         _ if text.starts_with("delay:") => 19,
+        _ if text.starts_with("claim:") => 21,
         _ => 0,
     }
 }
@@ -302,6 +306,7 @@ fn fault_from_code(code: u8) -> Fault {
         18 => Fault::LargeState,
         19 => Fault::Delay,
         20 => Fault::Huge,
+        21 => Fault::Claim,
         _ => Fault::None,
     }
 }
@@ -333,6 +338,9 @@ fn note_fault(plugin_id: &CStr) {
     }
     if let Some(lengths) = text.trim().strip_prefix("delay:") {
         delay::configure(lengths);
+    }
+    if let Some(frames) = text.trim().strip_prefix("claim:") {
+        latency::claim(frames);
     }
     FAULT_BITS.store(fault_code(text.trim()), Ordering::Relaxed);
 }
@@ -416,6 +424,9 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
     ) -> Result<Self, PluginError> {
         if fault_now() == Fault::Latency {
             latency::activated(&main_thread.host);
+        }
+        if fault_now() == Fault::Claim {
+            latency::report(latency::claimed());
         }
         let delay = (fault_now() == Fault::Delay).then(|| {
             let frames = delay::activated();
@@ -736,7 +747,8 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
             | Fault::Activate
             | Fault::Generate
             | Fault::SlowSave
-            | Fault::LargeState => {}
+            | Fault::LargeState
+            | Fault::Claim => {}
         }
 
         if self.role == Role::State {

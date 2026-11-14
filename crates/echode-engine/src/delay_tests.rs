@@ -188,3 +188,28 @@ fn an_unrepresentable_delay_is_an_error_not_an_abort() {
         Err(PlaybackError::Latency(u64::MAX))
     ));
 }
+
+#[test]
+fn a_lines_footprint_is_what_it_reserves() {
+    assert_eq!(Delay::footprint(0, 512).unwrap(), 0);
+    // 37 frames and a block of 64 need a ring of 128 frames, twice, as f32.
+    assert_eq!(Delay::footprint(37, 64).unwrap(), 128 * 2 * 4);
+    let line = Delay::new(37, 64).unwrap();
+    assert_eq!(line.ring.left.len() + line.ring.right.len(), 128 * 2);
+    assert!(matches!(
+        Delay::footprint(u64::MAX, 1),
+        Err(PlaybackError::Latency(u64::MAX))
+    ));
+}
+
+#[test]
+fn the_budget_holds_ordinary_latencies_and_not_any_number() {
+    let budget = crate::delay::budget();
+    // One second at 192 kHz on 256 paths. These numbers only show the
+    // scale; neither is a limit.
+    let ordinary = Delay::footprint(192_000, 512).unwrap() * 256;
+    assert!(ordinary < budget, "{ordinary} of {budget}");
+    // What one device can report in 32 bits, on a handful of paths.
+    let absurd = Delay::footprint(u64::from(u32::MAX), 512).unwrap() * 8;
+    assert!(absurd > budget, "{absurd} of {budget}");
+}

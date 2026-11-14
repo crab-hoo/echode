@@ -142,13 +142,13 @@ fn audit_nfa04_an_effect_never_receives_an_infinity_from_placed_audio() {
     );
 }
 
-/// NFA-07: a parent's instrument is delayed to meet its children (ADR 0339)
-/// before the host looks for a NaN, so the delay line holds the NaN the
-/// instrument wrote. Starting playback resets the plugin (ADR 0282), but the
-/// line is not cleared: its NaN comes out after the reset and the track is
-/// auto-muted again at once, although the instrument now writes 0.5.
+/// NFA-07: a parent's instrument is delayed to meet its children (ADR 0339).
+/// The host looked for a NaN after that line, so the line held the NaN the
+/// instrument wrote, and it came out after the reset that releases the
+/// auto-mute (ADR 0282): the track was muted again at once. The instrument's
+/// own output is now checked before the line (ADR 0340), so the line never
+/// holds one and the reset instrument's 0.5 is heard.
 #[test]
-#[ignore = "NFA-07: a NaN kept in the instrument's delay line re-mutes the track after the release"]
 fn audit_nfa07_a_delayed_instrument_sounds_again_once_its_auto_mute_is_released() {
     let (project, parent) = Project::new().add_track("parent instrument");
     let (project, child) = project.add_child(parent, "delayed child").unwrap();

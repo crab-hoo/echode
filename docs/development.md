@@ -542,10 +542,13 @@ FFI の `device.parameter.parse`、画面の `enterParameter` を通す（[ADR 0
 子を親のバスへ通す順は `playback_bus.rs` と `playback.rs` の `Block` に置く。
 回帰は `audit_scale_and_mix.rs`・`block_size/folder_mix.rs`・`block_size/folder_bus.rs`・`hosted_playback::a_parent_chain_processes_its_children_under_rtsan`
 （[ADR 0244](decisions/0244-folder-mute-and-solo-gates.md)、[ADR 0338](decisions/0338-folder-bus.md)）。
-プラグインの遅延の補正（PDC）は、各トラックの遅延の計算を `compensation.rs`、遅延線を `delay.rs` に置く。
-制御側の `playback.rs::compensate_plan` が線を用意し、最初の音源の線は `plugins.rs` のヘルパーのグラフが持つ。
-回帰は `compensation_tests.rs`・`delay_tests.rs`・`hosted_playback/compensation.rs`・CLI の `a_compensated_export_starts_every_track_at_the_projects_start`。
-遅延はヘルパーにしかないので、ブロック長の比較は `block_size.rs` ではなく実ヘルパーの回帰で行う（[ADR 0339](decisions/0339-plugin-delay-compensation.md)）。
+プラグインの遅延の補正（PDC）は、遅延グラフの計算と検証（`Graph`・`Solution`）、エンジンの経路をグラフへ写す `compensate` を `compensation.rs`、遅延線と記憶域の予算を `delay.rs` に置く。
+制御側の `playback.rs::compensate_plan` が報告値を 1 回読んで（`HostGraph::latencies`）線を用意し、最初の音源の線は `plugins.rs` のヘルパーのグラフが持つ。
+合流を足す機能（センド、サイドチェイン、クリップ FX）は、`compensate` に節と辺を足し、その辺の遅延で線を作る。式を別の場所に書かない。
+足したら `compensation_tests.rs` の `arrivals`（コールバックが線を置く順の模型）にも同じ経路を足し、乱数の回帰に通す。
+回帰は `compensation_tests.rs`・`delay_tests.rs`・`hosted_playback/compensation.rs`・CLI の `a_compensated_export_starts_every_track_at_the_projects_start` と `audit_pca01_*`。
+遅延はヘルパーにしかないので、ブロック長の比較は `block_size.rs` ではなく実ヘルパーの回帰で行う
+（[ADR 0339](decisions/0339-plugin-delay-compensation.md)、[ADR 0340](decisions/0340-latency-graph.md)）。
 
 音量・パンの数値入力の対象・共通倍率／差分・上下限は `MixerValueBatch.swift`、入力の振分けは `MixActions.enter` を使う。
 回帰は `MixerValueBatchTests.swift`・`MixerValueBoundaryTests.swift`・`MixerValueOrderTests.swift` に置く。

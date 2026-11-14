@@ -445,58 +445,130 @@ fn render_with_plugins(
         load_placed_clips(&package, project, rate)
     }));
     control.replace(project).map_err(CliError::from)?;
-    // Master lags the timeline by the compensated latency. The frames before
-    // it are dropped, so the file starts at the project's start (ADR 0339).
-    let mut skip =
-        usize::try_from(control.latency_samples()).map_err(|_| CliError::ExportLengthOverflow)?;
     control
         .command(PlaybackCommand::Play)
         .map_err(CliError::from)?;
     cancellation.check()?;
-    let mut wav = ExportOutput::create(wav, sample_rate, frames, format, dither, peak_target)?;
-    progress.start(frames);
     let mut left = vec![0.0; block];
     let mut right = vec![0.0; block];
     let mut interleaved = vec![0.0; block.saturating_mul(2)];
-    let mut rendered = 0usize;
-    while rendered < total {
-        cancellation.check()?;
-        let count = (total - rendered).saturating_add(skip).min(block);
-        audio.render_until(
-            &mut left[..count],
-            &mut right[..count],
-            Instant::now() + OFFLINE_BLOCK_WAIT,
-        );
-        cancellation.check()?;
-        if let Some(reason) = control.plugin_failure() {
-            return Err(CliError::PluginBlock(reason));
-        }
-        if control.status().failed {
-            return Err(CliError::PluginPlaybackFailed);
-        }
-        let dropped = skip.min(count);
-        skip -= dropped;
-        let kept = count - dropped;
-        for index in 0..kept {
-            let left = left.get(dropped + index).copied().unwrap_or(0.0);
-            let right = right.get(dropped + index).copied().unwrap_or(0.0);
-            if let Some(slot) = interleaved.get_mut(index * 2) {
-                *slot = left;
+    let mut redraws = 0usize;
+    let wav = loop {
+        // Master lags the timeline by the compensated latency. The frames
+        // before it are dropped, so the file starts at the project's start
+        // (ADR 0339).
+        let mut skip = usize::try_from(control.latency_samples())
+            .map_err(|_| CliError::ExportLengthOverflow)?;
+        let compensation = control.compensation_changes();
+        let mut wav = ExportOutput::create(wav, sample_rate, frames, format, dither, peak_target)?;
+        progress.start(frames);
+        let mut rendered = 0usize;
+        let mut moved = false;
+        while rendered < total {
+            cancellation.check()?;
+            let count = (total - rendered).saturating_add(skip).min(block);
+            audio.render_until(
+                &mut left[..count],
+                &mut right[..count],
+                Instant::now() + OFFLINE_BLOCK_WAIT,
+            );
+            cancellation.check()?;
+            check_plugins(&control)?;
+            let dropped = skip.min(count);
+            skip -= dropped;
+            let kept = count - dropped;
+            for index in 0..kept {
+                let left = left.get(dropped + index).copied().unwrap_or(0.0);
+                let right = right.get(dropped + index).copied().unwrap_or(0.0);
+                if let Some(slot) = interleaved.get_mut(index * 2) {
+                    *slot = left;
+                }
+                if let Some(slot) = interleaved.get_mut(index * 2 + 1) {
+                    *slot = right;
+                }
             }
-            if let Some(slot) = interleaved.get_mut(index * 2 + 1) {
-                *slot = right;
+            if kept != 0 {
+                let samples = kept.saturating_mul(2);
+                wav.write_block(interleaved.get(..samples).unwrap_or(&[]))?;
             }
+            control.service();
+            if let Some(error) = control.take_preparation_error() {
+                return Err(error.into());
+            }
+            // A helper that restarts may report another latency. From then
+            // on its path is heard at another time than the frames dropped
+            // above assumed, so the file is drawn again from its start with
+            // the new compensation (PCA-01, ADR 0340).
+            if control.compensation_changes() != compensation || !control.latency_settled() {
+                moved = true;
+                break;
+            }
+            rendered += kept;
+            progress.advance(kept as u32);
         }
-        if kept != 0 {
-            let samples = kept.saturating_mul(2);
-            wav.write_block(interleaved.get(..samples).unwrap_or(&[]))?;
+        if !moved {
+            break wav;
         }
-        control.service();
-        rendered += kept;
-        progress.advance(kept as u32);
-    }
+        drop(wav);
+        redraws += 1;
+        if redraws > LATENCY_REDRAWS {
+            return Err(CliError::UnsettledLatency);
+        }
+        settle_latency(
+            &mut control,
+            &mut audio,
+            &mut left,
+            &mut right,
+            cancellation,
+        )?;
+        control
+            .command(PlaybackCommand::Locate(0))
+            .map_err(CliError::from)?;
+        progress.restart();
+    };
     progress.finalizing();
     wav.finish_cancellable(cancellation)
+}
+
+/// How often one export is drawn again because a plugin changed its latency.
+/// A plugin that never settles is an error, not an export that never ends.
+const LATENCY_REDRAWS: usize = 8;
+
+fn check_plugins(control: &echode_engine::PlaybackControl) -> Result<(), CliError> {
+    if let Some(reason) = control.plugin_failure() {
+        return Err(CliError::PluginBlock(reason));
+    }
+    if control.status().failed {
+        return Err(CliError::PluginPlaybackFailed);
+    }
+    Ok(())
+}
+
+/// Renders and discards blocks until the plan that compensates every
+/// helper's current latency is the one playing.
+fn settle_latency(
+    control: &mut echode_engine::PlaybackControl,
+    audio: &mut echode_engine::PlaybackAudio,
+    left: &mut [f32],
+    right: &mut [f32],
+    cancellation: &Cancellation,
+) -> Result<(), CliError> {
+    let deadline = Instant::now() + OFFLINE_BLOCK_WAIT;
+    loop {
+        cancellation.check()?;
+        control.service();
+        if let Some(error) = control.take_preparation_error() {
+            return Err(error.into());
+        }
+        if control.latency_settled() && !control.status().pending_plan {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(CliError::UnsettledLatency);
+        }
+        audio.render_until(left, right, Instant::now() + OFFLINE_BLOCK_WAIT);
+        check_plugins(control)?;
+    }
 }
 
 #[derive(Clone, Copy)]

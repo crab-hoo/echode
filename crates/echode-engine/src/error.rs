@@ -65,6 +65,12 @@ pub enum PlaybackError {
     /// Delay compensation for this many frames overflowed or could not be
     /// reserved, so the plan that needs it was not prepared (ADR 0339).
     Latency(u64),
+    /// The routing feeds a signal back into itself, so no delay aligns it
+    /// (ADR 0340).
+    Feedback,
+    /// The planned delay compensation did not pass its own check against the
+    /// routing, so the plan that needs it was not prepared (ADR 0340).
+    Misaligned,
 }
 
 impl fmt::Display for PlaybackError {
@@ -111,6 +117,8 @@ impl fmt::Display for PlaybackError {
                     "plugin delay compensation of {frames} samples cannot be prepared"
                 );
             }
+            Self::Feedback => "the routing feeds a signal back into itself",
+            Self::Misaligned => "plugin delay compensation failed its own check",
         };
         formatter.write_str(message)
     }
