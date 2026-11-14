@@ -25,6 +25,8 @@ mod device_offline;
 mod device_params;
 #[path = "hosted_playback/event_capacity.rs"]
 mod event_capacity;
+#[path = "hosted_playback/event_loss.rs"]
+mod event_loss;
 #[path = "hosted_playback/latency.rs"]
 mod latency;
 #[path = "hosted_playback/note_edges.rs"]

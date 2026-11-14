@@ -532,6 +532,129 @@ fn audit_pro08_restart_under_rtsan() {
     assert!((output[0][0] - input[0][0] * 2.0).abs() < 1.0e-6);
 }
 
+/// RTA-02. The plugin asks for a restart in its first block and again from
+/// the activation that restart runs, which then takes 50 ms to return. The
+/// processing thread acknowledges the second request while it holds no
+/// processor, then starts the processor the first restart activated. The
+/// control thread waits for that processor to be released, which nothing
+/// asks for any more, and no longer reads its socket.
+#[test]
+#[ignore = "RTA-02: a restart requested while restarting leaves the helper's control thread waiting"]
+fn audit_rta02_a_restart_requested_while_restarting_is_run_and_the_helper_keeps_answering() {
+    let mut host = spawn_plugin(Some("restart-nested"), SessionLayout::stereo());
+    let input = stereo(32, 0.2);
+    let mut output = [vec![0.0; 32], vec![0.0; 32]];
+    let planes: [&[f32]; 2] = [&input[0], &input[1]];
+    host.process(&planes, &mut outs(&mut output), Duration::from_secs(2))
+        .expect("the block that requests the first restart");
+    // Each activation prints its number; the second one asks again.
+    for activation in ["nested-activation 2", "nested-activation 3"] {
+        let started = Instant::now();
+        while !host.stderr_log().contains(activation) {
+            assert!(
+                started.elapsed() < Duration::from_secs(2),
+                "`{activation}` never ran: {}",
+                host.stderr_log()
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+    // Audio crosses either way, so only a control request shows a stuck helper.
+    host.process(&planes, &mut outs(&mut output), Duration::from_secs(2))
+        .expect("a block after the restarts");
+    host.set_chain(1)
+        .expect("the control thread still answers after the nested restart");
+}
+
+/// RTA-01. `request_callback` is thread-safe in CLAP and plugins call it from
+/// `process`. The helper answers by signalling its main run loop there, which
+/// takes CoreFoundation's locks on the processing thread. RTSan stops the
+/// helper, so the block is not answered. Only an RTSan build can see it:
+/// `RTSAN_ENABLE=1 cargo test -p echode-plugin-host --features rtsan --test isolation -- --ignored audit_rta01`.
+#[cfg(feature = "rtsan")]
+#[test]
+#[ignore = "RTA-01: request_callback in process signals the run loop on the processing thread"]
+fn audit_rta01_a_callback_requested_in_process_under_rtsan() {
+    let mut host = spawn_plugin(Some("callback"), SessionLayout::stereo());
+    let input = stereo(32, 0.3);
+    let mut output = [vec![0.0; 32], vec![0.0; 32]];
+    let planes: [&[f32]; 2] = [&input[0], &input[1]];
+    host.process(&planes, &mut outs(&mut output), Duration::from_secs(2))
+        .expect("the block that requests a main-thread callback");
+    let started = Instant::now();
+    while !host.stderr_log().contains("on-main-thread") {
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "main-thread callback was not delivered: {}",
+            host.stderr_log()
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// RTA-03. The callback may publish a block while the helper is still inside
+/// an earlier one it gave up waiting for, so that the plugin still hears the
+/// later block's events. When a prepared mapping is activated meanwhile, the
+/// helper moves to it as soon as the earlier block returns and never
+/// processes the block already published on the old mapping.
+#[test]
+#[ignore = "RTA-03: a block published before a mapping change is never processed"]
+fn audit_rta03_a_block_published_before_a_mapping_change_is_processed() {
+    use std::io::{Read, Write};
+    // The socket and the block length bound only this regression.
+    let path = PathBuf::from("/tmp").join(format!("echode-rta03-{}.sock", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    let listener = std::os::unix::net::UnixListener::bind(&path).expect("gate socket");
+    let fault = format!("process-wait:{}", path.display());
+    let mut host = spawn_plugin(Some(&fault), SessionLayout::stereo());
+    let (mut gate, _) = listener
+        .accept()
+        .expect("the plugin connects at activation");
+    gate.set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("gate timeout");
+    let input = stereo(32, 0.2);
+    let mut output = [vec![0.0; 32], vec![0.0; 32]];
+    let planes: [&[f32]; 2] = [&input[0], &input[1]];
+    host.process(&planes, &mut outs(&mut output), Duration::from_secs(2))
+        .expect("the first block");
+    // SAFETY: this test is the only user of each endpoint, and uses the old
+    // mapping's endpoint only to submit and poll while the new one is prepared.
+    let mut old = unsafe { host.audio_handle() };
+    old.submit(32, &planes, &[])
+        .expect("the block the plugin holds");
+    let mut receipt = [0];
+    gate.read_exact(&mut receipt)
+        .expect("the plugin is inside process");
+    let queued = old
+        .submit(32, &planes, &[(note(), 0)])
+        .expect("a later block is published while the helper is busy");
+    let mut layout = SessionLayout::stereo();
+    layout.input_events = 64;
+    host.prepare_mapping(layout)
+        .expect("a larger mapping is prepared");
+    // SAFETY: as above; the new mapping's endpoint only activates it.
+    let mut new = unsafe { host.audio_handle() };
+    new.activate_mapping()
+        .expect("the new mapping is activated");
+    gate.write_all(&[1]).expect("release the held block");
+    gate.read_exact(&mut receipt)
+        .expect("the held block returns");
+    let started = Instant::now();
+    loop {
+        match old.poll(queued, &mut outs(&mut output), &mut []) {
+            Ok(BlockProgress::Ready { .. }) => break,
+            Ok(_) => {}
+            Err(error) => panic!("the helper failed: {error}"),
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "the helper adopted the new mapping and left the published block, with its note, unprocessed"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let _ = std::fs::remove_file(&path);
+}
+
 fn note() -> Event {
     Event::NoteOn(NoteEvent {
         time: 3,

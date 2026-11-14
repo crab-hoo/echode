@@ -147,6 +147,12 @@
 
 ## 3. プラグイン隔離・サンドボックス・Workgroup
 
+- [2026-11-14 リアルタイム安全性の敵対的監査](2026-11-14-realtime-adversarial-audit.md): RTA-01〜09。
+  Rust・Swift・CLAP・Metal の境界を読み、RTSan・TSan が通っても残る順序と契約の誤りを探した。
+  確定した 4 件はヘルパーとの境界にある。`process` の中の `request_callback` が処理スレッドで run loop のロックを取る（RTA-01）。
+  再起動の途中の `request_restart` で、ヘルパーの制御スレッドが以後の要求に答えない（RTA-02）。
+  2 ブロックを超えて遅れたヘルパーへ送れなかったブロックと、共有領域の交換の直前のブロックは、イベントごと消える（RTA-04・RTA-03）。
+  RTA-01〜04 を `audit_rta*` で再現した。機器のコールバック・Swift・Metal には確定した指摘がない。
 - CLAP バンドル・停止時リセット・自然な発音: [ADR 0093](../decisions/0093-product-contract-gate.md)、[ADR 0099](../decisions/0099-transport-plugin-state.md)、[ADR 0106](../decisions/0106-natural-plugin-onsets.md)。
 - macOS ヘルパー通知・Workgroup 引き継ぎ: [2026-10-17 macOS 境界監査](2026-10-17-macos-helper-audit.md)、[ADR 0111](../decisions/0111-macos-helper-notices.md)、[ADR 0113](../decisions/0113-product-macos-workgroup-and-caches.md)。
 - フォルダ型ドラムラックと FX チェイン: [ADR 0116](../decisions/0116-folder-drum-rack.md)、[ADR 0118](../decisions/0118-track-fx-chain-editing.md)。

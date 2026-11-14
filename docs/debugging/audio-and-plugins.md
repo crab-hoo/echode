@@ -173,6 +173,11 @@ AudioToolbox の失敗は `MediaError` の操作別の変種で、`Property` は
 `host event capacity was not prepared` はイベント領域の準備漏れであり、音声側の確保や固定発音数で回避しない
 （[ADR 0123](../decisions/0123-explicit-sine-pad-plugin.md)）。
 音色・声の継続だけが違う時は `echode-dsp/src/sine_pad_tests.rs`、隔離後の経路は `hosted_playback` を使う。
+音は出ているのに、あるヘルパーへの要求だけが全部 `SessionError::Timeout` になり、そのプロセスが 1 コアを使い続ける時は、
+再起動の要求が重なって制御スレッドが待ち続けている（RTA-02。未修正）。`sample` でヘルパーの制御スレッドが `pause` の中にいるかを見る。
+再現は `audit_rta02_*` で、試験用プラグインの `restart-nested` が再起動の `activate` の中でもう一度再起動を求める
+（[監査](../reviews/2026-11-14-realtime-adversarial-audit.md)）。
+
 DSP の状態と CLAP の保存ペイロードは別の形式なので、どちらの入口で差が出たかを記録する（[ADR 0266](../decisions/0266-host-independent-sine-pad-dsp.md)）。
 
 ### 同梱 CLAP の初回だけ RTSan が malloc を検出する
@@ -180,6 +185,10 @@ DSP の状態と CLAP の保存ペイロードは別の形式なので、どち�
 子プロセスの標準エラーを収集し、`_tlv_get_addr` と `ForbidAlloc` が並ぶかを確認する。
 dylib 固有の検査用 TLS は、ヘルパーの最初の非 RT 起動段階の `start_processing` で初期化する。
 検知を外さず、未発音の新しいヘルパーで最初の処理も検査する。
+RTSan が `CFRunLoopSourceSignal` の中の `pthread_mutex_lock` を報告する時は、
+プラグインが `process` の中で `request_callback` を呼んでいる（RTA-01。未修正）。
+`make rtsan` は名前に `under_rtsan` を含むテストだけを動かすので、ほかのテストを RTSan で動かす時は名前を直接渡す。
+再現は `RTSAN_ENABLE=1 cargo test -p echode-plugin-host --features rtsan --test isolation -- --ignored audit_rta01` である。
 
 ### CLAP が鳴らない・走査失敗
 
@@ -608,6 +617,16 @@ Undo では記録のハッシュとヘルパーが最後に保存・読込した
 ヘルパーが遅くないのに小さいバッファでだけ取りこぼすなら、停止の診断の `deadline_ns` を見る。入口の遅れと機器の安全余白（`OutputDevice::safety_frames`）で待ちが縮む（[ADR 0283](../decisions/0283-output-time-callback-deadline.md)）。
 `block_size/plugin_deadline.rs` は途中の反転と連続失敗を標本数で照合する。実機の聴感は UC-50 に残す
 （[ADR 0245](../decisions/0245-plugin-deadline-fades.md)）。
+
+### プラグインが遅れた後だけノートが鳴り続ける・抜ける
+
+`echode_engine::audio` の記録で、同じデバイスの取りこぼしが 3 ブロック以上続き、その中に `submit failed` があるかを見る。
+ヘルパーが 2 ブロック遅れている間のブロックは公開できず、そのブロックのノートオン・ノートオフは後で送られない（RTA-04。未修正）。
+鳴り続ける音は、停止か位置移動で消える。記録に残るのは取りこぼしだけで、イベントが消えたことは出ない。
+共有領域の交換（イベントの容量が増える編集）が遅れに重なった時も、交換の直前のブロックが処理されない（RTA-03）。
+再現は `audit_rta04_*`（`hosted_playback/event_loss.rs`）と `audit_rta03_*`（`isolation.rs`）である。
+試験用プラグインの `count-wait:<socket>` は 2 回目の処理を保留し、ノートのイベントを数える
+（[監査](../reviews/2026-11-14-realtime-adversarial-audit.md)）。
 
 ### 停止中にプラグインの時間・鍵盤の発音が止まる、または余韻が切れる
 

@@ -5,6 +5,8 @@
 //! never returns from `process`. Both take down only this plugin's process.
 //! `ECHODE_TEST_FAULT=process-wait:<socket>` holds the second process call until
 //! a test releases it. The connection is created during activation, off RT.
+//! `ECHODE_TEST_FAULT=count-wait:<socket>` holds that call the same way and
+//! counts note events as `count` does.
 //! `ECHODE_TEST_FAULT=nan` writes 0.5, then NaN from frame 10 of its second
 //! block on, until a CLAP reset; afterwards it writes 0.5 again.
 //! `ECHODE_TEST_FAULT=huge` writes a finite 2.0e38 to every output.
@@ -13,6 +15,9 @@
 //! `ECHODE_TEST_FAULT=delay:<frames>` is a real delay that reports its length
 //! as latency; see [`delay`]. `ECHODE_TEST_FAULT=claim:<frames>` reports
 //! `<frames>` of latency and delays nothing, as a plugin with a wrong report.
+//! `ECHODE_TEST_FAULT=restart-nested` requests a restart in its first block
+//! and once more from the activation that restart runs, and prints
+//! `nested-activation <n>` at each activation.
 
 use std::ffi::{CStr, c_void};
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -255,7 +260,15 @@ enum Fault {
     Huge,
     /// Reports a latency and delays nothing. See [`latency::claim`].
     Claim,
+    /// Requests a restart in its first block, and a second one while the
+    /// host is still inside that restart's activation.
+    RestartNested,
 }
+
+/// For [`Fault::RestartNested`]: activations so far, and whether the first
+/// block already asked. One helper owns one instance.
+static NESTED_ACTIVATIONS: AtomicU8 = AtomicU8::new(0);
+static NESTED_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn fault_code(text: &str) -> u8 {
     match text {
@@ -278,7 +291,10 @@ fn fault_code(text: &str) -> u8 {
         "nan" => 17,
         "large-state" => 18,
         "huge" => 20,
+        "restart-nested" => 22,
         _ if text.starts_with("delay:") => 19,
+        // The event counter, with the second process call held as `process-wait`.
+        _ if text.starts_with("count-wait:") => 5,
         _ if text.starts_with("claim:") => 21,
         _ => 0,
     }
@@ -307,6 +323,7 @@ fn fault_from_code(code: u8) -> Fault {
         19 => Fault::Delay,
         20 => Fault::Huge,
         21 => Fault::Claim,
+        22 => Fault::RestartNested,
         _ => Fault::None,
     }
 }
@@ -437,6 +454,19 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
         if fault == Fault::Activate {
             return Err(PluginError::Message("activate refused"));
         }
+        // The second activation is the one the first block's restart runs.
+        if fault == Fault::RestartNested {
+            let activation = NESTED_ACTIVATIONS.fetch_add(1, Ordering::AcqRel) + 1;
+            // Main thread, so the line may allocate; the test counts restarts by it.
+            eprintln!("nested-activation {activation}");
+            if activation == 2 {
+                _host.shared().request_restart();
+                // An activation that takes a while after asking, as one that
+                // loads resources does. The host's processing thread sees the
+                // request before this activation returns.
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        }
         Ok(Self {
             fault,
             role: main_thread.role,
@@ -455,7 +485,12 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
             reset_gate_used: false,
             process_gate: std::env::var("ECHODE_TEST_FAULT")
                 .ok()
-                .and_then(|fault| fault.strip_prefix("process-wait:").map(str::to_owned))
+                .and_then(|fault| {
+                    fault
+                        .strip_prefix("process-wait:")
+                        .or_else(|| fault.strip_prefix("count-wait:"))
+                        .map(str::to_owned)
+                })
                 .map(|path| {
                     let gate = std::os::unix::net::UnixStream::connect(path).expect("process gate");
                     gate.set_read_timeout(Some(std::time::Duration::from_secs(10)))
@@ -524,6 +559,11 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
             Fault::SlowProcess => std::thread::sleep(std::time::Duration::from_millis(20)),
             Fault::Callback => self.host.request_callback(),
             Fault::Restart | Fault::Latency => self.host.request_restart(),
+            Fault::RestartNested => {
+                if !NESTED_REQUESTED.swap(true, Ordering::AcqRel) {
+                    self.host.request_restart();
+                }
+            }
             Fault::Delay => {
                 if let Some(line) = &mut self.delay {
                     line.process(&mut audio, events.input)?;
