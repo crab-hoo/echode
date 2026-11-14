@@ -187,6 +187,9 @@ MIDI の全発音停止は互換用の終了処理であり、MIDI・MPE・MIDI 
   （[ADR 0137](../decisions/0137-device-disclosure.md)）。
 - パラメーター編集はデバイスビューの一覧で行う。CLAP の値はモデルへ複製せず、プラグイン状態を正本とする。
   説明と値はヘルパーのメインスレッドで読み、変更は処理スレッドがブロックの合間に `params.flush` で反映する。
+  通知の中継に使う説明のフラグは主スレッド内で共有し、プラグインを呼ぶ間はキャッシュを借用しない。
+  説明の読取り中の `params.rescan(INFO / ALL)` は世代を進め、その読取りの結果を次回へ残さない
+  （[ADR 0357](../decisions/0357-reentrant-parameter-description-rescans.md)）。
   ジェスチャーの終了時に状態を取り込み、`device.set_state` として 1 回の Undo に記録する。
   状態だけの Undo / Redo は同じヘルパーへ記録済みのバイトを読み込み、既定や読込拒否はヘルパーを作り直す
   （[ADR 0130](../decisions/0130-clap-parameter-editing.md)）

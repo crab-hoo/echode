@@ -34,6 +34,7 @@ pub use launch::LoadError;
 mod main_requests;
 mod main_signal;
 mod note_ports;
+mod param_flags;
 mod plugin_log;
 mod plugin_timers;
 mod relay;

@@ -18,6 +18,8 @@ use std::time::{Duration, Instant};
 mod audio_ports;
 #[path = "isolation/note_ports.rs"]
 mod note_ports;
+#[path = "isolation/param_rescan.rs"]
+mod param_rescan;
 #[path = "isolation/plugin_log.rs"]
 mod plugin_log;
 #[path = "isolation/state_saves.rs"]

@@ -648,6 +648,20 @@ I/O は `CliIoOperation` とパス・元の errno、引数は `ArgumentError` �
 `hosted_playback/latency.rs` は 256 → 512 → 0 を別プロセスで報告させる。`PluginLatencyTests` は機器なしで表示と旧文書の拒否を確認する。
 第三者の設定・出力レート・報告値・再起動前後を記録する（[ADR 0246](../decisions/0246-plugin-latency-reporting.md)、UC-51・74）。
 
+### パラメーターの変更通知で `RefCell already borrowed` が出てヘルパーが終了する
+
+ヘルパーの stderr に `host_params_rescan`・`RefCell already borrowed`・`panic in a function that cannot unwind` が並ぶ場合、説明の読取り中の再走査通知を疑う。
+親の `control socket closed` は結果であり、先にヘルパーの panic の位置を確かめる。
+窓なし・機器なしで次の回帰を使い、停止中の `flush` → 値の中継 → `get_info` → `rescan(INFO)` の順に再現する。
+
+```sh
+cargo test -q -p echode-plugin-host --test isolation param_rescan
+```
+
+`param_flags.rs` はプラグインの呼出し前に借用を解放し、世代が変わった読取りをキャッシュへ戻さない。
+無効化を無視するだけの修正は、`param_flags_tests.rs` の単体回帰で拒否する（[ADR 0357](../decisions/0357-reentrant-parameter-description-rescans.md)）。
+音声側の確保・ロックの問題や、ソケットの復号エラーとは分ける。
+
 ### パラメーター一覧が出ない・値が音に反映しない・Undo で音が戻らない
 
 デバイスの列の表示文が境界を示す。`the project has no running plugin` と `the device has no running plugin` は文書・オフライン・未検出、

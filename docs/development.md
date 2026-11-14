@@ -407,6 +407,10 @@ CLAP のノート形式の対応の公開は `echode-plugin-host/src/note_ports.
 名前の規則は `echode_model::content_hash` だけで、保管庫も同じ関数を呼ぶ。
 実ヘルパーの回帰は `hosted_playback/recorded_states.rs`（必須契約 `plugin-state-names`、[ADR 0329](decisions/0329-plugin-states-by-name.md)）。
 
+パラメーター通知を絞るフラグのキャッシュは `echode-plugin-host/src/param_flags.rs` に置く。
+説明の読取り中の再走査は世代で無効化し、プラグインを呼ぶ間はセルを借りない。
+単体回帰は `param_flags_tests.rs`、実ヘルパーの再入通知は `tests/isolation/param_rescan.rs` を使う（[ADR 0357](decisions/0357-reentrant-parameter-description-rescans.md)）。
+
 制御専用ハンドルの型付き操作は `echode-sandbox/src/session_operations.rs` に直接実装し、
 同名の `ControlState` や `PluginHost` の素通しを増やさない。
 公開操作と通信の対応・拒否・背景保存の順序は `session_operations_tests.rs`、

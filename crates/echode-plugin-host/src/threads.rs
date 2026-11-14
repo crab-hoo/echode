@@ -76,7 +76,7 @@ thread_local! {
     static ON_AUDIO: Cell<bool> = const { Cell::new(false) };
     /// Flags by parameter id, read on the main thread for relays. Cleared
     /// when the plugin rescans its descriptions.
-    static PARAM_FLAGS: RefCell<Option<HashMap<u32, u32>>> = const { RefCell::new(None) };
+    static PARAM_FLAGS: crate::param_flags::ParamFlags = const { crate::param_flags::ParamFlags::new() };
 }
 
 pub(crate) struct AudioFlag;
@@ -655,7 +655,7 @@ unsafe impl ExtensionImplementation<EchodeHost> for HostParams {
 /// drop the flags the relay uses.
 unsafe extern "C" fn host_params_rescan(host: *const clap_host, flags: clap_param_rescan_flags) {
     if flags & (CLAP_PARAM_RESCAN_INFO | CLAP_PARAM_RESCAN_ALL) != 0 {
-        PARAM_FLAGS.with(|cache| cache.borrow_mut().take());
+        PARAM_FLAGS.with(|cache| cache.invalidate());
     }
     // SAFETY: the plugin passes back the host pointer this helper gave it.
     unsafe {
@@ -1214,6 +1214,8 @@ fn load_plugin(
         .ok_or_else(|| LoadError::NoPlugin(path.to_path_buf()))?;
     let plugin_id = descriptor.id().ok_or(LoadError::NoPluginId)?;
     bridge.plugin_log.identify(plugin_id);
+    // This thread can serve another instance in in-process lifecycle tests.
+    PARAM_FLAGS.with(|cache| cache.invalidate());
     let instance = PluginInstance::<EchodeHost>::new(
         move |_| HostShared {
             bridge: Some(Arc::clone(&bridge)),
@@ -2444,14 +2446,7 @@ fn read_values_on_main(
         return Vec::new();
     };
     // A relay leaves out unknown and read-only ids (such as output meters).
-    let flags = relay.then(|| {
-        PARAM_FLAGS.with(|cache| {
-            cache
-                .borrow_mut()
-                .get_or_insert_with(|| param_flags(plugin, params))
-                .clone()
-        })
-    });
+    let flags = relay.then(|| PARAM_FLAGS.with(|cache| cache.read(|| param_flags(plugin, params))));
     ids.iter()
         .copied()
         .filter_map(|id| {

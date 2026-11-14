@@ -135,6 +135,7 @@ make debug-report
   - CLI の失敗が文だけで分類できない
   - プラグインを使う書き出しが `did not finish before the deadline` で止まる・並列の書き出しで `missing plugin`
   - パラメーター一覧が出ない・値が音に反映しない・Undo で音が戻らない
+  - パラメーターの変更通知で `RefCell already borrowed` が出てヘルパーが終了する
   - プラグインの遅延表示が更新されない・音がずれる
 - 再生・停止・ループ
   - 再生開始が遅い・準備中に停止できない

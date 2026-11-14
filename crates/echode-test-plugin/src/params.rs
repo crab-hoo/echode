@@ -272,13 +272,15 @@ fn copy_text(target: &mut [c_char], text: &str) {
 }
 
 unsafe extern "C" fn get_info(
-    _plugin: *const clap_plugin,
+    plugin: *const clap_plugin,
     index: u32,
     info: *mut clap_param_info,
 ) -> bool {
     let (Some(spec), false) = (SPECS.get(index as usize), info.is_null()) else {
         return false;
     };
+    // SAFETY: CLAP calls with this live plugin on its main thread.
+    unsafe { crate::param_rescan::on_info(plugin, index) };
     let mut name = [0; CLAP_NAME_SIZE];
     let mut module = [0; CLAP_PATH_SIZE];
     copy_text(&mut name, spec.name);
@@ -396,4 +398,6 @@ unsafe extern "C" fn flush(
         let change = unsafe { &*header.cast::<clap_event_param_value>() };
         set(change.param_id, change.value);
     }
+    // SAFETY: the host keeps its output list alive for this flush.
+    unsafe { crate::param_rescan::on_flush(output, value(GAIN).unwrap_or(1.0)) };
 }
