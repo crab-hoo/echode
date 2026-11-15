@@ -14,7 +14,6 @@ use crate::time::{Meter, Tempo, TempoMap, TempoPoint, Tick};
 
 #[path = "changeset_content.rs"]
 mod content;
-use content::ContentState;
 
 #[path = "changeset_content_diff.rs"]
 mod content_diff;
@@ -22,31 +21,35 @@ use content_diff::ChangedContents;
 
 #[path = "changeset_device.rs"]
 mod device;
-use device::{DeviceState, device_change, diff_device_fields};
+
+#[path = "changeset_draft.rs"]
+mod draft;
+use device::{device_change, diff_device_fields};
+use draft::Draft;
 
 #[path = "changeset_note.rs"]
 mod note;
-use note::{NoteState, diff_note_fields, note_change};
+use note::{diff_note_fields, note_change};
 
 #[path = "changeset_parameter.rs"]
 mod parameter;
-use parameter::{ParamState, diff_parameter_fields, parameter_change};
+use parameter::{diff_parameter_fields, parameter_change};
 
 #[path = "changeset_placement.rs"]
 mod placement;
-use placement::{ClipState, clip_change, diff_clip_fields};
+use placement::{clip_change, diff_clip_fields};
 
 #[path = "changeset_project.rs"]
 mod project;
-use project::{ProjectState, diff_project_fields};
+use project::diff_project_fields;
 
 #[path = "changeset_tempo.rs"]
 mod tempo;
-use tempo::{TempoState, diff_tempo};
+use tempo::diff_tempo;
 
 #[path = "changeset_track.rs"]
 mod track;
-use track::{TrackState, diff_track_fields, track_change};
+use track::{diff_track_fields, track_change};
 
 /// One property written by a [`Change`].
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -76,16 +79,69 @@ pub enum Change {
     },
 }
 
-/// Kind of object a create or delete names.
+macro_rules! define_object_kinds {
+    ($($kind:ident => $wire:literal,)+) => {
+        /// Kind of object a create or delete names.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub enum ObjectKind { $($kind,)+ }
+        impl ObjectKind {
+            /// Every kind, in declaration order.
+            pub const ALL: &'static [Self] = &[$(Self::$kind,)+];
+            /// The journal name.
+            pub fn as_str(self) -> &'static str {
+                match self { $(Self::$kind => $wire,)+ }
+            }
+            pub fn parse(text: &str) -> Option<Self> {
+                match text { $($wire => Some(Self::$kind),)+ _ => None }
+            }
+        }
+    };
+}
+define_object_kinds! {
+    Track => "track",
+    Clip => "clip",
+    Note => "note",
+    TempoPoint => "tempo",
+    Content => "content",
+    Device => "device",
+    Parameter => "parameter",
+}
+
+/// An ordered list through which one kind owns objects of another.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ObjectKind {
-    Track,
-    Clip,
-    Note,
-    TempoPoint,
-    Content,
-    Device,
-    Parameter,
+pub struct Ownership {
+    /// The kind whose `order` property lists the children.
+    pub owner: ObjectKind,
+    pub order: Property,
+}
+
+impl Ownership {
+    pub const TRACK_CLIPS: Self = Self::new(ObjectKind::Track, Property::ClipOrder);
+    pub const CONTENT_NOTES: Self = Self::new(ObjectKind::Content, Property::NoteOrder);
+    pub const TRACK_DEVICES: Self = Self::new(ObjectKind::Track, Property::DeviceOrder);
+    pub const DEVICE_PARAMETERS: Self = Self::new(ObjectKind::Device, Property::ParamOrder);
+
+    const fn new(owner: ObjectKind, order: Property) -> Self {
+        Self { owner, order }
+    }
+}
+
+impl ObjectKind {
+    /// The lists that may hold objects of this kind; empty for top-level kinds.
+    ///
+    /// An owned object names its owner in [`Property::Owner`], and exactly one
+    /// of these lists of that owner must name it back. [`Project::apply_changeset`]
+    /// rejects an object that no list reaches, one listed twice, and one listed
+    /// by another owner. The ownership regressions are generated from this table.
+    pub const fn owners(self) -> &'static [Ownership] {
+        match self {
+            Self::TempoPoint | Self::Track | Self::Content => &[],
+            Self::Clip => &[Ownership::TRACK_CLIPS],
+            Self::Note => &[Ownership::CONTENT_NOTES],
+            Self::Device => &[Ownership::TRACK_DEVICES],
+            Self::Parameter => &[Ownership::DEVICE_PARAMETERS],
+        }
+    }
 }
 
 /// Which object a change addresses.
@@ -523,314 +579,6 @@ fn update(id: ObjectKey, property: Property, before: Value, after: Value) -> Cha
         property,
         before,
         after,
-    }
-}
-
-struct Draft {
-    project: ProjectState,
-    tempos: HashMap<i64, TempoState>,
-    tracks: HashMap<Id, TrackState>,
-    contents: HashMap<Id, ContentState>,
-    clips: HashMap<Id, ClipState>,
-    notes: HashMap<Id, NoteState>,
-    devices: HashMap<Id, DeviceState>,
-    parameters: HashMap<Id, ParamState>,
-}
-
-impl Draft {
-    fn from_project(project: &Project) -> Self {
-        let mut draft = Self {
-            project: ProjectState::from_project(project),
-            tempos: HashMap::new(),
-            tracks: HashMap::new(),
-            contents: HashMap::new(),
-            clips: HashMap::new(),
-            notes: HashMap::new(),
-            devices: HashMap::new(),
-            parameters: HashMap::new(),
-        };
-        for content in project.contents() {
-            draft
-                .contents
-                .insert(content.id, ContentState::from_content(content));
-            for note in &content.notes {
-                draft
-                    .notes
-                    .insert(note.id, NoteState::from_note(content.id, note));
-            }
-        }
-        for point in project.tempo().points() {
-            draft
-                .tempos
-                .insert(point.at.get(), TempoState::from_point(point));
-        }
-        for track in project.tracks() {
-            for clip in &track.clips {
-                draft
-                    .clips
-                    .insert(clip.id, ClipState::from_clip(track.id, clip));
-            }
-            draft.tracks.insert(track.id, TrackState::from_track(track));
-            for device in &track.devices {
-                draft
-                    .devices
-                    .insert(device.id, DeviceState::from_device(track.id, device));
-                for parameter in &device.parameters {
-                    draft.parameters.insert(
-                        parameter.id,
-                        ParamState::from_parameter(device.id, parameter),
-                    );
-                }
-            }
-        }
-        draft
-    }
-
-    fn apply(&mut self, change: &Change) -> Result<(), ModelError> {
-        match change {
-            Change::Create { kind, id, fields } => self.insert(*kind, *id, fields),
-            Change::Delete { kind, id, .. } => self.remove(*kind, *id),
-            Change::Update {
-                id,
-                property,
-                after,
-                ..
-            } => self.set(*id, *property, after),
-        }
-    }
-
-    fn insert(
-        &mut self,
-        kind: ObjectKind,
-        id: ObjectKey,
-        fields: &[Field],
-    ) -> Result<(), ModelError> {
-        match (kind, id) {
-            (ObjectKind::TempoPoint, ObjectKey::Tempo(at)) => {
-                if self.tempos.contains_key(&at.get()) {
-                    return Err(ModelError::InvalidChange);
-                }
-                self.tempos
-                    .insert(at.get(), TempoState::from_fields(fields)?);
-                Ok(())
-            }
-            (ObjectKind::Track, ObjectKey::Id(id)) => {
-                if self.tracks.contains_key(&id) {
-                    return Err(ModelError::InvalidChange);
-                }
-                self.tracks.insert(id, TrackState::from_fields(fields)?);
-                Ok(())
-            }
-            (ObjectKind::Clip, ObjectKey::Id(id)) => {
-                if self.clips.contains_key(&id) {
-                    return Err(ModelError::InvalidChange);
-                }
-                self.clips.insert(id, ClipState::from_fields(fields)?);
-                Ok(())
-            }
-            (ObjectKind::Content, ObjectKey::Id(id)) => {
-                if self.contents.contains_key(&id) {
-                    return Err(ModelError::InvalidChange);
-                }
-                self.contents.insert(id, ContentState::from_fields(fields)?);
-                Ok(())
-            }
-            (ObjectKind::Device, ObjectKey::Id(id)) => {
-                if self.devices.contains_key(&id) {
-                    return Err(ModelError::InvalidChange);
-                }
-                self.devices.insert(id, DeviceState::from_fields(fields)?);
-                Ok(())
-            }
-            (ObjectKind::Parameter, ObjectKey::Id(id)) => {
-                if self.parameters.contains_key(&id) {
-                    return Err(ModelError::InvalidChange);
-                }
-                self.parameters.insert(id, ParamState::from_fields(fields)?);
-                Ok(())
-            }
-            (ObjectKind::Note, ObjectKey::Id(id)) => {
-                if self.notes.contains_key(&id) {
-                    return Err(ModelError::InvalidChange);
-                }
-                self.notes.insert(id, NoteState::from_fields(fields)?);
-                Ok(())
-            }
-            _ => Err(ModelError::InvalidChange),
-        }
-    }
-
-    fn remove(&mut self, kind: ObjectKind, id: ObjectKey) -> Result<(), ModelError> {
-        let removed = match (kind, id) {
-            (ObjectKind::TempoPoint, ObjectKey::Tempo(at)) => {
-                self.tempos.remove(&at.get()).is_some()
-            }
-            (ObjectKind::Track, ObjectKey::Id(id)) => self.tracks.remove(&id).is_some(),
-            (ObjectKind::Clip, ObjectKey::Id(id)) => self.clips.remove(&id).is_some(),
-            (ObjectKind::Note, ObjectKey::Id(id)) => self.notes.remove(&id).is_some(),
-            (ObjectKind::Content, ObjectKey::Id(id)) => self.contents.remove(&id).is_some(),
-            (ObjectKind::Device, ObjectKey::Id(id)) => self.devices.remove(&id).is_some(),
-            (ObjectKind::Parameter, ObjectKey::Id(id)) => self.parameters.remove(&id).is_some(),
-            _ => false,
-        };
-        if removed {
-            Ok(())
-        } else {
-            Err(ModelError::InvalidChange)
-        }
-    }
-
-    fn set(&mut self, id: ObjectKey, property: Property, value: &Value) -> Result<(), ModelError> {
-        if let ObjectKey::Id(id) = id
-            && let Some(parameter) = self.parameters.get_mut(&id)
-        {
-            return parameter.set(property, value);
-        }
-        if let ObjectKey::Id(id) = id
-            && let Some(note) = self.notes.get_mut(&id)
-        {
-            return note.set(property, value);
-        }
-        if let ObjectKey::Id(id) = id
-            && DeviceState::is_scalar(property)
-        {
-            return self
-                .devices
-                .get_mut(&id)
-                .ok_or(ModelError::InvalidChange)?
-                .set(property, value);
-        }
-        if let ObjectKey::Id(id) = id
-            && let Some(track) = self.tracks.get_mut(&id)
-        {
-            return track.set(property, value);
-        }
-        if let ObjectKey::Id(id) = id
-            && let Some(content) = self.contents.get_mut(&id)
-        {
-            return content.set(property, value);
-        }
-        if let ObjectKey::Id(id) = id
-            && let Some(clip) = self.clips.get_mut(&id)
-        {
-            return clip.set(property, value);
-        }
-        match (id, property, value) {
-            (ObjectKey::Project, property, value) => self.project.set(property, value),
-            (ObjectKey::Tempo(at), property, value) => self
-                .tempos
-                .get_mut(&at.get())
-                .ok_or(ModelError::InvalidChange)?
-                .set(property, value),
-            (ObjectKey::Id(id), Property::ParamOrder, Value::Ids(ids)) => {
-                self.devices
-                    .get_mut(&id)
-                    .ok_or(ModelError::InvalidChange)?
-                    .parameters = ids.clone();
-                Ok(())
-            }
-            (ObjectKey::Id(_id), Property::Lane, Value::Text(_)) => Ok(()),
-            _ => Err(ModelError::InvalidChange),
-        }
-    }
-
-    fn finish(self) -> Result<Project, ModelError> {
-        let mut points: Vec<TempoPoint> = self
-            .tempos
-            .iter()
-            .map(|(at, point)| point.finish(Tick::new(*at)))
-            .collect();
-        points.sort_by_key(|point| point.at);
-        let tempo = TempoMap::try_from_points(points).ok_or(ModelError::InvalidChange)?;
-        let mut seen = HashMap::<Id, ()>::new();
-        let mut contents = Vec::new();
-        let mut content_ids: Vec<Id> = self.contents.keys().copied().collect();
-        content_ids.sort();
-        let mut used_notes = 0;
-        for content_id in content_ids {
-            if seen.insert(content_id, ()).is_some() {
-                return Err(ModelError::DuplicateId);
-            }
-            let content = &self.contents[&content_id];
-            let mut notes = Vec::with_capacity(content.note_order.len());
-            for note_id in &content.note_order {
-                let Some(note) = self.notes.get(note_id) else {
-                    return Err(ModelError::InvalidChange);
-                };
-                if note.content != content_id || seen.insert(*note_id, ()).is_some() {
-                    return Err(ModelError::InvalidChange);
-                }
-                used_notes += 1;
-                notes.push(note.finish(*note_id));
-            }
-            contents.push(Arc::new(content.finish(content_id, notes)));
-        }
-        // Count owners once; each track still validates its ordered child list below.
-        let mut devices_per_track = HashMap::<Id, usize>::new();
-        for device in self.devices.values() {
-            #[cfg(test)]
-            crate::model_scale_tests::apply_device_owner_visit();
-            *devices_per_track.entry(device.track).or_default() += 1;
-        }
-        let mut tracks = Vec::with_capacity(self.tracks.len());
-        let mut used_clips = 0;
-        let mut used_devices = 0;
-        let mut used_parameters = 0;
-        for (track_id, track) in &self.tracks {
-            if seen.insert(*track_id, ()).is_some() {
-                return Err(ModelError::DuplicateId);
-            }
-            let mut clips = Vec::with_capacity(track.clip_order.len());
-            for clip_id in &track.clip_order {
-                let Some(clip) = self.clips.get(clip_id) else {
-                    return Err(ModelError::InvalidChange);
-                };
-                if clip.track != *track_id || seen.insert(*clip_id, ()).is_some() {
-                    return Err(ModelError::InvalidChange);
-                }
-                if !self.contents.contains_key(&clip.content) {
-                    return Err(ModelError::InvalidChange);
-                }
-                used_clips += 1;
-                clips.push(clip.finish(*clip_id));
-            }
-            let mut devices = Vec::with_capacity(track.device_order.len());
-            for device_id in &track.device_order {
-                let Some(device) = self.devices.get(device_id) else {
-                    return Err(ModelError::InvalidChange);
-                };
-                if device.track != *track_id || seen.insert(*device_id, ()).is_some() {
-                    return Err(ModelError::InvalidChange);
-                }
-                let mut parameters = Vec::with_capacity(device.parameters.len());
-                for parameter_id in &device.parameters {
-                    let Some(parameter) = self.parameters.get(parameter_id) else {
-                        return Err(ModelError::InvalidChange);
-                    };
-                    if parameter.device != *device_id || seen.insert(*parameter_id, ()).is_some() {
-                        return Err(ModelError::InvalidChange);
-                    }
-                    used_parameters += 1;
-                    parameters.push(parameter.finish(*parameter_id)?);
-                }
-                devices.push(device.finish(*device_id, parameters)?);
-            }
-            let owned = devices_per_track.get(track_id).copied().unwrap_or(0);
-            if owned != devices.len() {
-                return Err(ModelError::InvalidChange);
-            }
-            used_devices += devices.len();
-            tracks.push(Arc::new(track.finish(*track_id, clips, devices)));
-        }
-        if used_clips != self.clips.len()
-            || used_notes != self.notes.len()
-            || used_devices != self.devices.len()
-            || used_parameters != self.parameters.len()
-        {
-            return Err(ModelError::InvalidChange);
-        }
-        let tracks = crate::model::arrange_tracks(&tracks)?;
-        Ok(self.project.finish(tempo, contents, tracks))
     }
 }
 

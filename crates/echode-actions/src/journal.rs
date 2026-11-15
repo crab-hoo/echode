@@ -171,12 +171,12 @@ impl<'a> From<&'a Change> for ChangeRecord<&'a Value> {
     fn from(change: &'a Change) -> Self {
         match change {
             Change::Create { kind, id, fields } => Self::Create {
-                kind: kind_name(*kind).to_string(),
+                kind: kind.as_str().to_string(),
                 id: key_text(id),
                 fields: fields.iter().map(FieldRecord::from).collect(),
             },
             Change::Delete { kind, id, fields } => Self::Delete {
-                kind: kind_name(*kind).to_string(),
+                kind: kind.as_str().to_string(),
                 id: key_text(id),
                 fields: fields.iter().map(FieldRecord::from).collect(),
             },
@@ -244,29 +244,8 @@ fn parse_fields(fields: &[FieldRecord]) -> Result<Vec<Field>, ActionError> {
         .collect()
 }
 
-fn kind_name(kind: ObjectKind) -> &'static str {
-    match kind {
-        ObjectKind::Track => "track",
-        ObjectKind::Clip => "clip",
-        ObjectKind::Note => "note",
-        ObjectKind::TempoPoint => "tempo",
-        ObjectKind::Content => "content",
-        ObjectKind::Device => "device",
-        ObjectKind::Parameter => "parameter",
-    }
-}
-
 fn parse_kind(kind: &str) -> Result<ObjectKind, ActionError> {
-    Ok(match kind {
-        "track" => ObjectKind::Track,
-        "clip" => ObjectKind::Clip,
-        "note" => ObjectKind::Note,
-        "tempo" => ObjectKind::TempoPoint,
-        "content" => ObjectKind::Content,
-        "device" => ObjectKind::Device,
-        "parameter" => ObjectKind::Parameter,
-        _ => return Err(ActionError::CorruptJournal),
-    })
+    ObjectKind::parse(kind).ok_or(ActionError::CorruptJournal)
 }
 
 fn parse_property(property: &str) -> Result<Property, ActionError> {

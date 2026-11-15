@@ -2965,13 +2965,14 @@ class PolicyTests(unittest.TestCase):
         )
         self.assertEqual(parameters["test"], "recovery_refuses_to_silently_discard_unlisted_parameters")
         fault = parameters["negative_control"]
-        self.assertEqual(fault["file"], "crates/echode-model/src/changeset.rs")
-        self.assertIn("used_parameters != self.parameters.len()", fault["old"])
+        self.assertEqual(fault["file"], "crates/echode-model/src/changeset_draft.rs")
+        self.assertIn("ObjectKind::Parameter => self.parameters.complete()", fault["old"])
         for path in (
             "crates/echode-history/src/document.rs",
             "crates/echode-history/tests/audit_recovery.rs",
             "crates/echode-history/tests/parameter_ownership.rs",
             "crates/echode-model/src/changeset.rs",
+            "crates/echode-model/src/changeset_draft.rs",
         ):
             self.assertIn("check-product-contracts", self.selected(path))
 

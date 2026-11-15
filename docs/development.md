@@ -117,7 +117,7 @@ lint の固定版（ruff・shellcheck・shfmt）は `make setup-lint` が `targe
 | 領域 | パス | 役割・主な入口 |
 | :--- | :--- | :--- |
 | 共通整数時間 | `crates/echode-time` | `TempoIndex`・区間丸め・tick / flick / sample 換算・Workgroup 期間。モデルと再生カーソルで共有し、外部依存を持たない |
-| モデル・時間・不変条件 | `crates/echode-model` | `model.rs`（`Project`）、`time.rs`（`Tick` / `Flicks` / `TempoMap`）、`invariants.rs`、`hierarchy.rs`（親の検証）、`changeset.rs`、`duplicate.rs`（部分木の複製と導出 ID） |
+| モデル・時間・不変条件 | `crates/echode-model` | `model.rs`（`Project`）、`time.rs`（`Tick` / `Flicks` / `TempoMap`）、`invariants.rs`、`hierarchy.rs`（親の検証）、`changeset.rs`・`changeset_draft.rs`（差分と適用）、`duplicate.rs`（部分木の複製と導出 ID） |
 | アクション・編集セッション | `crates/echode-actions` | `action.rs`（`Action` / 登録簿）、`session.rs`（`Session` の Undo / Redo 履歴） |
 | Git 履歴・パッケージ | `crates/echode-history` | `host.rs`（文書・復旧）、`autosave.rs`（保存）、`document_git.rs`（Git と同期） |
 | 保存の検証・素材 | `crates/echode-history` | `document_parse.rs`（スキーマと読込み）、`error.rs`（原因の型）、`objects.rs`（CAS）、`peaks.rs`（波形） |
@@ -287,6 +287,15 @@ Phase 0 の履歴モデル（`echode-history/src/project.rs`・`format.rs`・`st
 残りの保存のレイアウトと原本保持は履歴の `tests/schema_fields.rs`、全値の wire 表記は `tests/change_value_wire.rs`、
 保存再読込みから保持した ABI の値は FFI の `snapshot_fields_tests.rs` に置く
 （[ADR 0226](decisions/0226-model-field-registry-completion.md)）。
+
+### 変更セットの所有関係
+
+所有される種類と所有者の列は `changeset.rs` の `ObjectKind::owners` が正本で、ジャーナルの種類名も同じ表から作る。
+適用の下書きは `changeset_draft.rs` にあり、所有される種類を `Children` に置いて所有者の列からだけ解決する。
+種類を足すと `Draft::insert`・`remove`・`complete` と `owners` でコンパイルが止まる。
+所有の列を足す時は表に `Ownership` を加え、下書きの解決・差分の生成・`from_project` を合わせて変える。
+未列挙・所有者違い・重複・ID の衝突の反例は `echode-model/tests/ownership.rs` が表から生成する。
+新しい種類はフィクスチャにも足す（[ADR 0376](decisions/0376-typed-changeset-ownership.md)）。
 
 ### JSON-RPC・MCP
 

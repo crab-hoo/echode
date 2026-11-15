@@ -913,7 +913,7 @@
       "id": "journal-parameter-ownership", "runner": "rust", "package": "echode-history",
       "target": ["--test", "parameter_ownership"], "test": "recovery_refuses_to_silently_discard_unlisted_parameters", "timeout": 180,
       "purpose": "未列挙パラメーターを含むedit/undo/redoを復旧と製品オープンで拒否し、連番の診断・原本と先端・ロック解放・明示修復後の再オープンを確認",
-      "negative_control": {"file": "crates/echode-model/src/changeset.rs", "old": "            || used_parameters != self.parameters.len()", "new": "            || false"}
+      "negative_control": {"file": "crates/echode-model/src/changeset_draft.rs", "old": "ObjectKind::Parameter => self.parameters.complete(),", "new": "ObjectKind::Parameter => true,"}
     },
     {"id": "startup-position", "runner": "rust", "package": "echode-audio-io", "target": ["--lib"], "test": "stream::tests::contract_startup_position_is_published_before_the_first_callback", "timeout": 240, "purpose": "HALに登録する製品と同じ準備経路で、初回コールバック前の位置と初回出力後を確認", "negative_control": {"file": "crates/echode-engine/src/playback.rs", "old": "Box::new(InternalClock { position: sample })", "new": "Box::<InternalClock>::default()"}},
     {"id": "macos-plugin-bundle", "runner": "rust", "package": "echode-plugin-host", "target": ["--test", "hosted_playback"], "test": "contract_macos_bundle_scan_to_playback_and_load_errors", "timeout": 240, "purpose": "macOSバンドルを別プロセスでスキャンし、キャッシュからの楽器・エフェクト処理と読み込み失敗を確認", "negative_control": {"file": "crates/echode-engine/src/plugins.rs", "old": "if !route.path.exists() {", "new": "if !route.path.is_file() {"}},

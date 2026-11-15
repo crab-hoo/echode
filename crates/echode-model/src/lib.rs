@@ -63,7 +63,7 @@ mod tempo_fields;
 mod time;
 mod track_fields;
 
-pub use changeset::{Change, ChangeSet, Field, ObjectKey, ObjectKind, Property, Value};
+pub use changeset::{Change, ChangeSet, Field, ObjectKey, ObjectKind, Ownership, Property, Value};
 pub use device::{
     Device, DeviceKind, GAIN_MAX, MixerIds, PAN_MAX, PAN_MIN, ParamKey, Parameter, content_hash,
     test_mixer, valid_plugin_id, valid_state_hash,

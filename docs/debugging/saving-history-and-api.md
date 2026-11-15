@@ -178,7 +178,7 @@ ID 生成と配列の複製を含む制御側の時間として前後を比べ�
 長いチェインのバイパス・ミキサー値・並べ替えだけでなく、チェイン内の全 ID の交換と別組立ての同値の版も検査する。
 変更順と保存・Undo の不整合は、同じ回帰の正逆往復と履歴の `tests/device_changesets.rs` で切り分ける。
 生成が速くてもジャーナルの再生が遅い時は、`model_scale_tests::device_apply` で適用側のデバイス所属の訪問数を分けて確認する。
-`changeset::Draft::finish` は所属数を一括集計し、各トラックの子の列と照合する。適用後のデバイス数以内の訪問に制限する。
+`changeset_draft.rs` の `Draft::finish` は所有者の列からだけ子を解決し、解決数と格納数を種類ごとに比べる。適用後のデバイス数以内の訪問に制限する。
 同じ回帰の不正な変更セットは未列挙・不明な ID・別の所有者・所有者だけの削除を区別し、拒否後の元の版も照合する。
 この検査はプラグインを起動せず、ヘルパーの通信・状態取得・再生計画・ジャーナル同期の遅延は含まない。
 `spike-scale` の既存の `model_edit` に長い FX チェインはないため、その時間を本症状の再現に代用しない。
@@ -298,7 +298,8 @@ Undo と Redo は段ごとに編集前の版を持ち、段数の上限はない
 破損ジャーナルは `journal seq <連番> violates model invariants: <理由>` でオープンを拒否する（[ADR 0180](../decisions/0180-journal-replay-invariants.md)）。
 適用自体の失敗は `journal seq <連番> cannot apply changes: <理由>` と区別する。
 `tests/parameter_ownership.rs` は、未列挙のパラメーターを復元時に捨てる経路を調べ、適用後の不変条件検査だけでは発見できない消失を検査する。
-`changeset::Draft::finish` の全体 ID 集合・所有者・使用数を確認し、原本を保全したまま該当する行の作成・削除と `param_order` を照合する。
+`Draft::finish`（`changeset_draft.rs`）の全体 ID 集合・所有者・解決数を確認し、原本を保全したまま該当する行の作成・削除と `param_order` を照合する。
+種類を問わない拒否の形は `echode-model/tests/ownership.rs` が `ObjectKind::owners` の表から生成する。
 `audit_adv01_*` は通常回帰で、先端なし・ありと、明示修復後に確定した編集の保持を検査する。
 原本をコピーして保全し、連番・不変条件の理由・基点と先端を記録する。自動で行を削除したり、繰り返し保存して直そうとしない。
 旧版では不正な状態をコミットし、debug では最初の編集が panic する経路もあった。
