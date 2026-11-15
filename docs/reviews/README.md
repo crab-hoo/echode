@@ -23,8 +23,10 @@
   DIA-03・05 は [ADR 0360](../decisions/0360-background-recording-retry-policy.md) で間隔と警告の規則を共通化し、取得済みの状態を保持した。
 - [2026-11-13 実装の品質の横断監査](2026-11-13-implementation-quality-audit.md): IQA-01〜12。
   「読めない」を「無い」に畳む復旧の入口（IQA-01・02）は [ADR 0350](../decisions/0350-unreadable-history-is-not-empty.md) で拒否へ改めた。
-  開けない理由を FFI で捨てる IQA-03 は残る。監査当時の IQA-01・02 の再現は通常回帰にした。
+  開けない理由を FFI で捨てる IQA-03 は [ADR 0354](../decisions/0354-document-acquisition-diagnostics.md) で対応した。
+  監査当時の IQA-01・02 の再現は通常回帰にした。
   自動保存を頼めない IQA-05 は ADR 0360 で初回の error と停止の診断を追加した。
+  失敗後に作業ツリーのキャッシュが残る IQA-04 は [ADR 0363](../decisions/0363-invalidate-failed-autosave-cache.md) で失敗時の無効化と全量再保存へ改めた。
 - [2026-11-13 全体の横断監査](2026-11-13-professional-cross-audit.md): PCA-01〜10。
   PDC・フォルダバスを含む現行コードの精読で、新しい実装の誤りは見つからなかった。
   書出しの途中で遅延が変わるとずれたファイルを成功として書く（PCA-01）を `audit_pca01*` で再現した。

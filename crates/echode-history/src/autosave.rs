@@ -384,13 +384,16 @@ fn save(
     project: &Project,
     journal_seq: u64,
 ) -> Result<ObjectId, PackageError> {
+    // A failed attempt may already have changed the worktree. Keep the old
+    // cache only for this attempt; publish a new one after every step succeeds.
+    let previous = cache.take();
     mark_save_pending(directory)?;
-    let plan = plan_files(cache, project);
+    let plan = plan_files(&previous, project);
     let written = {
         let file_plan = FilePlan {
             unchanged_tracks: &plan.unchanged_tracks,
             unchanged_contents: &plan.unchanged_contents,
-            previous_project_json: cache.as_ref().map(|cache| cache.project_json.as_str()),
+            previous_project_json: previous.as_ref().map(|cache| cache.project_json.as_str()),
             removed_tracks: &plan.removed_tracks,
             removed_contents: &plan.removed_contents,
             sweep: plan.sweep,
@@ -399,7 +402,7 @@ fn save(
     };
     // Blobs this save writes; the commit writes them out with its trees.
     let mut blobs = Vec::new();
-    let project_blob = match cache
+    let project_blob = match previous
         .as_ref()
         .filter(|cache| cache.project_json == written.project_json)
     {
@@ -421,7 +424,7 @@ fn save(
         let id = content.id.to_string();
         let filename = format!("{id}.json");
         if plan.unchanged_contents.contains(&id) {
-            let (cached, blob) = cache
+            let (cached, blob) = previous
                 .as_ref()
                 .and_then(|cache| cache.contents.get(&id))
                 .ok_or(PackageError::Autosave(AutosaveError::MissingCachedContent))?;
@@ -448,7 +451,7 @@ fn save(
         // HIS-1: hold the Arc. An address alone can be reused after the
         // previous snapshot is freed, and then a changed track looks unchanged.
         if plan.unchanged_tracks.contains(&id) {
-            let (cached, blob) = cache
+            let (cached, blob) = previous
                 .as_ref()
                 .and_then(|cache| cache.tracks.get(&id))
                 .ok_or(PackageError::Autosave(AutosaveError::MissingCachedTrack))?;

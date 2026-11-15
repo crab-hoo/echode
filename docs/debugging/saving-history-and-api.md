@@ -329,6 +329,16 @@ Rust の `PackageError::original()` で共有の配達の包みを除き、変�
 `tests/autosave_errors.rs` は公開入口、`autosave_tests.rs` は合流した待ち手と受信側の消失を切り分ける。
 共有の失敗も `is_durability_unknown()` で判定し、元のファイルを保全してから調べる（[ADR 0297](../decisions/0297-typed-autosave-and-git-errors.md)）。
 
+### 自動保存失敗後に Git の内容と作業ツリーの JSON が食い違う
+
+原本を保全し、`an autosave failed` の原因と `save.pending`、自動保存の先端・チェーンを確認する。
+Git の木から読んだプロジェクトが正しくても、失敗した保存が書いた JSON と新しいファイルは作業ツリーに残り得る。
+`autosave.rs::save` は試行開始時にキャッシュを取り出し、すべての処理が成功した時だけ戻す。
+次の保存が正常完了した後も食い違うなら、全量書込み・余剰 JSON の掃除が行われたかを調べる。
+Git やジャーナルを消して見かけの差分をなくさない。保存失敗直後のファイル一致は保証しない。
+`tests/autosave_retry.rs` は内容の一時ファイル名への障害と Git の参照ロックで、途中の書込み・コミットの失敗を区別する。
+Undo 後と同じ編集の再保存、全 JSON のバイト・余剰ファイル・Git と復旧・増分保存の再開を機器なしで照合する（IQA-04）。
+
 ### 自動保存が増えない・取得済みのプラグイン状態を記録できない
 
 `echode_history::host` の `autosave stopped accepting snapshots; edits remain in the journal` は送信先の切断で、初回だけ error を書く。
