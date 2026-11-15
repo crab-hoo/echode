@@ -1337,6 +1337,21 @@ class PolicyTests(unittest.TestCase):
                 )
                 self.assertTrue({"rtsan", "spike-engine-smoke", "spike-audio"} <= self.selected(path))
 
+    def test_hal_fault_contracts_keep_product_paths_and_device_free_regressions(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        cases = {
+            "output-inventory-fault-isolation": "hardware.rs",
+            "hal-overload-log": "stream.rs",
+        }
+        for contract_id, filename in cases.items():
+            contract = contracts[contract_id]
+            self.assertEqual((contract["runner"], contract["package"]), ("rust", "echode-audio-io"))
+            self.assertIn("audit_", contract["test"])
+            self.assertEqual(contract["negative_control"]["file"], f"crates/echode-audio-io/src/{filename}")
+        for filename in ("hardware.rs", "overload.rs", "stream_overload_tests.rs", "audition_overload_tests.rs"):
+            selected = self.selected(f"crates/echode-audio-io/src/{filename}")
+            self.assertTrue({"check", "check-product-contracts", "rtsan", "spike-audio"} <= selected)
+
     def test_product_audio_selects_realtime_and_an_explicit_silent_hal_probe(self):
         for path in (
             "crates/echode-audio-io/src/stream.rs",
@@ -2626,6 +2641,8 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(
             {c["id"] for c in contracts},
             {
+                "output-inventory-fault-isolation",
+                "hal-overload-log",
                 "plugin-musical-transport",
                 "track-mix-fault",
                 "track-mix-export",

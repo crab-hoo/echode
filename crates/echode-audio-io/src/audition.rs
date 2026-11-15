@@ -675,6 +675,9 @@ impl AuditionOutputs for HalOutputs {
     }
 
     fn control(&mut self) -> Option<&mut AuditionControl> {
+        if let Some((_, stream)) = &mut self.open {
+            stream.report_overloads(false);
+        }
         self.open.as_mut().map(|(_, stream)| &mut stream.control)
     }
 
@@ -725,6 +728,7 @@ pub(crate) struct AuditionCallback {
     observed: u64,
     failed: AtomicBool,
     panic: CallbackPanic,
+    callbacks: AtomicU64,
 }
 
 // SAFETY: HAL serializes calls to this IOProc, and only the callback touches
@@ -753,6 +757,7 @@ impl AuditionCallback {
             observed,
             failed: AtomicBool::new(false),
             panic: CallbackPanic::new("audition callback"),
+            callbacks: AtomicU64::new(0),
         }
     }
 
@@ -763,6 +768,7 @@ impl AuditionCallback {
 
 struct AuditionStream {
     device: OutputDevice,
+    overloads: Option<crate::overload::Listener>,
     control: AuditionControl,
     heard: HeardNotes,
     callback: Option<Box<AuditionCallback>>,
@@ -800,6 +806,7 @@ impl AuditionStream {
             });
         }
         let value = Self {
+            overloads: crate::overload::Listener::open(device.id, "audition"),
             device,
             control,
             heard,
@@ -824,12 +831,27 @@ impl AuditionStream {
             .is_some_and(|callback| callback.failed())
     }
 
+    fn report_overloads(&mut self, force: bool) {
+        let callbacks = self
+            .callback
+            .as_ref()
+            .map_or(0, |callback| callback.callbacks.load(Ordering::Acquire));
+        if let Some(listener) = &mut self.overloads {
+            listener.report(None, callbacks, force);
+        }
+    }
+
     fn close(&mut self) {
+        let mut callbacks = self
+            .callback
+            .as_ref()
+            .map_or(0, |callback| callback.callbacks.load(Ordering::Acquire));
         if let Some(callback) = self.callback.take() {
             // SAFETY: `self.proc` is the IOProc `open` created on this device.
             let _ = unsafe { AudioDeviceStop(self.device.id, self.proc) };
             // SAFETY: `self.proc` is the IOProc `open` created on this device, stopped above.
             let destroyed = unsafe { AudioDeviceDestroyIOProcID(self.device.id, self.proc) };
+            callbacks = callback.callbacks.load(Ordering::Acquire);
             if destroyed != 0
                 && destroyed != kAudioHardwareBadObjectError
                 && destroyed != kAudioHardwareBadDeviceError
@@ -837,6 +859,9 @@ impl AuditionStream {
                 // HAL could still call it. Freeing it would be unsafe.
                 Box::leak(callback);
             }
+        }
+        if let Some(mut listener) = self.overloads.take() {
+            listener.report(None, callbacks, true);
         }
     }
 }
@@ -883,6 +908,7 @@ unsafe extern "C-unwind" fn render(
 /// HAL serializes calls, and each non-null buffer is writable for its size.
 #[cfg_attr(feature = "rtsan", rtsan_standalone::nonblocking)]
 pub(crate) unsafe fn fill(callback: &AuditionCallback, buffers: &mut [AudioBuffer], host: u64) {
+    callback.callbacks.fetch_add(1, Ordering::Relaxed);
     if !callback
         .panic
         // SAFETY: the caller's contract is `mix`'s.
@@ -940,3 +966,7 @@ unsafe fn mix(callback: &AuditionCallback, buffers: &mut [AudioBuffer], host: u6
 #[cfg(test)]
 #[path = "audition_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "audition_overload_tests.rs"]
+mod overload_tests;

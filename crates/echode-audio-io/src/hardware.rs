@@ -152,90 +152,122 @@ fn string(object: u32, selector: u32) -> Result<String, AudioError> {
 }
 
 pub fn inventory() -> Result<Inventory, AudioError> {
-    let default_device = get(
-        kAudioObjectSystemObject as u32,
-        kAudioHardwarePropertyDefaultOutputDevice,
-        kAudioObjectPropertyScopeGlobal,
-    )?;
+    inventory_with(&HalInventory)
+}
+
+trait InventoryReader {
+    fn default_device(&self) -> Result<u32, AudioError>;
+    fn devices(&self) -> Result<Vec<u32>, AudioError>;
+    fn output(&self, id: u32) -> Result<Option<OutputDevice>, AudioError>;
+}
+
+struct HalInventory;
+
+impl InventoryReader for HalInventory {
+    fn default_device(&self) -> Result<u32, AudioError> {
+        get(
+            kAudioObjectSystemObject as u32,
+            kAudioHardwarePropertyDefaultOutputDevice,
+            kAudioObjectPropertyScopeGlobal,
+        )
+    }
+
+    fn devices(&self) -> Result<Vec<u32>, AudioError> {
+        list(
+            kAudioObjectSystemObject as u32,
+            kAudioHardwarePropertyDevices,
+            kAudioObjectPropertyScopeGlobal,
+        )
+    }
+
+    fn output(&self, id: u32) -> Result<Option<OutputDevice>, AudioError> {
+        read_output(id)
+    }
+}
+
+fn inventory_with(reader: &impl InventoryReader) -> Result<Inventory, AudioError> {
+    let default_device = reader.default_device()?;
     let mut devices = Vec::new();
-    for id in list(
-        kAudioObjectSystemObject as u32,
-        kAudioHardwarePropertyDevices,
-        kAudioObjectPropertyScopeGlobal,
-    )? {
-        if get::<u32>(
-            id,
-            kAudioDevicePropertyDeviceIsAlive,
-            kAudioObjectPropertyScopeGlobal,
-        )
-        .unwrap_or(0)
-            == 0
-        {
-            continue;
+    for id in reader.devices()? {
+        match reader.output(id) {
+            Ok(Some(device)) => devices.push(device),
+            Ok(None) => {}
+            Err(error) => log::warn!("omitting unreadable output device={id}: {error}"),
         }
-        let streams = list(
-            id,
-            kAudioDevicePropertyStreams,
-            kAudioObjectPropertyScopeOutput,
-        )?;
-        if streams.is_empty() {
-            continue;
-        }
-        let mut channels = 0u32;
-        let mut formats = Vec::with_capacity(streams.len());
-        for stream in streams {
-            let format: AudioStreamBasicDescription = get(
-                stream,
-                kAudioStreamPropertyVirtualFormat,
-                kAudioObjectPropertyScopeGlobal,
-            )?;
-            channels = channels
-                .checked_add(format.mChannelsPerFrame)
-                .ok_or(HardwareFault::ChannelOverflow)?;
-            formats.push((stream, format));
-        }
-        if channels == 0 {
-            continue;
-        }
-        let rate: f64 = get(
-            id,
-            kAudioDevicePropertyNominalSampleRate,
-            kAudioObjectPropertyScopeGlobal,
-        )?;
-        if !rate.is_finite() || rate < 1.0 || rate > f64::from(u32::MAX) || rate.fract() != 0.0 {
-            return Err(HardwareFault::SampleRate.into());
-        }
-        let buffer_frames = get(
-            id,
-            kAudioDevicePropertyBufferFrameSize,
-            kAudioObjectPropertyScopeGlobal,
-        )?;
-        if buffer_frames == 0 {
-            continue;
-        }
-        // Every HAL device reports this. A failed read counts as no offset:
-        // the callback still ends within one block of entry (ADR 0283).
-        let safety_frames = get(
-            id,
-            kAudioDevicePropertySafetyOffset,
-            kAudioObjectPropertyScopeOutput,
-        )
-        .unwrap_or(0);
-        devices.push(OutputDevice {
-            id,
-            uid: string(id, kAudioDevicePropertyDeviceUID)?,
-            name: string(id, kAudioObjectPropertyName)?,
-            sample_rate: rate as u32,
-            buffer_frames,
-            safety_frames,
-            channels,
-            formats,
-        });
     }
     Ok(Inventory {
         default_device,
         devices,
     })
+}
+
+fn read_output(id: u32) -> Result<Option<OutputDevice>, AudioError> {
+    if get::<u32>(
+        id,
+        kAudioDevicePropertyDeviceIsAlive,
+        kAudioObjectPropertyScopeGlobal,
+    )? == 0
+    {
+        return Ok(None);
+    }
+    let streams = list(
+        id,
+        kAudioDevicePropertyStreams,
+        kAudioObjectPropertyScopeOutput,
+    )?;
+    if streams.is_empty() {
+        return Ok(None);
+    }
+    let mut channels = 0u32;
+    let mut formats = Vec::with_capacity(streams.len());
+    for stream in streams {
+        let format: AudioStreamBasicDescription = get(
+            stream,
+            kAudioStreamPropertyVirtualFormat,
+            kAudioObjectPropertyScopeGlobal,
+        )?;
+        channels = channels
+            .checked_add(format.mChannelsPerFrame)
+            .ok_or(HardwareFault::ChannelOverflow)?;
+        formats.push((stream, format));
+    }
+    if channels == 0 {
+        return Ok(None);
+    }
+    let rate: f64 = get(
+        id,
+        kAudioDevicePropertyNominalSampleRate,
+        kAudioObjectPropertyScopeGlobal,
+    )?;
+    if !rate.is_finite() || rate < 1.0 || rate > f64::from(u32::MAX) || rate.fract() != 0.0 {
+        return Err(HardwareFault::SampleRate.into());
+    }
+    let buffer_frames = get(
+        id,
+        kAudioDevicePropertyBufferFrameSize,
+        kAudioObjectPropertyScopeGlobal,
+    )?;
+    if buffer_frames == 0 {
+        return Ok(None);
+    }
+    // Every HAL device reports this. A failed read counts as no offset:
+    // the callback still ends within one block of entry (ADR 0283).
+    let safety_frames = get(
+        id,
+        kAudioDevicePropertySafetyOffset,
+        kAudioObjectPropertyScopeOutput,
+    )
+    .unwrap_or(0);
+    Ok(Some(OutputDevice {
+        id,
+        uid: string(id, kAudioDevicePropertyDeviceUID)?,
+        name: string(id, kAudioObjectPropertyName)?,
+        sample_rate: rate as u32,
+        buffer_frames,
+        safety_frames,
+        channels,
+        formats,
+    }))
 }
 
 pub(crate) fn validate_streams(device: &OutputDevice) -> Result<(), AudioError> {
@@ -373,3 +405,7 @@ impl Drop for Notifications {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "hardware_tests.rs"]
+mod tests;

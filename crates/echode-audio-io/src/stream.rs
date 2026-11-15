@@ -85,6 +85,7 @@ impl TransportSetup {
 
 pub struct OutputStream {
     workgroup_listener: Option<hardware::Notifications>,
+    overloads: Option<crate::overload::Listener>,
     pub device: OutputDevice,
     control: PlaybackControl,
     callback: Option<Box<Callback>>,
@@ -269,6 +270,7 @@ impl OutputStream {
         }
         self.proc = proc;
         self.registered = true;
+        self.overloads = crate::overload::Listener::open(self.device.id, "output");
         // SAFETY: `self.proc` is the IOProc just created on this device.
         let status = unsafe { AudioDeviceStart(self.device.id, self.proc) };
         if status != 0 {
@@ -359,6 +361,7 @@ impl OutputStream {
         });
         Self {
             workgroup_listener: listener,
+            overloads: None,
             device,
             control,
             callback: Some(callback),
@@ -512,6 +515,11 @@ impl OutputStream {
     }
 
     pub fn service(&mut self) -> Result<(), AudioError> {
+        let sample = self.status().sample;
+        let callbacks = self.callbacks();
+        if let Some(listener) = &mut self.overloads {
+            listener.report(Some(sample), callbacks, false);
+        }
         if self.workgroup_changed() {
             return Err(Stopped::WorkgroupChanged.into());
         }
@@ -583,6 +591,7 @@ impl OutputStream {
         // A replacement still starting helpers is not waited for (ADR 0334).
         self.control.cancel_preparation();
         let mut failed = false;
+        let mut callbacks = self.callbacks();
         // The log keeps a panic even when no service call asked for it.
         if let Some(callback) = &self.callback {
             let _ = callback.panic.reason();
@@ -594,6 +603,7 @@ impl OutputStream {
             let stopped = unsafe { AudioDeviceStop(self.device.id, self.proc) };
             // SAFETY: `self.proc` is the IOProc `register` created on this device, stopped above.
             let destroyed = unsafe { AudioDeviceDestroyIOProcID(self.device.id, self.proc) };
+            callbacks = callback.callbacks.load(Ordering::Acquire);
             if destroyed != 0
                 && destroyed != kAudioHardwareBadObjectError
                 && destroyed != kAudioHardwareBadDeviceError
@@ -607,6 +617,9 @@ impl OutputStream {
         }
         self.control.service();
         let mut status = self.status();
+        if let Some(mut listener) = self.overloads.take() {
+            listener.report(Some(status.sample), callbacks, true);
+        }
         status.failed |= failed;
         status
     }
@@ -1196,3 +1209,7 @@ unsafe fn fill_inner(
 #[cfg(test)]
 #[path = "stream_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "stream_overload_tests.rs"]
+mod overload_tests;

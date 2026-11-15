@@ -152,7 +152,9 @@ AudioToolbox の失敗は `MediaError` の操作別の変種で、`Property` は
 `echode_audio_io::session` の `cause` と音声状態の `error` を確認する。
 一覧の読取り失敗は [共通の間隔](../architecture/model-and-history.md#68-背景の再試行と停止の診断) で再試行し、同じ原因の警告を省く。
 警告が増えなくても回復済みとは限らない。成功までは最後の一覧・選択・位置を保持し、成功時に `error` を消す。
-機器ごとの問い合わせ失敗を一覧全体の失敗にする制約（IQA-06）は残る。
+個々の機器を読めない時は `echode_audio_io::hardware` の `omitting unreadable output device=...` と原因を確認する。
+これは全体の失敗ではなく、正常な機器の一覧は使える。選択した機器を除いた時は既定へ落ち、次の一覧更新で再評価する。
+`hardware_tests.rs` は HAL の読取り境界へ機器単位の故障を注入し、正常な出力・フォールバック・復帰・全体のエラーを分ける。
 `session_retry_tests.rs` は機器なし・仮想時計で再試行と原因の変化を調べる。実機を開いて再現する必要はない。
 
 ### ヘルパーの保存・復元・パラメーター・窓の要求が時間切れ／busy になる
@@ -748,9 +750,21 @@ Undo では記録のハッシュとヘルパーが最後に保存・読込した
 再現は、その場所を通る入力の `cargo test` で行う。デバッグのテストの `GuardAlloc` は panic 中の確保を許すので、`ForbidAlloc` の内側の panic もテストの失敗として文が出る。
 理由のない SIGABRT は、panic ではない確保を `GuardAlloc` が止めたことを疑う。
 
+### 音切れがあるのにエンジンの期限超過が記録されない
+
+`echode_audio_io::overload` の `HAL processor overload` を確認する。
+`source=output` と `source=audition` は別の監視で、同じ機器の行を足して音切れ回数としない。
+`notifications` は前の記録からの通知数、`total` はその出力を開いてからの総数で、最大毎秒 1 行と閉鎖時に書く。
+`last_notice_host_time` は最後の通知の Mach host 時刻、JSON の `time_ms` はログを書いた時刻である。
+`observed_sample` と `observed_callbacks` は制御側の観測位置であり、原因ブロックの断定には使わない。試聴の sample は `None`。
+`HAL overload monitoring unavailable` があれば、機器 ID と OSStatus を残す。行がないことだけでは過負荷なしと判断しない。
+機器全体の IO 周期の遅れであり、エンジン・プラグイン・他プロセスのいずれが原因かは、この通知だけで断定できない。
+回帰は `overload_tests.rs`・`stream_overload_tests.rs`・`audition_overload_tests.rs`。実 HAL の通知の到着は UC-88 で確認する。
+
 ### 再生中のぶつぶつ・停止時のクリック
 
 `audio.status` の `plugin_missed_blocks` と `pending_plan` を確認する。
+HAL 自身の周期超過は上の「音切れがあるのにエンジンの期限超過が記録されない」で切り分ける。
 定期保存確認による一時バイパス排除（[ADR 0101](../decisions/0101-live-output-discontinuities.md)）、音声側の排他グラフ所有（[ADR 0102](../decisions/0102-exclusive-audio-graph.md)）、5 ms の停止波形減衰（[ADR 0103](../decisions/0103-live-stop-waveform.md)）、待機しない後片付け（[ADR 0105](../decisions/0105-nonblocking-stop-cleanup.md)）のどの境界かを確認する。
 [ADR 0133](../decisions/0133-stopped-plugin-processing-and-edit-input.md) 以降は素材をプラグインの手前で減衰し、マスターの停止フェードは使わない。
 `stop_fade_offset` は素材の減衰位置である。停止後も余韻・自発的な発音が出ることは正常で、停止中の `plugin_missed_blocks` も実際の処理失敗を表す。

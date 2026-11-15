@@ -86,6 +86,18 @@
   ],
   "product_contracts": [
     {
+      "id": "output-inventory-fault-isolation", "runner": "rust", "package": "echode-audio-io", "target": ["--lib"],
+      "test": "hardware::tests::audit_iqa06_one_unreadable_device_keeps_other_outputs_and_recovers", "timeout": 180,
+      "purpose": "機器単位の HAL・値検証の失敗を除外し、正常な出力・選択・復帰と番号付きの原因ログを保つ（IQA-06）",
+      "negative_control": {"file": "crates/echode-audio-io/src/hardware.rs", "old": "match reader.output(id) {", "new": "match Ok::<_, AudioError>(reader.output(id)?) {"}
+    },
+    {
+      "id": "hal-overload-log", "runner": "rust", "package": "echode-audio-io", "target": ["--lib"],
+      "test": "stream::overload_tests::audit_pca10_hal_overloads_reach_the_product_log_without_stopping_output", "timeout": 180,
+      "purpose": "HAL 過負荷の通知を機器なしで製品の service・close へ通し、位置付きログ・集約・継続を調べる（PCA-10）",
+      "negative_control": {"file": "crates/echode-audio-io/src/stream.rs", "old": "listener.report(Some(sample), callbacks, false);", "new": "let _ = (listener, sample, callbacks);"}
+    },
+    {
       "id": "plugin-musical-transport", "runner": "rust", "package": "echode-plugin-host", "target": ["--test", "hosted_playback"],
       "test": "transport::every_stage_receives_sample_accurate_transport_across_blocks_under_rtsan", "timeout": 180,
       "purpose": "製品のテンポ・位置を全 CLAP 段とフォルダ FX へ渡し、停止・短いループ・途中のテンポ変化をブロック長によらず保つ",

@@ -538,6 +538,7 @@ fn retained_stream_publishes_a_stopped_locate_before_its_callback() {
         prepare_playback(&project, 48000, 64, 0, &TransportSetup::idle()).unwrap();
     let mut stream = OutputStream {
         workgroup_listener: None,
+        overloads: None,
         device: OutputDevice {
             id: 0,
             uid: "fixture".into(),
@@ -1186,6 +1187,7 @@ fn a_panic_in_the_render_leaves_the_output_silent_and_reports_its_location() {
     };
     let mut stream = OutputStream {
         workgroup_listener: None,
+        overloads: None,
         device: OutputDevice {
             id: 0,
             uid: "fixture".into(),

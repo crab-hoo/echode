@@ -55,15 +55,16 @@
 
 ### 音声・再生・トランスポート
 
+- **HAL**: 実機の一覧復帰・過負荷通知は未確認（UC-87・88）。通知しない音切れは検出できない。
 - **テンポ境界**: 原点前後の実機・聴感は UC-62（[ADR 0275](decisions/0275-shared-integer-tempo-index.md)）。
 - **停止と一時停止**: 停止は記憶した開始位置へ戻り、一時停止はその場に保つ（[ADR 0155](decisions/0155-remembered-playback-start.md)）。
   Return は、入力欄とブラウザ一覧の確定・配置を優先する（[ADR 0181](decisions/0181-piano-reference-workflow-and-keys.md)）。
   実画面の操作感と、停止で戻る時の聴感はユーザー確認待ち（UC-17）。
 - **再生ヘッドの追従**: 追従は保存しない表示状態で、キーの割当はない。
   停止中のズームで範囲外になった再生ヘッドは、次の再生・停止・位置移動まで表示しない（[ADR 0159](decisions/0159-playhead-follow.md)）。
-  ページ送りの見え方とトグルの VoiceOver はユーザー確認待ち（UC-18）。
-- **開いた時の出力準備**: 準備が終わる前の再生は、その残りと準備中に足した FX の起動を待つ。
-  停止中のプラグイン処理（下のライブ停止）の負荷は、開いた時点から生じる（[ADR 0147](decisions/0147-output-prewarm-and-background-media.md)、[ADR 0333](decisions/0333-install-diff-graph-off-worker.md)）。
+  ページ送り・VoiceOver は未確認（UC-18）。
+- **開いた時の出力準備**: 再生は準備中の FX を含む出力の完成を待つ。
+  停止中の処理負荷は開いた時から生じる（[ADR 0147](decisions/0147-output-prewarm-and-background-media.md)、[ADR 0333](decisions/0333-install-diff-graph-off-worker.md)）。
   実機の待ちと操作感は UC-19・69。
 - **ライブ停止**: 停止中も無音の入力でプラグインを処理し、余韻とプラグイン内の鍵盤の音を出力する（[ADR 0133](decisions/0133-stopped-plugin-processing-and-edit-input.md)）。
   実機と第三者プラグインの聴感はユーザー確認待ち（UC-25）。

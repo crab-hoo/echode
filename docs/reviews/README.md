@@ -127,6 +127,7 @@
 
 ## 2. オーディオエンジン・リアルタイム・再生
 
+- 機器ごとの一覧読取りの失敗の分離と HAL 過負荷の記録: [ADR 0366](../decisions/0366-hal-fault-isolation-and-overload-notices.md)（IQA-06・PCA-10）。
 - ステレオ・ループ・フェーダー補間: [ADR 0095](../decisions/0095-product-audio-buses-and-continuity.md)、[ADR 0108](../decisions/0108-phase1-loop-readiness.md)。
   モノの最初の音源をステレオの素材のトラックで等電力のステレオにする: [ADR 0337](../decisions/0337-mono-instrument-on-stereo-source.md)。
   子の音を親トラックのバスへ通す・子から始める処理の順・親自身の音のゲート: [ADR 0338](../decisions/0338-folder-bus.md)（FCA-06）。
