@@ -235,6 +235,9 @@ pub struct TestMain {
 
 impl TestMain {
     fn ports(&self) -> (&'static [u32], &'static [u32]) {
+        if fault_now() == Fault::AudioPorts {
+            return audio_ports::ports();
+        }
         if self.role == Role::Flip && port_flip_active() {
             return (&[], &[1]);
         }
@@ -633,6 +636,9 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
     }
 
     fn deactivate(self, main_thread: &TestMain) {
+        if self.fault == Fault::AudioPorts {
+            audio_ports::deactivate(main_thread.host.shared());
+        }
         if self.fault == Fault::NotePorts {
             note_ports::deactivate(main_thread.host.shared());
         }
@@ -1259,6 +1265,10 @@ unsafe extern "C" fn port_get(
     is_input: bool,
     info: *mut clap_audio_port_info,
 ) -> bool {
+    if fault_now() == Fault::AudioPorts {
+        // SAFETY: the host supplies writable storage for this descriptor.
+        return unsafe { audio_ports::get(index, is_input, &mut *info) };
+    }
     // SAFETY: the host calls with the plugin pointer this plugin gave it, on the main thread, and
     // writable storage for one descriptor in `info`.
     unsafe {
@@ -1270,11 +1280,7 @@ unsafe extern "C" fn port_get(
             };
             *info = clap_audio_port_info {
                 id: index,
-                name: if fault_now() == Fault::AudioPorts {
-                    audio_ports::name()
-                } else {
-                    [0; clap_sys::string_sizes::CLAP_NAME_SIZE]
-                },
+                name: [0; clap_sys::string_sizes::CLAP_NAME_SIZE],
                 flags: if index == 0 {
                     CLAP_AUDIO_PORT_IS_MAIN
                 } else {
@@ -1533,6 +1539,9 @@ unsafe extern "C" fn state_load(plugin: *const clap_plugin, stream: *const clap_
     unsafe {
         PluginWrapper::<TestGain>::handle(plugin, |wrapper| {
             wrapper.main_thread().mark_dirty();
+            if fault_now() == Fault::AudioPorts {
+                audio_ports::change(wrapper.main_thread().host.shared(), byte);
+            }
             if fault_now() == Fault::NotePorts {
                 note_ports::change(wrapper.main_thread().host.shared(), byte);
             }

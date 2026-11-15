@@ -6,7 +6,7 @@
 ## プラグイン・デバイスビュー
 
 - **CLAP の互換性**: 第三者のテンポ同期・聴感は UC-85、ほかの互換性は UC-80〜83。
-  音声ポートの構造変更は未対応（[ADR 0356](../decisions/0356-clap-note-port-capabilities-and-lifecycle.md)）。
+  音声ポートのリスト・チャンネル数の動的変更は未対応。再有効化前の変更検出時はヘルパーを停止する（[ADR 0374](../decisions/0374-dimension-preserving-audio-port-rescans.md)）。
 - **遅いプラグインの走査**: 5 秒で答えないバンドルは後で 120 秒待ち、なお答えなければ次の起動まで出ない（UC-65、[ADR 0285](../decisions/0285-scan-timeouts-are-not-verdicts.md)）。
 - **オフライン書出し（CLI-A1）**: ステレオ・u32 フレームまで、ヘルパーは 1 ブロック 60 秒待つ。出力先は元パッケージの外へ固定する（[ADR 0260](../decisions/0260-pinned-gui-export-destination.md)）。
   取消は処理の区切りを待つ。画面・VO は UC-53〜61、聴感は UC-52・57（[ADR 0258](../decisions/0258-peak-export-normalization.md)）。

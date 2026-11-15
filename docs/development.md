@@ -394,8 +394,9 @@ CLAP の主スレッドタイマーの登録表・拡張・期限の計算と通
 時刻を引数で進める境界回帰は `plugin_timers_tests.rs`、実ヘルパーの停止中の通知と callback 中の登録・解除は `tests/isolation/timer_support.rs` を使う（[ADR 0351](decisions/0351-clap-main-thread-timers.md)）。
 CLAP の余韻の通知・再有効化後の読直しは `threads.rs`、親の最新値は `session.rs` の `PluginControl` に置く。
 確定前の問合せは `session_operations.rs::refresh_tail`、回帰は `isolation/tail.rs`・`hosted_playback/tail.rs` と `echode-cli/tests/render/tail.rs` を使う（[ADR 0352](decisions/0352-live-clap-tails-and-export-fence.md)）。
-CLAP の音声ポート名の通知と対応フラグは `echode-plugin-host/src/audio_ports.rs`、登録は `threads.rs` に置く。
-実ヘルパーの対応フラグ・名前変更後の処理と再起動のないことは `tests/isolation/audio_ports.rs` を使う（[ADR 0355](decisions/0355-clap-audio-port-name-rescans.md)）。
+CLAP の音声ポートの対応フラグは `echode-plugin-host/src/audio_ports.rs`、初回の寸法と ID は `threads.rs::PortShape` に置く。
+再有効化前の一致の検証は `Bridge::reactivate` に集約し、無効化後・有効化前だけに記述を読む。
+名前・寸法を変えないメタデータの通知と、寸法・ID の不正変更や記述の失敗は `tests/isolation/audio_ports.rs` を使う（[ADR 0374](decisions/0374-dimension-preserving-audio-port-rescans.md)）。
 CLAP のノート形式の対応の公開は `echode-plugin-host/src/note_ports.rs`、全発音停止の再生成は `threads.rs::activate` に置く。
 一覧は `Processor<P>` が処理器とともに渡し、`render_plugin` が通常のイベントの前へ参照でつなぐ。
 名前の通知・無効化中のポートの増減・0 への変更・終了処理の順序は `tests/isolation/note_ports.rs` を使う（[ADR 0356](decisions/0356-clap-note-port-capabilities-and-lifecycle.md)）。

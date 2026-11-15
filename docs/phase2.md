@@ -218,9 +218,9 @@ CLAP の遅延の取得とデバイス列の表示は [ADR 0246](decisions/0246-
 `clap.timer-support` は停止中・窓なしでも主スレッドから通知し、callback 中の登録・解除を扱う（[ADR 0351](decisions/0351-clap-main-thread-timers.md)）。
 `clap.tail` の実行中の変更と再有効化後の値を反映し、書出しの自動長を更新する。
 短い曲も確定前に値を問い合わせる（[ADR 0352](decisions/0352-live-clap-tails-and-export-fence.md)）。
-`clap.audio-ports` のホスト側は名前の更新だけを許可し、音声を再起動しない（[ADR 0355](decisions/0355-clap-audio-port-name-rescans.md)）。
+`clap.audio-ports` の対応範囲と固定する寸法は [プラグイン設計書 §9.1](architecture/plugins-and-devices.md#91-共通の抽象) にまとめる（[ADR 0374](decisions/0374-dimension-preserving-audio-port-rescans.md)）。
 `clap.note-ports` は native CLAP の対応を公開し、名前の通知で再起動せず、無効化中の全走査に合わせて終了処理を読み直す。
-MIDI / MPE / MIDI 2.0 の曲の入力と、音声ポートの構造変更は残る（[ADR 0356](decisions/0356-clap-note-port-capabilities-and-lifecycle.md)）。
+MIDI / MPE / MIDI 2.0 の曲の入力と、音声ポートのリスト・チャンネル数の動的変更は残る（[ADR 0356](decisions/0356-clap-note-port-capabilities-and-lifecycle.md)）。
 曲のテンポ・拍位置・秒・拍子・小節・ループの生成と全段への配布、CLAP の `process.transport` へ接続した。
 ブロック内のテンポ境界・折返しと停止の状態も渡す（[ADR 0358](decisions/0358-product-musical-transport.md)）。
 段ごとの時刻の PDC 補正はなく、第三者の同期モードと聴感は UC-85 に残る。

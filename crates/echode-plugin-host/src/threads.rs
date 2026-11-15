@@ -336,45 +336,60 @@ impl Bridge {
         self.bump_control();
     }
 
+    fn reactivate(
+        &self,
+        instance: &mut PluginInstance<EchodeHost>,
+    ) -> Result<StoppedProcessor, HostError> {
+        // Deactivate has returned and the audio thread has relinquished the
+        // processor. Validate every activation, even without a rescan notice.
+        // Never pair a new layout with the initial graph's buffers or routing.
+        let shape = query_audio_ports(instance)?;
+        let expected = published_ports(self).ok_or(HostError::PortsUnpublished)?;
+        if &shape != expected {
+            return Err(HostError::AudioPortLayoutChanged);
+        }
+        activate(
+            instance,
+            f64::from_bits(self.sample_bits.load(Ordering::Acquire)),
+            self.activation_frames.load(Ordering::Acquire),
+        )
+    }
+
     fn restart_on_main(&self) {
         let want = self.restart_for_main.load(Ordering::Acquire);
         let restarted = INSTANCE.with(|cell| {
             let instance = cell.get();
             if instance.is_null() {
-                return false;
+                return Ok(false);
             }
             let Some(stopped) = self.processor.try_take() else {
-                return false;
+                return Ok(false);
             };
             // SAFETY: as in `on_main`: the instance lives until `serve_region` clears `INSTANCE`,
             // and this main-thread call holds its only reference. Audio has handed off the processor.
             let instance = unsafe { &mut *instance };
             instance.deactivate(stopped.inner);
-            match activate(
-                instance,
-                f64::from_bits(self.sample_bits.load(Ordering::Acquire)),
-                self.activation_frames.load(Ordering::Acquire),
-            ) {
-                Ok(stopped) => {
-                    self.update_tail(instance);
-                    self.latency_samples
-                        .store(query_latency(instance), Ordering::Release);
-                    publish_stopped(&self.processor, stopped, false);
-                    true
-                }
-                Err(error) => {
-                    eprintln!("echode-plugin-host: activate after restart failed: {error}");
-                    false
-                }
-            }
+            let stopped = self.reactivate(instance)?;
+            self.update_tail(instance);
+            self.latency_samples
+                .store(query_latency(instance), Ordering::Release);
+            publish_stopped(&self.processor, stopped, false);
+            Ok::<_, HostError>(true)
         });
-        if restarted {
-            self.need_start.store(true, Ordering::Release);
-            self.main_done.store(want, Ordering::Release);
-        } else {
-            // Never report a restart as done if its processor was absent or activation failed.
-            eprintln!("echode-plugin-host: restart did not produce a stopped processor");
-            self.stop.store(true, Ordering::Release);
+        match restarted {
+            Ok(true) => {
+                self.need_start.store(true, Ordering::Release);
+                self.main_done.store(want, Ordering::Release);
+            }
+            Ok(false) => {
+                // Never acknowledge a restart without its stopped processor.
+                eprintln!("echode-plugin-host: restart did not produce a stopped processor");
+                self.stop.store(true, Ordering::Release);
+            }
+            Err(error) => {
+                eprintln!("echode-plugin-host: activate after restart failed: {error}");
+                self.stop.store(true, Ordering::Release);
+            }
         }
         self.bump_audio();
         self.bump_control();
@@ -390,11 +405,7 @@ impl Bridge {
             // and this main-thread call holds its only reference.
             let instance = unsafe { &mut *instance };
             if self.processor.is_empty() {
-                match activate(
-                    instance,
-                    f64::from_bits(self.sample_bits.load(Ordering::Acquire)),
-                    self.activation_frames.load(Ordering::Acquire),
-                ) {
+                match self.reactivate(instance) {
                     Ok(stopped) => {
                         self.update_tail(instance);
                         self.latency_samples
@@ -1010,6 +1021,8 @@ fn serve_region(
             Err(error) => PortShape {
                 inputs: Vec::new(),
                 outputs: Vec::new(),
+                input_ids: Vec::new(),
+                output_ids: Vec::new(),
                 error: Some(error),
             },
         };
@@ -2110,9 +2123,12 @@ fn refresh_ptrs(planes: &mut [Vec<f32>], ptrs: &mut [*mut f32]) {
     }
 }
 
+#[derive(PartialEq, Eq)]
 struct PortShape {
     inputs: Vec<u32>,
     outputs: Vec<u32>,
+    input_ids: Vec<u32>,
+    output_ids: Vec<u32>,
     error: Option<PluginFailure>,
 }
 
@@ -2802,14 +2818,16 @@ fn query_audio_ports(instance: &PluginInstance<EchodeHost>) -> Result<PortShape,
         .ok_or(PluginFailure::NoAudioPorts)?;
     let count = ports.count.ok_or(PluginFailure::NoPortCount)?;
     let get = ports.get.ok_or(PluginFailure::NoPortInfo)?;
-    let inputs = read_port_list(plugin, count, get, true)?;
-    let outputs = read_port_list(plugin, count, get, false)?;
+    let (inputs, input_ids) = read_port_list(plugin, count, get, true)?;
+    let (outputs, output_ids) = read_port_list(plugin, count, get, false)?;
     if inputs.is_empty() && outputs.is_empty() {
         return Err(PluginFailure::NoPorts);
     }
     Ok(PortShape {
         inputs,
         outputs,
+        input_ids,
+        output_ids,
         error: None,
     })
 }
@@ -2859,10 +2877,11 @@ fn read_port_list(
         info: *mut clap_audio_port_info,
     ) -> bool,
     is_input: bool,
-) -> Result<Vec<u32>, PluginFailure> {
+) -> Result<(Vec<u32>, Vec<u32>), PluginFailure> {
     // SAFETY: the plugin's own function, called on the main thread while the plugin is inactive.
     let port_count = unsafe { count(plugin, is_input) };
     let mut counts = Vec::with_capacity(port_count as usize);
+    let mut ids = Vec::with_capacity(port_count as usize);
     for index in 0..port_count {
         let mut info = clap_audio_port_info {
             id: 0,
@@ -2886,8 +2905,9 @@ fn read_port_list(
             return Err(PluginFailure::PortWithoutChannels(port));
         }
         counts.push(info.channel_count);
+        ids.push(info.id);
     }
-    Ok(counts)
+    Ok((counts, ids))
 }
 
 fn publish_stopped(handoff: &ProcessorHandoff, stopped: StoppedProcessor, realtime: bool) {

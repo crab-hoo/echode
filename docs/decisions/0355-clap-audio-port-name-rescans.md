@@ -1,7 +1,7 @@
 # 0355. CLAP の音声ポートの再走査は名前の変更だけを公開する
 
 - 日付: 2026-11-15
-- 状態: 現行
+- 状態: 一部置換（[0374](0374-dimension-preserving-audio-port-rescans.md)）
 - 領域: プラグイン・隔離
 - 対象: P2-03・FCA-07 の `clap.audio-ports`
 

@@ -59,6 +59,8 @@ pub enum HostError {
     /// The processing thread looked for the plugin's ports before the main
     /// thread stored them. The launch order rules this out.
     PortsUnpublished,
+    /// A restart changed port identities or dimensions without a new graph.
+    AudioPortLayoutChanged,
     /// The named worker thread panicked. It has already printed why.
     Panicked(&'static str),
     /// A measurement asked for a block size the buffers cannot hold.
@@ -79,6 +81,7 @@ impl std::fmt::Display for HostError {
             Self::RunLoopSource => f.write_str("could not create the main run loop source"),
             Self::NoRunLoop => f.write_str("the thread has no run loop"),
             Self::PortsUnpublished => f.write_str("plugin ports were not published"),
+            Self::AudioPortLayoutChanged => f.write_str("plugin audio port layout changed"),
             Self::Panicked(thread) => write!(f, "the {thread} thread panicked"),
             Self::FrameCount(frames) => write!(f, "unsupported frame count {frames}"),
         }

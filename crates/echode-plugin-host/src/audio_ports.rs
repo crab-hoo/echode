@@ -1,8 +1,10 @@
-//! Audio-port names may change without invalidating prepared buffer layouts.
+//! Dimension-preserving audio-port metadata can change while inactive.
 use crate::threads::EchodeHost;
 use clack_host::extensions::prelude::*;
 use clap_sys::ext::audio_ports::{
-    CLAP_AUDIO_PORTS_RESCAN_NAMES, CLAP_EXT_AUDIO_PORTS, clap_host_audio_ports,
+    CLAP_AUDIO_PORTS_RESCAN_FLAGS, CLAP_AUDIO_PORTS_RESCAN_IN_PLACE_PAIR,
+    CLAP_AUDIO_PORTS_RESCAN_NAMES, CLAP_AUDIO_PORTS_RESCAN_PORT_TYPE, CLAP_EXT_AUDIO_PORTS,
+    clap_host_audio_ports,
 };
 use clap_sys::host::clap_host;
 use std::ffi::CStr;
@@ -30,14 +32,21 @@ unsafe impl ExtensionImplementation<EchodeHost> for HostAudioPorts {
 }
 
 unsafe extern "C" fn is_rescan_flag_supported(_host: *const clap_host, flag: u32) -> bool {
-    // The prepared graph fixes port/channel counts and buffer policy. Do not
-    // promise structural changes, unknown flags, or combinations of flags.
-    flag == CLAP_AUDIO_PORTS_RESCAN_NAMES
+    // CLAP asks about one flag at a time, not a set of flags. Precision hints,
+    // semantic port types, and optional aliasing do not change our separate f32
+    // buffers or index-based routing. Dimensions and port lists remain fixed.
+    matches!(
+        flag,
+        CLAP_AUDIO_PORTS_RESCAN_NAMES
+            | CLAP_AUDIO_PORTS_RESCAN_FLAGS
+            | CLAP_AUDIO_PORTS_RESCAN_PORT_TYPE
+            | CLAP_AUDIO_PORTS_RESCAN_IN_PLACE_PAIR
+    )
 }
 
 unsafe extern "C" fn rescan(_host: *const clap_host, _flags: u32) {
-    // Names are not retained or displayed, so there is no name cache to refresh.
-    // In particular, a name-only change must not restart or interrupt audio.
-    // Plugins must query each supported flag before requesting a rescan; flags
-    // other than NAMES are not supported and cannot alter this host's layout.
+    // Names and these metadata hints are not cached. All audio uses separate
+    // f32 planes regardless of precision preferences, port type, or alias hints.
+    // Before reactivation the main thread revalidates the immutable port layout;
+    // do not reenter a plugin's descriptor callbacks from its rescan callback.
 }
