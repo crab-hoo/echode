@@ -714,6 +714,36 @@ class PolicyTests(unittest.TestCase):
             self.assertTrue({"check", "check-product-contracts"} <= self.selected(path))
             self.assertFalse({"rtsan", "check-bridge-asan", "check-bridge-tsan"} & self.selected(path))
 
+    def test_mcp_completion_contracts_keep_size_and_deadline_policies_separate(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        for name, target, test, mutation in (
+            (
+                "mcp-complete-replies",
+                ["--test", "mcp_completion"],
+                "contract_large_mcp_replies_preserve_history_and_recovery",
+                "read_line(stream, u64::MAX)",
+            ),
+            (
+                "mcp-operation-deadline",
+                ["--lib"],
+                "mcp::tests::session_handshake_bounds_io_but_does_not_deadline_pending_operations",
+                ".set_read_timeout(None)",
+            ),
+        ):
+            contract = contracts[name]
+            self.assertEqual(
+                (contract["runner"], contract["package"], contract["target"]), ("rust", "echode-api", target)
+            )
+            self.assertEqual(contract["test"], test)
+            fault = contract["negative_control"]
+            self.assertEqual(fault["file"], "crates/echode-api/src/mcp.rs")
+            self.assertEqual(fault["old"], mutation)
+            self.assertEqual((ROOT / fault["file"]).read_text().count(mutation), 1)
+        for file in ("src/mcp.rs", "src/mcp_tests.rs", "tests/audit.rs", "tests/mcp_completion.rs"):
+            selected = self.selected(f"crates/echode-api/{file}")
+            self.assertTrue({"check", "check-product-contracts"} <= selected)
+            self.assertFalse({"rtsan", "check-bridge-asan", "check-bridge-tsan"} & selected)
+
     def test_mcp_framing_contracts_cover_stdio_and_backend_boundaries(self):
         contracts = {item["id"]: item for item in self.policy["product_contracts"]}
         for name, test in (
@@ -2652,6 +2682,8 @@ class PolicyTests(unittest.TestCase):
                 "mcp-backend-envelope",
                 "mcp-backend-version",
                 "mcp-backend-errors",
+                "mcp-complete-replies",
+                "mcp-operation-deadline",
                 "mcp-stdio-framing",
                 "mcp-backend-framing",
                 "rpc-json-whitespace",

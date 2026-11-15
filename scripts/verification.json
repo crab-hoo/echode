@@ -442,6 +442,18 @@
       "negative_control": {"file": "crates/echode-api/src/mcp.rs", "old": "response.get(\"error\").is_some_and(|error| {\n            !error.is_object()\n                || !(error[\"code\"].is_i64() || error[\"code\"].is_u64())\n                || !error[\"message\"].is_string()\n        })", "new": "response.get(\"error\").is_some_and(|_| false)"}
     },
     {
+      "id": "mcp-complete-replies", "runner": "rust", "package": "echode-api", "target": ["--test", "mcp_completion"],
+      "test": "contract_large_mcp_replies_preserve_history_and_recovery", "timeout": 180,
+      "purpose": "旧・新MCPの大きい確定応答・概要とリソースを成功として受け、単一Undo/Redo・読取り時の履歴不変・再オープンを保つ",
+      "negative_control": {"file": "crates/echode-api/src/mcp.rs", "old": "read_line(stream, u64::MAX)", "new": "read_line(stream, MAX_REQUEST_LINE as u64)"}
+    },
+    {
+      "id": "mcp-operation-deadline", "runner": "rust", "package": "echode-api", "target": ["--lib"],
+      "test": "mcp::tests::session_handshake_bounds_io_but_does_not_deadline_pending_operations", "timeout": 60,
+      "purpose": "実ソケットでAPI版確認後の読取り期限がなく、要求書込みの期限が残ることを待ち時間の計測なしで検査する",
+      "negative_control": {"file": "crates/echode-api/src/mcp.rs", "old": ".set_read_timeout(None)", "new": ".set_read_timeout(Some(READ_TIMEOUT))"}
+    },
+    {
       "id": "mcp-stdio-framing", "runner": "rust", "package": "echode-api", "target": ["--test", "mcp_framing"],
       "test": "contract_unterminated_mcp_input_preserves_edits_history_and_recovery", "timeout": 180,
       "purpose": "公開MCP入口と実ソケットで旧・新プロトコルの部分行を編集前に拒否し、ジャーナル・Undo/Redo・完結した前方の編集・再オープンを保つ",

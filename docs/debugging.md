@@ -282,6 +282,7 @@ make debug-report
   - 新 MCP が `unsupported protocol version` / `clientCapabilities must be an object` を返す
   - MCP のツール引数が拒否される・拒否したのに履歴が変わる
   - MCP が `unsupported Echode session protocol` を返す
+  - MCP の大きい・遅い処理が結果不明になる・待ち続ける
   - MCP が `invalid session response` と結果不明を返す
   - MCP 改行回帰で `backend EOF wait` が 5 秒の期限切れになる
   - MCP が `MCP message ended without a newline` を返す

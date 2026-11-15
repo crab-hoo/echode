@@ -457,6 +457,16 @@ MCP 自体のプロトコル版ではなく、接続先 API の `protocol.versio
 `mcp_version.rs` と必須契約 `mcp-backend-version` は、実ソケットで未送信・履歴保持・再オープンを確認する。
 正しい版 1 の追加フィールドは拒否しない（[ADR 0115 の版確認](../decisions/0115-phase2-mcp.md#接続先の版確認の回帰補強2026-10-29)）。
 
+### MCP の大きい・遅い処理が結果不明になる・待ち続ける
+
+`mcp.rs::read_line` の上限は要求だけで、API 応答は改行まで読む。
+`connect_session` は uid と API 版を確認し、その後の読取り期限を外す（[ADR 0365](../decisions/0365-mcp-complete-session-replies.md)）。
+旧版の `MCP message exceeds the single-message size limit` と 30 秒後の `WouldBlock` は DIA-01 の両経路である。
+現在は処理中と、生きたまま応答しない接続先を期限だけでは区別しない。接続先のスタック・ログと確定済みの履歴を調べる。
+切断・不正応答なら結果不明の案内を保ち、同じ編集を確認なしに再送しない。
+`mcp_completion.rs` は大きい確定応答・概要・リソースと履歴を、`mcp_tests.rs` は実ソケットの期限設定を検査する。
+期限設定の fixture は版応答後も接続を保つ。直後に閉じると、macOS では設定時の `SetReadTimeout` が `EINVAL` になった例があり、期限のアサーションとは区別する。
+
 ### MCP が `invalid session response` と結果不明を返す
 
 接続先の版・ID・result/error の排他と、error の整数 code・文字列 message を照合する。
@@ -482,7 +492,8 @@ MCP 自体のプロトコル版ではなく、接続先 API の `protocol.versio
 
 ### MCP が `MCP message ended without a newline` を返す
 
-stdio 入力と接続先 API の応答は同じ `mcp.rs::read_line` を通るため、どちらの EOF かを切り分ける。
+stdio 入力と接続先 API の応答は同じ `mcp.rs::read_line` の改行検証を通る。
+上限は要求だけに掛かるので、どちらの EOF かを切り分ける。
 stdio の部分行は編集前に拒否し、完了済みの前方の要求だけを保持する。CR だけの終端では完了しない。
 版応答の部分行では編集を送らないが、編集応答の部分行では編集が既に成立している可能性がある。
 `isError` と結果不明の案内を確認し、概要を調べずに再送しない。

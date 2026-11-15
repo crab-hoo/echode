@@ -306,9 +306,11 @@ JSON の構文上の空白は `ApiSession::reply` の `trim_matches` と既存�
 （[ADR 0073 の改行境界](decisions/0073-socket-path.md#改行前の切断の拒否2026-10-29)）。
 
 MCP の改行完了は `crates/echode-api/src/mcp.rs::read_line` が stdio と接続先 API の応答の両方で検査する。
-公開入口と実ソケットの `tests/mcp_framing.rs` は、部分行の拒否・前方の編集・履歴と再オープン、
-版応答による編集の許可と編集応答の結果不明・再送禁止、LF / CRLF 込みの行上限を区別する
-（[ADR 0115 の回帰補強](decisions/0115-phase2-mcp.md#改行境界の回帰補強2026-10-29)）。
+改行込み 1 MiB は要求だけに適用し、応答にはサイズ上限を掛けない。
+`connect_session` が uid と版を確認し、版確認後の応答読取り期限を外す（[ADR 0365](decisions/0365-mcp-complete-session-replies.md)）。
+`tests/mcp_framing.rs` は部分行・前方の編集・履歴・再送禁止と要求の LF / CRLF 込みの行上限を区別する。
+`tests/mcp_completion.rs` は大きい確定応答・概要とリソース・Undo / Redo・再オープンを検査し、
+`mcp_tests.rs` は実ソケットの読取り／書込みの期限設定を照合する。
 
 MCP の接続先の error の形は `mcp.rs::exchange` で検証する。
 `tests/mcp_responses.rs` は公開入口と実ソケットで、不正な応答の結果不明の案内・再送禁止と、

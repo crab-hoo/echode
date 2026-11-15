@@ -43,8 +43,12 @@ fn a_wrong_session_version_never_receives_an_edit() {
     let listener = bind_socket(&path).unwrap();
     let server = std::thread::spawn(move || {
         let mut stream = BufReader::new(listener.accept().unwrap().0);
-        let request: Value =
-            serde_json::from_str(&read_line(&mut stream).unwrap().unwrap()).unwrap();
+        let request: Value = serde_json::from_str(
+            &read_line(&mut stream, MAX_REQUEST_LINE as u64)
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(request["method"], "protocol.version");
         writeln!(
             stream.get_mut(),
@@ -53,7 +57,9 @@ fn a_wrong_session_version_never_receives_an_edit() {
         )
         .unwrap();
         assert!(
-            read_line(&mut stream).unwrap().is_none(),
+            read_line(&mut stream, MAX_REQUEST_LINE as u64)
+                .unwrap()
+                .is_none(),
             "an incompatible session received an edit"
         );
     });
@@ -98,7 +104,9 @@ fn malformed_or_mismatched_backend_results_are_not_successful_edits() {
         let (client, server) = UnixStream::pair().unwrap();
         let server = std::thread::spawn(move || {
             let mut server = BufReader::new(server);
-            read_line(&mut server).unwrap().unwrap();
+            read_line(&mut server, MAX_REQUEST_LINE as u64)
+                .unwrap()
+                .unwrap();
             server.get_mut().write_all(response.as_bytes()).unwrap();
         });
         let error =
@@ -187,4 +195,48 @@ fn typed_errors_session_request_limit_does_not_send_bytes() {
     let mut bytes = Vec::new();
     server.read_to_end(&mut bytes).unwrap();
     assert!(bytes.is_empty());
+}
+
+#[test]
+fn session_handshake_bounds_io_but_does_not_deadline_pending_operations() {
+    let path = std::path::PathBuf::from(format!(
+        "/tmp/echode-mcp-deadline-{}.sock",
+        echode_model::Id::generate()
+    ));
+    let listener = bind_socket(&path).unwrap();
+    let server = std::thread::spawn(move || {
+        let mut stream = BufReader::new(listener.accept().unwrap().0);
+        let request: Value = serde_json::from_str(
+            &read_line(&mut stream, MAX_REQUEST_LINE as u64)
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(request["method"], "protocol.version");
+        writeln!(
+            stream.get_mut(),
+            "{}",
+            json!({"jsonrpc":"2.0", "id":0, "result":{"version":1}})
+        )
+        .unwrap();
+        let mut remaining = Vec::new();
+        stream.read_to_end(&mut remaining).unwrap();
+        assert!(remaining.is_empty());
+    });
+    let connection = connect_session(&path).unwrap();
+    let write_timeout = connection.get_ref().write_timeout().unwrap();
+    let read_timeout = connection.get_ref().read_timeout().unwrap();
+    drop(connection);
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+    assert_eq!(
+        write_timeout,
+        Some(READ_TIMEOUT),
+        "request writes must remain bounded"
+    );
+    // Inspect the real socket policy instead of sleeping past a wall-clock limit.
+    assert_eq!(
+        read_timeout, None,
+        "a validated session must not time out a pending operation"
+    );
 }

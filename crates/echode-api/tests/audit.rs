@@ -1,5 +1,5 @@
-//! Open items from docs/reviews/2026-10-08-audit.md. Each test fails until its item
-//! is fixed; `make known-bugs` runs them. Remove the `#[ignore]` with the fix.
+//! Audit regressions from docs/reviews/. Ignored audit_* tests reproduce open
+//! items; remove their #[ignore] with the fix to keep them in the normal suite.
 
 use echode_api::bind_socket;
 
@@ -14,12 +14,9 @@ fn audit_api3_binding_over_a_regular_file_keeps_the_file() {
     assert_eq!(kept.as_deref(), Some(&b"{}"[..]));
 }
 
-/// DIA-01 (docs/reviews/2026-11-13-detailed-implementation-audit.md): the MCP
-/// adapter reads the session's reply under the request-line limit. A committed
-/// transaction answers with every created id, so its reply is longer than its
-/// request, and one past the limit is reported as a failed session request.
+/// DIA-01: an in-limit transaction produces a committed reply longer than the
+/// request-line limit. The adapter must acknowledge it without retrying the edit.
 #[test]
-#[ignore = "DIA-01: a committed edit whose reply passes 1 MiB is reported as failed"]
 fn audit_dia01_a_committed_transaction_with_a_long_reply_is_reported_as_done() {
     use std::io::{BufRead, BufReader, Write};
     use std::os::unix::net::UnixStream;
@@ -96,5 +93,16 @@ fn audit_dia01_a_committed_transaction_with_a_long_reply_is_reported_as_done() {
         answer["result"]["isError"], false,
         "a committed edit was reported as failed: {}",
         answer["result"]["structuredContent"]["error"]
+    );
+    assert!(
+        line.len() > LIMIT,
+        "this fixture must exceed the request limit"
+    );
+    assert_eq!(
+        answer["result"]["structuredContent"]["result"]
+            .as_array()
+            .unwrap()
+            .len(),
+        200
     );
 }

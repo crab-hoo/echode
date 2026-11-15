@@ -19,7 +19,7 @@
   PCA・IQA が読んでいない層（カーソル、隔離の制御、文書ワーカー、保管、API）を精読した。
   失敗の後に状態を戻さない経路（確定の失敗で編集中のまま、DIA-02。断られた保存で印が消える、DIA-04）と、
   間隔のない再試行（機器の一覧、DIA-03。プラグインの保存、DIA-05）を挙げた。
-  MCP は確定した編集を、応答が 1 MiB を超えると失敗として返す（DIA-01）。DIA-01〜04 を `audit_dia*` で再現した。
+  監査時の MCP の応答上限（DIA-01）は [ADR 0365](../decisions/0365-mcp-complete-session-replies.md) で分離し、版確認後の読取り期限も外した。DIA-01〜04 の当時の再現は各項目に保持する。
   DIA-03・05 は [ADR 0360](../decisions/0360-background-recording-retry-policy.md) で間隔と警告の規則を共通化し、取得済みの状態を保持した。
 - [2026-11-13 実装の品質の横断監査](2026-11-13-implementation-quality-audit.md): IQA-01〜12。
   「読めない」を「無い」に畳む復旧の入口（IQA-01・02）は [ADR 0350](../decisions/0350-unreadable-history-is-not-empty.md) で拒否へ改めた。

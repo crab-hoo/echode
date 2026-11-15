@@ -84,7 +84,7 @@ pub fn serve_mcp(
         lifecycle: Lifecycle::Fresh,
         legacy_ids: BTreeSet::new(),
     };
-    while let Some(line) = read_line(&mut input)? {
+    while let Some(line) = read_line(&mut input, MAX_REQUEST_LINE as u64)? {
         if let Some(response) = session.reply(&line) {
             writeln!(output, "{response}")
                 .map_err(|error| ApiError::io(ApiIoOperation::WriteMcpReply, error))?;
@@ -416,16 +416,16 @@ fn error(id: &Value, problem: ProtocolError) -> Value {
     json!({"jsonrpc":"2.0","id":id,"error":error})
 }
 
-fn read_line(input: &mut impl BufRead) -> Result<Option<String>, ApiError> {
+fn read_line(input: &mut impl BufRead, limit: u64) -> Result<Option<String>, ApiError> {
     let mut line = String::new();
     let count = input
-        .take(MAX_REQUEST_LINE as u64 + 1)
+        .take(limit.saturating_add(1))
         .read_line(&mut line)
         .map_err(|error| ApiError::io(ApiIoOperation::ReadMcpMessage, error))?;
     if count == 0 {
         return Ok(None);
     }
-    if count > MAX_REQUEST_LINE {
+    if count as u64 > limit {
         return Err(ApiError::McpMessageTooLong);
     }
     if !line.ends_with('\n') {
@@ -435,6 +435,11 @@ fn read_line(input: &mut impl BufRead) -> Result<Option<String>, ApiError> {
 }
 
 fn backend(socket: &Path, method: &str, params: Value) -> Result<Value, ApiError> {
+    let mut stream = connect_session(socket)?;
+    exchange(&mut stream, 1, method, params)
+}
+
+fn connect_session(socket: &Path) -> Result<BufReader<UnixStream>, ApiError> {
     // A fresh connection per call does not occupy the single-client session
     // while an MCP client sits idle. Never retry a possibly journaled edit.
     let stream = UnixStream::connect(socket)
@@ -453,7 +458,13 @@ fn backend(socket: &Path, method: &str, params: Value) -> Result<Value, ApiError
     if version["result"]["version"] != 1 {
         return Err(ApiError::UnsupportedSessionProtocol);
     }
-    exchange(&mut stream, 1, method, params)
+    // Version negotiation is bounded, but a validated session's operation may
+    // legitimately take longer. Await its complete reply without replaying it.
+    stream
+        .get_ref()
+        .set_read_timeout(None)
+        .map_err(|error| ApiError::io(ApiIoOperation::SetReadTimeout, error))?;
+    Ok(stream)
 }
 
 fn exchange(
@@ -468,7 +479,9 @@ fn exchange(
     }
     writeln!(stream.get_mut(), "{request}")
         .map_err(|error| ApiError::io(ApiIoOperation::WriteSessionRequest, error))?;
-    let line = read_line(stream)?.ok_or(ApiError::SessionClosed)?;
+    // Replies include generated IDs or an entire summary. The request limit
+    // must not discard a complete reply from this same-user session.
+    let line = read_line(stream, u64::MAX)?.ok_or(ApiError::SessionClosed)?;
     let response: Value = serde_json::from_str(&line).map_err(ApiError::SessionJson)?;
     if response["jsonrpc"] != "2.0"
         || response["id"] != id

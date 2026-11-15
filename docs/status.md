@@ -44,8 +44,8 @@
 ### API・MCP・文書の入口
 
 - **API の応答の書込み**: 応答の書込みが 30 秒進まない接続は閉じる。送信失敗の前に成立した編集は再実行しない（[ADR 0073](decisions/0073-socket-path.md)）。
-- **MCP の接続先の不正なエラー応答**: 不正な error 応答は結果不明として、再送前の確認を案内する。
-  確定済みの編集を再送・巻戻ししない（[ADR 0115](decisions/0115-phase2-mcp.md#接続先のエラー応答の形の検証2026-10-29)）。
+- **MCP の応答**: 版確認後はサイズ上限・読取り期限がなく、無応答なら待ち続ける。
+  不正応答は結果不明として確認を促し、確定した編集を再送・巻戻ししない（[ADR 0365](decisions/0365-mcp-complete-session-replies.md)）。
 - **文書の寿命と古い入力（SPG-02）**: 閉じる間はヘルパーの終了を待たず、文書なしの画面を `busy` のまま表示する（[ADR 0203](decisions/0203-document-session.md)）。
   実画面での文書切替・VoiceOver・聴感はユーザー確認待ち（UC-29）。
 - **文書の手番の調停（SPG-05）**: CLI と MCP はこのサービスを使わず、`DocumentHost` へ直接つなぐ（[ADR 0204](decisions/0204-document-service.md)）。
