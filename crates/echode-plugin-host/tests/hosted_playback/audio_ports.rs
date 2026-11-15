@@ -31,13 +31,29 @@ fn near(heard: f32, expected: f32) -> bool {
 /// heard at equal power on both sides. No block mixes the two routings.
 #[test]
 fn a_port_change_while_playing_moves_the_mapping_and_the_routing_together_under_rtsan() {
+    check_port_change(false);
+}
+
+#[test]
+fn an_audio_config_selection_uses_the_product_port_exchange_under_rtsan() {
+    check_port_change(true);
+}
+
+fn check_port_change(select_config: bool) {
+    let device = Id::generate();
     let (project, track) = Project::new().add_track("changing ports");
     let project = project
-        .add_clap_device(track, Id::generate(), "dev.echode.test-gain")
+        .add_clap_device(track, device, "dev.echode.test-gain")
         .unwrap();
     let block = 64; // This test's scratch size, not an engine limit.
-    let (mut control, mut audio) =
-        playback_with_plugins(&project, 48_000, block, &host_bin(), &[ports_route(6)]).unwrap();
+    let (mut control, mut audio) = playback_with_plugins(
+        &project,
+        48_000,
+        block,
+        &host_bin(),
+        &[ports_route(if select_config { 0 } else { 6 })],
+    )
+    .unwrap();
     control.set_clip_loader(stereo_clips_of(track.raw(), 0.25, 0.125, CLIP));
     control.replace(&project).unwrap();
     control.command(PlaybackCommand::Play).unwrap();
@@ -46,6 +62,16 @@ fn a_port_change_while_playing_moves_the_mapping_and_the_routing_together_under_
     assert_close(&left, &vec![0.5; block]);
     assert_close(&right, &vec![0.25; block]);
     let before = control.compensation_changes();
+    if select_config {
+        let plugin = control.device_control_handle(device.raw()).unwrap();
+        let configs = plugin
+            .audio_port_configs()
+            .expect("product configuration list");
+        assert_eq!(configs[1].id, 206);
+        plugin
+            .select_audio_port_config(configs[1].id)
+            .expect("product configuration selection");
+    }
     // A hung-helper guard, not a latency threshold.
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {

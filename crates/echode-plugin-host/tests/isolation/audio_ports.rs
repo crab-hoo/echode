@@ -59,6 +59,101 @@ fn audio_port_name_rescans_keep_the_layout_and_processor_under_rtsan() {
 }
 
 #[test]
+fn audio_config_presets_select_ids_and_exchange_exact_ports_under_rtsan() {
+    use echode_sandbox::PluginFailure;
+    let mut host = spawn_plugin(Some("audio-ports"), SessionLayout::stereo());
+    wait_probe(&mut host, [3, 1, 2, 0]);
+    let configs = host
+        .control_handle()
+        .audio_port_configs()
+        .expect("audio configuration presets");
+    assert_eq!(
+        configs.iter().map(|config| config.id).collect::<Vec<_>>(),
+        [100, 206, 303]
+    );
+    assert!(configs.iter().all(|config| config.name == "B"));
+    assert_eq!(configs[1].main_output_channels, 1);
+    assert_eq!(configs[2].input_ports, 2);
+    for (id, ports) in [
+        (206, PortLayout::new(vec![2], vec![1])),
+        (303, PortLayout::new(vec![1, 1], vec![2])),
+        (100, PortLayout::new(vec![2], vec![2])),
+    ] {
+        host.control_handle()
+            .select_audio_port_config(id)
+            .expect("select preset by id");
+        assert_eq!(
+            host.control_handle().audio_ports().1,
+            ports,
+            "configuration reply preceded its port notice"
+        );
+        assert!(
+            process_ports(&mut host, 32)
+                .iter()
+                .flatten()
+                .all(|sample| *sample == 0.0),
+            "audio configuration processed a stale mapping"
+        );
+        assert!(host.follow_ports().unwrap());
+        for frames in [1, 32, 127, 256] {
+            let output = process_ports(&mut host, frames);
+            for (channel, plane) in output.iter().enumerate() {
+                let expected = if id == 303 && channel == 1 {
+                    0.0
+                } else {
+                    0.25 * (channel + 1) as f32
+                };
+                assert!(
+                    plane.iter().all(|sample| (*sample - expected).abs() < 1e-6),
+                    "audio configuration {id} channel {channel}: {plane:?}"
+                );
+            }
+        }
+        let state = host.control_handle().capture_state().unwrap();
+        assert_eq!(
+            state[0] & 0x80,
+            0,
+            "audio configuration lifecycle: {state:?}"
+        );
+    }
+    for id in [0, 1, u32::MAX] {
+        assert!(matches!(
+            host.control_handle().select_audio_port_config(id),
+            Err(SessionError::Refused(Refusal::Plugin(
+                PluginFailure::AudioConfigRefused
+            )))
+        ));
+        check_audio(&mut host);
+    }
+    // Selection marks plugin-owned state dirty; the selected layout survives a
+    // capture/restore through the same product state path as other plugin edits.
+    let state = host.control_handle().capture_state().unwrap();
+    host.control_handle().restore_state(&[6]).unwrap();
+    wait_ports(&mut host, &PortLayout::new(vec![2], vec![1]));
+    host.control_handle().restore_state(&state).unwrap();
+    wait_ports(&mut host, &PortLayout::new(vec![2], vec![2]));
+    check_audio(&mut host);
+}
+
+#[test]
+fn missing_audio_config_extension_is_a_typed_refusal_and_audio_resumes_under_rtsan() {
+    use echode_sandbox::PluginFailure;
+    let mut host = spawn_plugin(None, SessionLayout::stereo());
+    for result in [
+        host.control_handle().audio_port_configs().map(|_| ()),
+        host.control_handle().select_audio_port_config(100),
+    ] {
+        assert!(matches!(
+            result,
+            Err(SessionError::Refused(Refusal::Plugin(
+                PluginFailure::NoAudioConfigs
+            )))
+        ));
+    }
+    check_audio(&mut host);
+}
+
+#[test]
 fn dimension_preserving_audio_port_rescans_revalidate_before_activation_under_rtsan() {
     let mut host = spawn_plugin(Some("audio-ports"), SessionLayout::stereo());
     wait_probe(&mut host, [3, 1, 2, 0]);

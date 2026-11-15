@@ -45,7 +45,7 @@ fn malformed_cases() -> Vec<(Vec<u8>, RefusalDecodeError, &'static str)> {
             ));
         }
     }
-    for code in 6..=u8::MAX {
+    for code in 7..=u8::MAX {
         cases.push((
             vec![10, code, 0],
             UnknownExpectedReply(code),
@@ -74,7 +74,7 @@ fn malformed_cases() -> Vec<(Vec<u8>, RefusalDecodeError, &'static str)> {
             ));
         }
     }
-    for kind in 25..=u8::MAX {
+    for kind in 31..=u8::MAX {
         cases.push((
             vec![7, kind],
             UnknownPluginKind(kind),
@@ -100,6 +100,7 @@ fn malformed_refusal_structure_retains_causes_through_every_socket_reply() {
         STATE_REJECTED,
         PARAMS_REJECTED,
         GUI_REJECTED,
+        AUDIO_CONFIG_REJECTED,
     ] {
         for (payload, expected, diagnostic) in malformed_cases() {
             let error = receive(typ, &payload).unwrap_err();
@@ -145,6 +146,7 @@ fn valid_refusals_keep_their_values_through_every_socket_reply() {
         STATE_REJECTED,
         PARAMS_REJECTED,
         GUI_REJECTED,
+        AUDIO_CONFIG_REJECTED,
     ] {
         for refusal in &refusals {
             let payload = crate::refusal::write_refusal(refusal);
@@ -154,6 +156,7 @@ fn valid_refusals_keep_their_values_through_every_socket_reply() {
                 ControlMessage::PortsRejected(refusal)
                 | ControlMessage::StateRejected(refusal)
                 | ControlMessage::ParamsRejected(refusal)
+                | ControlMessage::AudioConfigRejected(refusal)
                 | ControlMessage::GuiRejected(refusal) => refusal,
                 other => panic!("expected a refusal, got {other:?}"),
             };

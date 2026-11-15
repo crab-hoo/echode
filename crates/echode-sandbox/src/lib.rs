@@ -23,6 +23,7 @@
 compile_error!("Echode only builds for macOS");
 
 mod applied;
+mod audio_configs;
 mod control;
 mod control_decode;
 mod control_text;
@@ -46,6 +47,7 @@ mod wire;
 mod workgroup;
 
 pub use applied::AppliedState;
+pub use audio_configs::AudioPortConfig;
 pub use control::{ControlMessage, Socket};
 pub use control_decode::{ControlDecodeError, ControlField};
 pub use control_text::ControlTextError;

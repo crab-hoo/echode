@@ -398,11 +398,20 @@ impl Bridge {
             // and this main-thread call holds its only reference. Audio has handed off the processor.
             let instance = unsafe { &mut *instance };
             instance.deactivate(stopped.inner);
+            // Inactive requests own their input until reactivation completes.
+            // Never run configuration callbacks against a live processor.
+            let pending = self.main_requests.take(true).map(|(call, request)| {
+                let result = perform_main_request_with(self, request, instance);
+                (call, result)
+            });
             let stopped = self.reactivate(instance)?;
             self.update_tail(instance);
             self.latency_samples
                 .store(query_latency(instance), Ordering::Release);
             publish_stopped(&self.processor, stopped, false);
+            if let Some((call, result)) = pending {
+                self.main_requests.complete(&call, result);
+            }
             Ok::<_, HostError>(true)
         });
         match restarted {
@@ -455,7 +464,7 @@ impl Bridge {
 
     /// Runs one owned call without holding the mailbox lock across plugin code.
     fn service_main_request(&self) {
-        let Some((call, request)) = self.main_requests.take() else {
+        let Some((call, request)) = self.main_requests.take(false) else {
             return;
         };
         let result = perform_main_request(self, request);
@@ -862,6 +871,7 @@ impl HostHandlers for EchodeHost {
 
     fn declare_extensions(builder: &mut HostExtensions<Self>, shared: &Self::Shared<'_>) {
         builder.register::<crate::audio_ports::HostAudioPorts>();
+        builder.register::<crate::audio_configs::HostAudioConfigs>();
         builder.register::<crate::note_ports::HostNotePorts>();
         builder.register::<HostState>();
         builder.register::<HostGui>();
@@ -1742,8 +1752,9 @@ fn control_thread(bridge: &Bridge, mut socket: Option<Socket>) -> Result<(), Hos
         bridge.main_signal.relay();
         let want = bridge.restart_request.load(Ordering::Acquire);
         if want != restarted {
-            while bridge.restart_ack.load(Ordering::Acquire) < want
-                || bridge.holds_started.load(Ordering::Acquire)
+            while bridge.main_done.load(Ordering::Acquire) < want
+                && (bridge.restart_ack.load(Ordering::Acquire) < want
+                    || bridge.holds_started.load(Ordering::Acquire))
             {
                 if bridge.stop.load(Ordering::Acquire) {
                     return Ok(());
@@ -1752,7 +1763,9 @@ fn control_thread(bridge: &Bridge, mut socket: Option<Socket>) -> Result<(), Hos
                 // would spin while a parent request is queued during activation.
                 seen = wait_control(bridge, seen);
             }
-            if bridge.has_plugin.load(Ordering::Acquire) {
+            if bridge.has_plugin.load(Ordering::Acquire)
+                && bridge.main_done.load(Ordering::Acquire) < want
+            {
                 bridge.restart_for_main.store(want, Ordering::Release);
                 bridge.op.store(OP_RESTART, Ordering::Release);
                 bridge.signal();
@@ -1762,7 +1775,7 @@ fn control_thread(bridge: &Bridge, mut socket: Option<Socket>) -> Result<(), Hos
                     }
                     seen = wait_control(bridge, seen);
                 }
-            } else {
+            } else if !bridge.has_plugin.load(Ordering::Acquire) {
                 emit_line("restart-observed");
             }
             if let Some(socket) = &mut socket {
@@ -1810,7 +1823,7 @@ fn control_thread(bridge: &Bridge, mut socket: Option<Socket>) -> Result<(), Hos
         if let Some(socket) = &mut socket {
             match socket.try_recv_tagged() {
                 Ok(Some((id, message))) => {
-                    if handle_control(bridge, socket, id, message).is_err() {
+                    if handle_control(bridge, socket, &mut sent_ports, id, message).is_err() {
                         bridge.stop.store(true, Ordering::Release);
                         bridge.bump_audio();
                         stop_loop(bridge);
@@ -1853,10 +1866,34 @@ fn send_ports(bridge: &Bridge, socket: &mut Socket, sent: &mut u64) -> Result<()
 fn handle_control(
     bridge: &Bridge,
     socket: &mut Socket,
+    sent_ports: &mut u64,
     request_id: u64,
     message: ControlMessage,
 ) -> Result<(), HostError> {
     match message {
+        ControlMessage::AudioConfigsRequest | ControlMessage::SelectAudioConfig(_) => {
+            let request = match message {
+                ControlMessage::SelectAudioConfig(id) => MainRequest::SelectAudioConfig(id),
+                _ => MainRequest::AudioConfigs,
+            };
+            let expected = if matches!(request, MainRequest::AudioConfigs) {
+                MainReplyKind::AudioConfigs
+            } else {
+                MainReplyKind::Done
+            };
+            let reply = match call_main(bridge, request) {
+                Ok(MainReply::AudioConfigs(configs)) => ControlMessage::AudioConfigs(configs),
+                Ok(MainReply::Done) => ControlMessage::AudioConfigSelected,
+                Ok(reply) => ControlMessage::AudioConfigRejected(reply.unexpected(expected)),
+                Err(error) => ControlMessage::AudioConfigRejected(error),
+            };
+            // A successful reply must not leave follow_ports looking at the
+            // previous declaration. The same revision cursor avoids duplicates.
+            send_ports(bridge, socket, sent_ports)?;
+            socket
+                .send_tagged(request_id, &reply)
+                .map_err(HostError::Socket)?;
+        }
         ControlMessage::SaveRequest => {
             let reply = match call_main(bridge, MainRequest::Save) {
                 Ok(MainReply::State(bytes)) => ControlMessage::State(bytes),
@@ -2286,11 +2323,28 @@ fn call_main(bridge: &Bridge, request: MainRequest) -> Result<MainReply, Refusal
     } else {
         STATE_WAIT
     };
+    let inactive = request.requires_inactive();
     let call = bridge.main_requests.begin(request)?;
-    bridge.signal();
+    let mut pending_restart = if inactive {
+        let generation = bridge.restart_request.fetch_add(1, Ordering::AcqRel) + 1;
+        bridge.bump_audio();
+        Some(generation)
+    } else {
+        bridge.signal();
+        None
+    };
     let started = std::time::Instant::now();
     loop {
         bridge.main_signal.relay();
+        if let Some(generation) = pending_restart {
+            let ack = bridge.restart_ack.load(Ordering::Acquire);
+            if ack >= generation && !bridge.holds_started.load(Ordering::Acquire) {
+                bridge.restart_for_main.store(ack, Ordering::Release);
+                bridge.op.store(OP_RESTART, Ordering::Release);
+                bridge.signal();
+                pending_restart = None;
+            }
+        }
         if let Some(reply) = call.take_reply() {
             return reply;
         }
@@ -2313,52 +2367,65 @@ fn perform_main_request(bridge: &Bridge, request: MainRequest) -> Result<MainRep
         // SAFETY: `INSTANCE` is set only on the main thread, where main requests run, to the
         // instance `serve_region` keeps until it clears the pointer again.
         let instance = unsafe { &*instance };
-        // Exhaustive: a new operation can never fall through to state loading.
-        Ok(match request {
-            MainRequest::Save => MainReply::State(save_plugin_state(instance)?),
-            MainRequest::Load(bytes) => {
-                load_plugin_state(instance, &bytes)?;
-                MainReply::Done
-            }
-            MainRequest::PrepareCapacity(capacity) => {
-                prepare_event_capacity(instance, capacity)?;
-                MainReply::Done
-            }
-            MainRequest::RefreshTail => {
-                bridge.update_tail(instance);
-                MainReply::Done
-            }
-            MainRequest::Parameters => {
-                let params = bridge.params.load(Ordering::Acquire);
-                MainReply::Parameters(
-                    // SAFETY: `params` is null or the plugin's `clap_plugin_params` table, which
-                    // stays valid while the plugin lives.
-                    unsafe { params.as_ref() }
-                        .map(|params| param_infos(instance.raw_instance(), params))
-                        .unwrap_or_default(),
-                )
-            }
-            MainRequest::Values { ids, relay } => {
-                MainReply::Values(read_values_on_main(bridge, instance, &ids, relay))
-            }
-            MainRequest::Parse { id, text } => {
-                let params = bridge.params.load(Ordering::Acquire);
-                MainReply::Parsed(
-                    // SAFETY: `params` is null or the plugin's `clap_plugin_params` table, which
-                    // stays valid while the plugin lives.
-                    unsafe { params.as_ref() }
-                        .map(|params| param_from_text(instance.raw_instance(), params, id, &text))
-                        .unwrap_or(ParamText::Unsupported),
-                )
-            }
-            MainRequest::Show(title) => {
-                MainReply::Window(gui::show(instance.raw_instance(), &title)?)
-            }
-            MainRequest::Close => {
-                gui::close(instance.raw_instance());
-                MainReply::Done
-            }
-        })
+        perform_main_request_with(bridge, request, instance)
+    })
+}
+
+fn perform_main_request_with(
+    bridge: &Bridge,
+    request: MainRequest,
+    instance: &PluginInstance<EchodeHost>,
+) -> Result<MainReply, Refusal> {
+    Ok(match request {
+        MainRequest::AudioConfigs => {
+            MainReply::AudioConfigs(crate::audio_configs::read(instance.raw_instance())?)
+        }
+        MainRequest::SelectAudioConfig(id) => {
+            crate::audio_configs::select(instance.raw_instance(), id)?;
+            bridge.plugin_dirty.store(true, Ordering::Release);
+            MainReply::Done
+        }
+        MainRequest::Save => MainReply::State(save_plugin_state(instance)?),
+        MainRequest::Load(bytes) => {
+            load_plugin_state(instance, &bytes)?;
+            MainReply::Done
+        }
+        MainRequest::PrepareCapacity(capacity) => {
+            prepare_event_capacity(instance, capacity)?;
+            MainReply::Done
+        }
+        MainRequest::RefreshTail => {
+            bridge.update_tail(instance);
+            MainReply::Done
+        }
+        MainRequest::Parameters => {
+            let params = bridge.params.load(Ordering::Acquire);
+            MainReply::Parameters(
+                // SAFETY: `params` is null or the plugin's `clap_plugin_params` table, which
+                // stays valid while the plugin lives.
+                unsafe { params.as_ref() }
+                    .map(|params| param_infos(instance.raw_instance(), params))
+                    .unwrap_or_default(),
+            )
+        }
+        MainRequest::Values { ids, relay } => {
+            MainReply::Values(read_values_on_main(bridge, instance, &ids, relay))
+        }
+        MainRequest::Parse { id, text } => {
+            let params = bridge.params.load(Ordering::Acquire);
+            MainReply::Parsed(
+                // SAFETY: `params` is null or the plugin's `clap_plugin_params` table, which
+                // stays valid while the plugin lives.
+                unsafe { params.as_ref() }
+                    .map(|params| param_from_text(instance.raw_instance(), params, id, &text))
+                    .unwrap_or(ParamText::Unsupported),
+            )
+        }
+        MainRequest::Show(title) => MainReply::Window(gui::show(instance.raw_instance(), &title)?),
+        MainRequest::Close => {
+            gui::close(instance.raw_instance());
+            MainReply::Done
+        }
     })
 }
 

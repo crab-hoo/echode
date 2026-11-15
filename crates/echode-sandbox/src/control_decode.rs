@@ -16,6 +16,7 @@ pub enum ControlField {
         input: bool,
     },
     RemapLayout,
+    AudioConfigId,
     /// A message whose body must be empty (identified by its wire type).
     EmptyBody {
         message_type: u32,
@@ -71,7 +72,7 @@ impl std::fmt::Display for ControlDecodeError {
                 PortTailLatency => "port tail/latency is missing",
                 PortCount { .. } | PortChannels { .. } => "port description is truncated",
                 RemapLayout => "remap layout is the wrong size",
-                EmptyBody { .. } | PluginCommand => "unknown control message",
+                AudioConfigId | EmptyBody { .. } | PluginCommand => "unknown control message",
             },
             Self::PortCountOverflow { .. } => "port description is too large",
             Self::TrailingPortBytes { .. } => "port description has trailing bytes",

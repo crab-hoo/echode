@@ -42,6 +42,14 @@ fn text_messages(text: &str) -> Vec<ControlMessage> {
             values: vec![value],
             ..Default::default()
         }),
+        ControlMessage::AudioConfigs(vec![crate::AudioPortConfig {
+            id: 7,
+            name: text.into(),
+            input_ports: 1,
+            output_ports: 1,
+            main_input_channels: 2,
+            main_output_channels: 2,
+        }]),
     ]
 }
 
@@ -76,18 +84,18 @@ fn invalid_control_text_retains_utf8_cause() {
             assert_eq!(cause.valid_up_to(), 2);
             assert_eq!(
                 error.get_ref().unwrap().downcast_ref::<ControlTextError>(),
-                Some(&if matches!(message, ControlMessage::GuiShow(_)) {
-                    ControlTextError::WindowTitle(expected)
-                } else {
-                    ControlTextError::Parameter(expected)
+                Some(&match message {
+                    ControlMessage::GuiShow(_) => ControlTextError::WindowTitle(expected),
+                    ControlMessage::AudioConfigs(_) => ControlTextError::AudioConfigName(expected),
+                    _ => ControlTextError::Parameter(expected),
                 })
             );
             assert_eq!(
                 error.to_string(),
-                if matches!(message, ControlMessage::GuiShow(_)) {
-                    "window title is not text"
-                } else {
-                    "parameter text is not UTF-8"
+                match message {
+                    ControlMessage::GuiShow(_) => "window title is not text",
+                    ControlMessage::AudioConfigs(_) => "audio configuration name is not UTF-8",
+                    _ => "parameter text is not UTF-8",
                 }
             );
         }

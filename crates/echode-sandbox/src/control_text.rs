@@ -10,6 +10,7 @@ use std::str::Utf8Error;
 pub enum ControlTextError {
     WindowTitle(Utf8Error),
     Parameter(Utf8Error),
+    AudioConfigName(Utf8Error),
 }
 
 impl std::fmt::Display for ControlTextError {
@@ -17,6 +18,7 @@ impl std::fmt::Display for ControlTextError {
         f.write_str(match self {
             Self::WindowTitle(_) => "window title is not text",
             Self::Parameter(_) => "parameter text is not UTF-8",
+            Self::AudioConfigName(_) => "audio configuration name is not UTF-8",
         })
     }
 }
@@ -24,7 +26,9 @@ impl std::fmt::Display for ControlTextError {
 impl std::error::Error for ControlTextError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         Some(match self {
-            Self::WindowTitle(error) | Self::Parameter(error) => error,
+            Self::WindowTitle(error) | Self::Parameter(error) | Self::AudioConfigName(error) => {
+                error
+            }
         })
     }
 }

@@ -406,6 +406,9 @@ CLAP の余韻の通知・再有効化後の読直しは `threads.rs`、親の�
 CLAP の音声ポートの対応フラグは `echode-plugin-host/src/audio_ports.rs`、入出力のチャンネル構成は `echode-sandbox/src/ports.rs::PortLayout`、有効化ごとの記述の読込みは `threads.rs::PortShape` に置く。
 `Remap` は `SessionLayout` と `PortLayout` を運び、処理器と共有領域の構成が一致するブロックだけを処理する。
 有効化で構成が変われば `PortsChanged` で親の改訂を進め、`PluginHost::prepare_mapping_for` / `follow_ports` と `echode-engine/src/plugins.rs` が共有領域とルーティングを同じ計画で交換する。
+CLAP の構成一覧と ID による選択は `echode-plugin-host/src/audio_configs.rs`、制御 API と本文の読書きは `echode-sandbox/src/session_operations.rs`・`audio_configs.rs` に置く。
+`MainRequests` の無効化専用の要求は既存の再起動世代で処理器を返してから実行する（[ADR 0384](decisions/0384-clap-audio-port-config-selection.md)）。
+回帰は上の `audio_ports.rs` と各 `audio_configs_tests.rs` を使う。一覧も再有効化で音声を中断するため、周期的に問い合わせない。
 実ヘルパーの通知・再マップは `tests/isolation/audio_ports.rs`、再生中の切替と書出し再開・拒否は `tests/hosted_playback/audio_ports.rs` を使う（[ADR 0374](decisions/0374-dimension-preserving-audio-port-rescans.md)、[ADR 0382](decisions/0382-audio-port-changes-exchange-mapping-and-routing.md)）。
 CLAP のノート形式の対応の公開とポートごとの規則（`NoteInputs`）は `echode-plugin-host/src/note_ports.rs`、有効化前の読直しは `threads.rs::activate` に置く。
 一覧は `Processor<P>` が処理器とともに渡し、`render_plugin` が通常のイベントの前へ参照でつなぐ。

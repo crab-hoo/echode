@@ -112,6 +112,12 @@ pub enum PluginFailure {
     NotePortUndescribed,
     /// A MIDI note port's index does not fit in the event's 16-bit port.
     NotePortIndex,
+    NoAudioConfigs,
+    NoAudioConfigCount,
+    NoAudioConfigInfo,
+    NoAudioConfigSelect,
+    AudioConfigUndescribed,
+    AudioConfigRefused,
 }
 
 impl std::fmt::Display for PluginFailure {
@@ -142,6 +148,12 @@ impl std::fmt::Display for PluginFailure {
             Self::NoNotePortInfo => "plugin note ports have no description",
             Self::NotePortUndescribed => "plugin rejected a note port description",
             Self::NotePortIndex => "MIDI note port index cannot be represented",
+            Self::NoAudioConfigs => "plugin does not declare audio configurations",
+            Self::NoAudioConfigCount => "plugin audio configurations have no count",
+            Self::NoAudioConfigInfo => "plugin audio configurations have no description",
+            Self::NoAudioConfigSelect => "plugin cannot select an audio configuration",
+            Self::AudioConfigUndescribed => "plugin rejected an audio configuration description",
+            Self::AudioConfigRefused => "plugin refused the audio configuration",
         };
         f.write_str(text)
     }
@@ -266,6 +278,12 @@ fn failure_code(failure: PluginFailure) -> u8 {
         PluginFailure::NoNotePortInfo => 22,
         PluginFailure::NotePortUndescribed => 23,
         PluginFailure::NotePortIndex => 24,
+        PluginFailure::NoAudioConfigs => 25,
+        PluginFailure::NoAudioConfigCount => 26,
+        PluginFailure::NoAudioConfigInfo => 27,
+        PluginFailure::NoAudioConfigSelect => 28,
+        PluginFailure::AudioConfigUndescribed => 29,
+        PluginFailure::AudioConfigRefused => 30,
     }
 }
 
@@ -314,6 +332,12 @@ fn read_plugin_failure(payload: &[u8]) -> Result<PluginFailure, RefusalDecodeErr
         22 => PluginFailure::NoNotePortInfo,
         23 => PluginFailure::NotePortUndescribed,
         24 => PluginFailure::NotePortIndex,
+        25 => PluginFailure::NoAudioConfigs,
+        26 => PluginFailure::NoAudioConfigCount,
+        27 => PluginFailure::NoAudioConfigInfo,
+        28 => PluginFailure::NoAudioConfigSelect,
+        29 => PluginFailure::AudioConfigUndescribed,
+        30 => PluginFailure::AudioConfigRefused,
         _ => return Err(RefusalDecodeError::UnknownPluginKind(code)),
     };
     fixed::<0>(rest, RefusalField::PluginPayload { kind: code })?;

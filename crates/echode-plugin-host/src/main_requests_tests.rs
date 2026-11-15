@@ -8,16 +8,16 @@ fn abandoned_save_keeps_its_own_reply_and_blocks_replacement() {
         mailbox.begin(MainRequest::Load(vec![128])),
         Err(Refusal::Busy)
     ));
-    let (running, request) = mailbox.take().unwrap();
+    let (running, request) = mailbox.take(false).unwrap();
     assert!(matches!(request, MainRequest::Save));
-    assert!(mailbox.take().is_none());
+    assert!(mailbox.take(false).is_none());
     // Model a caller timing out while the main thread is still inside save.
     assert!(save.take_reply().is_none());
     assert!(mailbox.begin(MainRequest::Show("next".into())).is_err());
     mailbox.complete(&running, Ok(MainReply::State(vec![64])));
     let restore = mailbox.begin(MainRequest::Load(vec![128])).unwrap();
     assert!(restore.id > save.id);
-    let (running, request) = mailbox.take().unwrap();
+    let (running, request) = mailbox.take(false).unwrap();
     assert!(matches!(request, MainRequest::Load(bytes) if bytes == [128]));
     assert!(restore.take_reply().is_none());
     assert!(matches!(save.take_reply(), Some(Ok(MainReply::State(bytes))) if bytes == [64]));
@@ -39,7 +39,7 @@ fn dropping_a_timed_out_caller_does_not_make_the_mailbox_idle() {
         mailbox.begin(MainRequest::Parameters),
         Err(Refusal::Busy)
     ));
-    let (running, request) = mailbox.take().unwrap();
+    let (running, request) = mailbox.take(false).unwrap();
     assert!(matches!(request, MainRequest::Close));
     mailbox.complete(
         &running,
@@ -57,6 +57,7 @@ fn main_reply_mismatches_report_expected_and_actual_payloads() {
         (MainReply::State(vec![1]), State),
         (MainReply::Done, Done),
         (MainReply::Parameters(vec![]), Parameters),
+        (MainReply::AudioConfigs(vec![]), AudioConfigs),
         (MainReply::Values(vec![]), Values),
         (MainReply::Parsed(ParamText::Unsupported), Parsed),
         (
@@ -69,7 +70,15 @@ fn main_reply_mismatches_report_expected_and_actual_payloads() {
         ),
     ];
     for (reply, actual) in replies {
-        for expected in [State, Done, Parameters, Values, Parsed, Window] {
+        for expected in [
+            State,
+            Done,
+            Parameters,
+            Values,
+            Parsed,
+            Window,
+            AudioConfigs,
+        ] {
             if expected != actual {
                 assert_eq!(
                     reply.unexpected(expected),
@@ -77,5 +86,27 @@ fn main_reply_mismatches_report_expected_and_actual_payloads() {
                 );
             }
         }
+    }
+}
+
+#[test]
+fn inactive_requests_remain_owned_until_the_processor_is_deactivated() {
+    for request in [
+        MainRequest::AudioConfigs,
+        MainRequest::SelectAudioConfig(206),
+    ] {
+        let mailbox = MainRequests::default();
+        let call = mailbox.begin(request).unwrap();
+        assert!(mailbox.take(false).is_none());
+        assert!(matches!(
+            mailbox.begin(MainRequest::Save),
+            Err(Refusal::Busy)
+        ));
+        let (running, request) = mailbox.take(true).unwrap();
+        assert!(request.requires_inactive());
+        assert!(Arc::ptr_eq(&running, &call));
+        assert!(call.take_reply().is_none());
+        mailbox.complete(&running, Ok(MainReply::Done));
+        assert!(matches!(call.take_reply(), Some(Ok(MainReply::Done))));
     }
 }

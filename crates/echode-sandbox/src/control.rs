@@ -77,9 +77,20 @@ const PARAM_PARSED: u32 = 34;
 const TAIL_CHANGED: u32 = 36;
 const TAIL_REQUEST: u32 = 37;
 const PORTS_CHANGED: u32 = 38;
+const AUDIO_CONFIGS_REQUEST: u32 = 39;
+const AUDIO_CONFIGS: u32 = 40;
+const SELECT_AUDIO_CONFIG: u32 = 41;
+const AUDIO_CONFIG_SELECTED: u32 = 42;
+const AUDIO_CONFIG_REJECTED: u32 = 43;
 
 #[derive(Debug)]
 pub enum ControlMessage {
+    /// Reads configuration presets on main while deactivated. Reactivates audio.
+    AudioConfigsRequest,
+    AudioConfigs(Vec<crate::AudioPortConfig>),
+    SelectAudioConfig(u32),
+    AudioConfigSelected,
+    AudioConfigRejected(Refusal),
     Hello,
     SaveRequest,
     State(Vec<u8>),
@@ -602,6 +613,15 @@ fn encode(message: &ControlMessage) -> (u32, Cow<'_, [u8]>) {
         ControlMessage::State(bytes) => return (STATE, Cow::Borrowed(bytes)),
         ControlMessage::Restore(bytes) => return (RESTORE, Cow::Borrowed(bytes)),
         ControlMessage::GuiShow(title) => return (GUI_SHOW, Cow::Borrowed(title.as_bytes())),
+        ControlMessage::AudioConfigsRequest => (AUDIO_CONFIGS_REQUEST, Vec::new()),
+        ControlMessage::AudioConfigs(configs) => {
+            (AUDIO_CONFIGS, crate::audio_configs::encode(configs))
+        }
+        ControlMessage::SelectAudioConfig(id) => (SELECT_AUDIO_CONFIG, id.to_le_bytes().to_vec()),
+        ControlMessage::AudioConfigSelected => (AUDIO_CONFIG_SELECTED, Vec::new()),
+        ControlMessage::AudioConfigRejected(refusal) => {
+            (AUDIO_CONFIG_REJECTED, write_refusal(refusal))
+        }
         ControlMessage::Hello => (HELLO, Vec::new()),
         ControlMessage::SaveRequest => (SAVE, Vec::new()),
         ControlMessage::Restored => (RESTORED, Vec::new()),
@@ -704,6 +724,20 @@ fn decode_body(
     }
     let body = owned.as_slice();
     let message = match typ {
+        AUDIO_CONFIGS_REQUEST | AUDIO_CONFIG_SELECTED => {
+            read_fixed::<0>(body, ControlField::EmptyBody { message_type: typ })?;
+            if typ == AUDIO_CONFIGS_REQUEST {
+                ControlMessage::AudioConfigsRequest
+            } else {
+                ControlMessage::AudioConfigSelected
+            }
+        }
+        AUDIO_CONFIGS => ControlMessage::AudioConfigs(crate::audio_configs::decode(body)?),
+        SELECT_AUDIO_CONFIG => ControlMessage::SelectAudioConfig(u32::from_le_bytes(read_fixed(
+            body,
+            ControlField::AudioConfigId,
+        )?)),
+        AUDIO_CONFIG_REJECTED => ControlMessage::AudioConfigRejected(read_refusal(body)?),
         HELLO => ControlMessage::Hello,
         SAVE => ControlMessage::SaveRequest,
         RESTORED => ControlMessage::Restored,

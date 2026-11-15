@@ -8,6 +8,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 pub(crate) enum MainRequest {
+    AudioConfigs,
+    SelectAudioConfig(u32),
     Save,
     Load(Vec<u8>),
     PrepareCapacity(u32),
@@ -19,7 +21,13 @@ pub(crate) enum MainRequest {
     Close,
 }
 
+impl MainRequest {
+    pub(crate) fn requires_inactive(&self) -> bool {
+        matches!(self, Self::AudioConfigs | Self::SelectAudioConfig(_))
+    }
+}
 pub(crate) enum MainReply {
+    AudioConfigs(Vec<echode_sandbox::AudioPortConfig>),
     State(Vec<u8>),
     Done,
     Parameters(Vec<ParamInfo>),
@@ -31,6 +39,7 @@ pub(crate) enum MainReply {
 impl MainReply {
     pub(crate) fn unexpected(&self, expected: MainReplyKind) -> Refusal {
         let actual = match self {
+            Self::AudioConfigs(_) => MainReplyKind::AudioConfigs,
             Self::State(_) => MainReplyKind::State,
             Self::Done => MainReplyKind::Done,
             Self::Parameters(_) => MainReplyKind::Parameters,
@@ -88,17 +97,19 @@ impl MainRequests {
     }
 
     /// Main-thread only. Taking the input does not make the mailbox idle.
-    pub(crate) fn take(&self) -> Option<(Arc<MainCall>, MainRequest)> {
+    pub(crate) fn take(&self, inactive: bool) -> Option<(Arc<MainCall>, MainRequest)> {
         let call = self
             .active
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone()?;
-        let request = call
-            .request
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take()?;
+        let request = {
+            let mut request = call.request.lock().unwrap_or_else(|e| e.into_inner());
+            if request.as_ref()?.requires_inactive() && !inactive {
+                return None;
+            }
+            request.take()?
+        };
         Some((call, request))
     }
 

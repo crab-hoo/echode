@@ -9,6 +9,44 @@ use crate::{AppliedState, GuiReport, ParamChange, ParamInfo, ParamText, ParamVal
 use std::time::Instant;
 
 impl PluginControl {
+    /// Reads the current preset list while the helper is deactivated, then
+    /// reactivates it. Control-only; interrupts audio, even for a read. No cache
+    /// is kept, so a plugin's rescan is visible on the next explicit query.
+    pub fn audio_port_configs(&self) -> Result<Vec<crate::AudioPortConfig>, SessionError> {
+        let mut state = self.lock();
+        let deadline = Instant::now() + STATE_REPLY;
+        let id = state.request(ControlMessage::AudioConfigsRequest, deadline)?;
+        match state.wait_reply(id, deadline, |message| {
+            matches!(
+                message,
+                ControlMessage::AudioConfigs(_) | ControlMessage::AudioConfigRejected(_)
+            )
+        })? {
+            ControlMessage::AudioConfigs(configs) => Ok(configs),
+            ControlMessage::AudioConfigRejected(refusal) => Err(refusal.into()),
+            _ => Err(ProtocolError::UnexpectedReply("read audio configurations").into()),
+        }
+    }
+
+    /// Selects a plugin preset while deactivated, then rereads its ports and
+    /// reactivates it. The engine follows port notices with its normal plan
+    /// exchange; standalone callers use `PluginHost::follow_ports`. A timeout
+    /// has an unknown outcome and must not be automatically retried.
+    pub fn select_audio_port_config(&self, config_id: u32) -> Result<(), SessionError> {
+        let mut state = self.lock();
+        let deadline = Instant::now() + STATE_REPLY;
+        let id = state.request(ControlMessage::SelectAudioConfig(config_id), deadline)?;
+        match state.wait_reply(id, deadline, |message| {
+            matches!(
+                message,
+                ControlMessage::AudioConfigSelected | ControlMessage::AudioConfigRejected(_)
+            )
+        })? {
+            ControlMessage::AudioConfigSelected => Ok(()),
+            ControlMessage::AudioConfigRejected(refusal) => Err(refusal.into()),
+            _ => Err(ProtocolError::UnexpectedReply("select audio configuration").into()),
+        }
+    }
     /// Queries the live tail on the helper's main thread. Control-only: waits
     /// at most the state deadline, so an export cannot commit stale metadata.
     pub fn refresh_tail(&self) -> Result<u32, SessionError> {

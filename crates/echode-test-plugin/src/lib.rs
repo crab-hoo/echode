@@ -43,6 +43,7 @@ use clap_sys::ext::state::{CLAP_EXT_STATE, clap_host_state, clap_plugin_state};
 use clap_sys::plugin::clap_plugin;
 use clap_sys::stream::{clap_istream, clap_ostream};
 
+mod audio_configs;
 mod audio_ports;
 mod delay;
 mod gui;
@@ -183,6 +184,9 @@ impl Plugin for TestGain {
         }
         if fault_now() == Fault::TimerSupport {
             builder.register::<timer_support::PluginTimers>();
+        }
+        if fault_now() == Fault::AudioPorts {
+            builder.register::<audio_configs::PluginAudioConfigs>();
         }
     }
 }
@@ -1616,6 +1620,32 @@ unsafe extern "C" fn state_load(plugin: *const clap_plugin, stream: *const clap_
     if stream.is_null() {
         return false;
     }
+    if fault_now() == Fault::AudioPorts {
+        // One byte changes the fixture directly; four bytes restore its saved
+        // probe snapshot. This buffer sizes the fixture's state, not the host.
+        let mut bytes = [0u8; 5];
+        // SAFETY: stream is live and the buffer holds the requested bytes.
+        let count = unsafe {
+            let Some(read) = (*stream).read else {
+                return false;
+            };
+            read(stream, bytes.as_mut_ptr().cast(), bytes.len() as u64)
+        };
+        let layout = match count {
+            1 => bytes[0],
+            4 => bytes[3],
+            _ => return false,
+        };
+        // SAFETY: the host passes the live plugin on its main thread.
+        return unsafe {
+            PluginWrapper::<TestGain>::handle(plugin, |wrapper| {
+                wrapper.main_thread().mark_dirty();
+                audio_ports::change(wrapper.main_thread().host.shared(), layout);
+                Ok(true)
+            })
+        }
+        .unwrap_or(false);
+    }
     if current_role() == Role::Params {
         // One byte more than the fixture writes, so trailing bytes are refused.
         let mut bytes = [0u8; 17];
@@ -1671,9 +1701,6 @@ unsafe extern "C" fn state_load(plugin: *const clap_plugin, stream: *const clap_
     unsafe {
         PluginWrapper::<TestGain>::handle(plugin, |wrapper| {
             wrapper.main_thread().mark_dirty();
-            if fault_now() == Fault::AudioPorts {
-                audio_ports::change(wrapper.main_thread().host.shared(), byte);
-            }
             if fault_now() == Fault::NotePorts {
                 note_ports::change(wrapper.main_thread().host.shared(), byte);
             }

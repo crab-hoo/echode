@@ -34,8 +34,8 @@ fn parameter_operation_preserves_malformed_refusal_structure_causes() {
                 actual: 1,
             },
         ),
-        (vec![10, 6, 0], UnknownExpectedReply(6)),
-        (vec![10, 0, 6], UnknownActualReply(6)),
+        (vec![10, 7, 0], UnknownExpectedReply(7)),
+        (vec![10, 0, 7], UnknownActualReply(7)),
         (vec![7], MissingPluginKind),
         (vec![7, 255], UnknownPluginKind(255)),
         (

@@ -284,13 +284,24 @@ bit 7 が立つ時は誤った判定で、下位 bit の不足は未到達の区
 ヘルパーは処理器の `PortLayout` と共有領域の `PortLayout` が一致するブロックだけを処理し、親が新しい共有領域とルーティングを採用するまでは無音になる（[ADR 0382](../decisions/0382-audio-port-changes-exchange-mapping-and-routing.md)）。
 ステレオの FX 母線へモノ主入力を返すなどトラックが受けられない構成は、エンジンの計画準備が `bus mapping` で断り、古い計画のままそのデバイスが無音になる。
 `activate after restart failed` に記述の拒否やゼロチャンネル等の原因が続く時は、無効化後の `count`・`get` の答えを調べる。
-ホストから構成を選ぶ `audio-ports-config`・`configurable-audio-ports` は未対応である。
+ホストの構成一覧・選択は次の節で区別する。任意のポートを指定する `configurable-audio-ports` は未対応である。
 対応フラグは `echode-plugin-host/src/audio_ports.rs`、実ヘルパーとエンジンの回帰は次である。
 
 ```sh
 cargo test -q -p echode-plugin-host --test isolation audio_ports::
 cargo test -q -p echode-plugin-host --test hosted_playback audio_ports::
 ```
+
+### CLAP の音声構成の一覧・選択に失敗する
+
+`PluginControl::audio_port_configs` と `select_audio_port_config` は無効化中の主スレッドで実行する（[ADR 0384](../decisions/0384-clap-audio-port-config-selection.md)）。
+一覧を読むだけでも再有効化するため音声を中断する。周期的な呼出しにせず、構成メニューはまだ接続しない。
+拡張・count・get・select の欠落、記述の拒否と不正な ID・重複・主ポートの矛盾、選択の拒否は `PluginFailure` で区別する。
+`rescan` の通知から再入せず、一覧も保持しない。次の明示要求で最新の記述を読む。
+選択の応答より前に `PortsChanged` が届く。成功なのに古い構成なら、`follow_ports` またはエンジンの計画交換を調べる。
+連続した要求が停止する時は `MainRequests::take(false)` が無効化専用の要求を取っていないか、完了済みの再起動世代を制御側が再び待っていないか調べる。
+時間切れは結果不明で自動再送しない。所有中の要求が完了するまでは後続が busy となる。
+回帰は上の `audio_ports::` の 2 つの入口と `audio_configs_tests.rs`、第三者の保存・聴感は UC-97 を使う。
 
 ### CLAP がテンポ・再生位置を取得できない
 

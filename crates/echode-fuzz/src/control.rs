@@ -202,8 +202,24 @@ pub(crate) fn seeds() -> Vec<Vec<u8>> {
     let mut messages = sample_messages();
     messages.extend(launch_failures());
     use MainReplyKind::*;
-    for expected in [State, Done, Parameters, Values, Parsed, Window] {
-        for actual in [State, Done, Parameters, Values, Parsed, Window] {
+    for expected in [
+        State,
+        Done,
+        Parameters,
+        Values,
+        Parsed,
+        Window,
+        AudioConfigs,
+    ] {
+        for actual in [
+            State,
+            Done,
+            Parameters,
+            Values,
+            Parsed,
+            Window,
+            AudioConfigs,
+        ] {
             messages.push(ControlMessage::StateRejected(
                 Refusal::UnexpectedMainReply { expected, actual },
             ));
@@ -212,6 +228,18 @@ pub(crate) fn seeds() -> Vec<Vec<u8>> {
     for id in [0, u32::MAX - 1, u32::MAX] {
         messages.push(ControlMessage::ParamsRejected(Refusal::InvalidParameterId(
             id,
+        )));
+    }
+    for failure in [
+        PluginFailure::NoAudioConfigs,
+        PluginFailure::NoAudioConfigCount,
+        PluginFailure::NoAudioConfigInfo,
+        PluginFailure::NoAudioConfigSelect,
+        PluginFailure::AudioConfigUndescribed,
+        PluginFailure::AudioConfigRefused,
+    ] {
+        messages.push(ControlMessage::AudioConfigRejected(Refusal::Plugin(
+            failure,
         )));
     }
     let mut seeds = Vec::new();
@@ -227,6 +255,7 @@ pub(crate) fn seeds() -> Vec<Vec<u8>> {
                 | ControlMessage::Params(_)
                 | ControlMessage::ParamsApplied(_)
                 | ControlMessage::ParamRelay(_)
+                | ControlMessage::AudioConfigs(_)
                 | ControlMessage::PortsRejected(Refusal::Launch(_))
         ) {
             // These fixtures end in nonempty text. Preserve every length and
@@ -243,7 +272,7 @@ pub(crate) fn seeds() -> Vec<Vec<u8>> {
     let mut obsolete = encode(1, &ControlMessage::StateRejected(Refusal::NoPlugin));
     *obsolete.last_mut().expect("a refusal has its kind byte") = 0;
     seeds.push(seed(0, 0, &obsolete));
-    for typ in [16u32, 17, 24, 29] {
+    for typ in [16u32, 17, 24, 29, 43] {
         for payload in [
             vec![],
             vec![255],
@@ -252,8 +281,8 @@ pub(crate) fn seeds() -> Vec<Vec<u8>> {
             vec![5; 10],
             vec![9, 0, 0, 0, 0, 0],
             vec![10, 0],
-            vec![10, 6, 0],
-            vec![10, 0, 6],
+            vec![10, 7, 0],
+            vec![10, 0, 7],
             vec![7],
             vec![7, 255],
             vec![7, 0, 0],
@@ -462,6 +491,18 @@ fn sample_messages() -> Vec<ControlMessage> {
     };
     vec![
         ControlMessage::Hello,
+        ControlMessage::AudioConfigsRequest,
+        ControlMessage::AudioConfigs(vec![echode_sandbox::AudioPortConfig {
+            id: 206,
+            name: "Mono 出力".into(),
+            input_ports: 1,
+            output_ports: 1,
+            main_input_channels: 2,
+            main_output_channels: 1,
+        }]),
+        ControlMessage::SelectAudioConfig(206),
+        ControlMessage::AudioConfigSelected,
+        ControlMessage::AudioConfigRejected(Refusal::Plugin(PluginFailure::AudioConfigRefused)),
         ControlMessage::SaveRequest,
         ControlMessage::State(b"plugin state".to_vec()),
         ControlMessage::Restore(b"plugin state".to_vec()),

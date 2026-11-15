@@ -1,10 +1,10 @@
-//! Structural failures inside parameter, relay and window-report payloads,
+//! Structural failures inside parameter, relay, configuration and window payloads,
 //! and the reader that names the field it was reading when the bytes ran out.
 
 use crate::control_text::{ControlTextError, read_text};
 use std::io;
 
-/// The parameter payload being read, named after what it carries.
+/// The control payload being read (the Param prefix is historical).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ParamPayload {
     /// Parameter descriptions with their values and text.
@@ -19,9 +19,11 @@ pub enum ParamPayload {
     ParsedText,
     /// Changes the plugin made on its own.
     Relay,
+    /// Audio-port configuration presets.
+    AudioConfigs,
 }
 
-/// A field of a parameter payload. Sizes count only this field's bytes.
+/// A field of a control payload. Sizes count only this field's bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ParamField {
     /// The number of parameters or values in the payload's list.
@@ -44,6 +46,10 @@ pub enum ParamField {
     EventCount,
     EventId,
     EventKind,
+    InputPorts,
+    OutputPorts,
+    MainInputChannels,
+    MainOutputChannels,
 }
 
 /// One flag byte of a window report, in wire order.
@@ -102,6 +108,14 @@ pub enum PayloadDecodeError {
 impl std::fmt::Display for PayloadDecodeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
+            Self::Truncated {
+                payload: ParamPayload::AudioConfigs,
+                ..
+            } => "audio configuration message is truncated",
+            Self::TrailingBytes {
+                payload: ParamPayload::AudioConfigs,
+                ..
+            } => "audio configuration message has trailing bytes",
             Self::Truncated { .. } => "parameter message is truncated",
             Self::TrailingBytes { .. } => "parameter message has trailing bytes",
             Self::NonFiniteChange { .. } | Self::NonFiniteParsedValue { .. } => {
@@ -189,7 +203,11 @@ impl<'a> Cursor<'a> {
     /// A length-prefixed text. `length` and `text` name its two fields.
     pub(crate) fn text(&mut self, length: ParamField, text: ParamField) -> io::Result<String> {
         let len = self.u32(length)? as usize;
-        read_text(self.take(text, len)?, ControlTextError::Parameter)
+        let cause = match self.payload {
+            ParamPayload::AudioConfigs => ControlTextError::AudioConfigName,
+            _ => ControlTextError::Parameter,
+        };
+        read_text(self.take(text, len)?, cause)
     }
 
     /// Every unread byte as text, for a payload that ends with unprefixed text.

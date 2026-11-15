@@ -17,6 +17,29 @@ use std::ffi::CStr;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 const FAILED: u8 = 0x80;
+pub(crate) fn config_probe(host: HostSharedHandle<'_>) {
+    if !crate::audio_configs::probe(host) {
+        STAGES.fetch_or(FAILED, Ordering::Relaxed);
+    }
+}
+
+pub(crate) fn config_select(layout: u8) -> bool {
+    if ACTIVE.load(Ordering::Relaxed) {
+        STAGES.fetch_or(FAILED, Ordering::Relaxed);
+        return false;
+    }
+    LAYOUT.store(layout, Ordering::Relaxed);
+    WANTED.store(layout, Ordering::Relaxed);
+    true
+}
+
+pub(crate) fn config_inactive() -> bool {
+    let inactive = !ACTIVE.load(Ordering::Relaxed);
+    if !inactive {
+        STAGES.fetch_or(FAILED, Ordering::Relaxed);
+    }
+    inactive
+}
 const SUPPORTED: u32 = CLAP_AUDIO_PORTS_RESCAN_NAMES
     | CLAP_AUDIO_PORTS_RESCAN_FLAGS
     | CLAP_AUDIO_PORTS_RESCAN_CHANNEL_COUNT
@@ -35,6 +58,7 @@ static WANTED: AtomicU8 = AtomicU8::new(0);
 static SCHEDULED: AtomicU8 = AtomicU8::new(0);
 
 pub(crate) fn probe(host: HostSharedHandle<'_>, stage: u8) {
+    config_probe(host);
     let Some(extension) = host.get_extension::<HostAudioPorts>() else {
         STAGES.fetch_or(FAILED, Ordering::Relaxed);
         return;

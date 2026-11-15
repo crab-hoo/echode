@@ -917,6 +917,8 @@ class PolicyTests(unittest.TestCase):
         for name, target, file in (
             ("plugin-audio-port-routing", "hosted_playback", "crates/echode-engine/src/plugins.rs"),
             ("plugin-audio-port-mapping", "isolation", "crates/echode-plugin-host/src/threads.rs"),
+            ("plugin-audio-config-selection", "isolation", "crates/echode-plugin-host/src/audio_configs.rs"),
+            ("plugin-audio-config-routing", "hosted_playback", "crates/echode-engine/src/plugins.rs"),
         ):
             contract = contracts[name]
             self.assertEqual(contract["package"], "echode-plugin-host")
@@ -928,6 +930,9 @@ class PolicyTests(unittest.TestCase):
             "crates/echode-plugin-host/src/audio_ports.rs",
             "crates/echode-plugin-host/tests/isolation/audio_ports.rs",
             "crates/echode-test-plugin/src/audio_ports.rs",
+            "crates/echode-plugin-host/src/audio_configs.rs",
+            "crates/echode-test-plugin/src/audio_configs.rs",
+            "crates/echode-sandbox/src/audio_configs.rs",
         ):
             self.assertTrue({"check", "check-product-contracts", "rtsan"} <= self.selected(path))
 
@@ -2797,6 +2802,8 @@ class PolicyTests(unittest.TestCase):
                 "plugin-mpe-expression",
                 "plugin-audio-port-routing",
                 "plugin-audio-port-mapping",
+                "plugin-audio-config-selection",
+                "plugin-audio-config-routing",
                 "plugin-state-poll",
                 "transport-declick",
                 "output-safety-deadline",

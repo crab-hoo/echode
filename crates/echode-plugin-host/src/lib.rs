@@ -26,6 +26,7 @@ use std::path::Path;
 #[cfg(not(target_os = "macos"))]
 compile_error!("Echode only builds for macOS");
 
+mod audio_configs;
 mod audio_ports;
 mod awake;
 mod gui;
