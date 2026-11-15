@@ -148,6 +148,118 @@ fn merged_note_edits_validate_the_surviving_content_on_either_track() {
     }
 }
 
+// A future compound placement edit can add/remove links before refitting notes.
+// Start from a valid published project and keep those staged windows detached,
+// exactly as placement::edit does, while another track owns the auto placement.
+#[test]
+fn linked_refit_retargets_staged_windows_without_resurrecting_deleted_links() {
+    for remove_old in [false, true] {
+        let project = merging_project(false);
+        let bar = project.meter().bar_ticks().unwrap().get();
+        let mut contents = project.contents().to_vec();
+        let mut tracks = project.tracks().to_vec();
+        let mut current = (*tracks[1]).clone();
+        current.clips.edit(|clips| {
+            if remove_old {
+                clips.clear();
+            } else {
+                clips[0].offset = Tick::new(-2 * bar);
+            }
+        });
+        let mut staged = placement(Id::from_raw(20), 0);
+        staged.id = Id::from_raw(52);
+        staged.start = Tick::new(6 * bar);
+        staged.length = Tick::new(bar);
+        staged.offset = Tick::new(bar);
+        staged.gain = 0.25;
+        staged.fade_in = 1;
+        staged.fade_out = 2;
+        current.clips.insert_sorted(staged);
+        let before = current.clone();
+        Arc::make_mut(&mut contents[1])
+            .notes
+            .edit(|notes| notes[0].start = Tick::new(-bar));
+        let owner = refit_auto(
+            &mut contents,
+            &mut tracks,
+            &mut current,
+            Id::from_raw(20),
+            bar,
+        )
+        .unwrap();
+        assert_eq!(owner, Id::from_raw(10));
+        assert_eq!(current.clips.len(), before.clips.len());
+        for (old, new) in before.clips.iter().zip(&current.clips) {
+            assert_eq!(
+                new.content, owner,
+                "staged link must follow retired content"
+            );
+            let mut expected = old.clone();
+            expected.content = owner;
+            expected.offset = Tick::new(old.offset.get() + 2 * bar);
+            assert_eq!(
+                *new, expected,
+                "retarget only content and the staged offset"
+            );
+        }
+        tracks[1] = Arc::new(current);
+        Project::try_assemble(
+            project.meter(),
+            project.tempo().clone(),
+            contents
+                .into_iter()
+                .map(|content| (*content).clone())
+                .collect(),
+            tracks.into_iter().map(|track| (*track).clone()).collect(),
+        )
+        .unwrap()
+        .check_invariants()
+        .unwrap();
+        project.check_invariants().unwrap();
+        assert_eq!(
+            project.content(Id::from_raw(20)).unwrap().notes[0]
+                .start
+                .get(),
+            0
+        );
+    }
+}
+
+#[test]
+fn linked_refit_rejects_overflow_in_staged_link_offsets() {
+    let project = merging_project(false);
+    let bar = project.meter().bar_ticks().unwrap().get();
+    let mut contents = project.contents().to_vec();
+    let mut tracks = project.tracks().to_vec();
+    let mut current = (*tracks[1]).clone();
+    let mut staged = placement(Id::from_raw(20), 0);
+    staged.id = Id::from_raw(52);
+    staged.start = Tick::new(6 * bar);
+    staged.offset = Tick::new(i64::MAX);
+    current.clips.insert_sorted(staged);
+    Arc::make_mut(&mut contents[1])
+        .notes
+        .edit(|notes| notes[0].start = Tick::new(-bar));
+    assert_eq!(
+        refit_auto(
+            &mut contents,
+            &mut tracks,
+            &mut current,
+            Id::from_raw(20),
+            bar
+        ),
+        Err(ModelError::InvalidNote),
+        "staged offset overflow must reject the refit"
+    );
+    // Edits operate on private COW snapshots; failure cannot alter the source.
+    project.check_invariants().unwrap();
+    assert_eq!(
+        project.content(Id::from_raw(20)).unwrap().notes[0]
+            .start
+            .get(),
+        0
+    );
+}
 #[test]
 fn merged_note_edits_reject_overflow_in_links_of_the_surviving_content() {
     for through_link in [false, true] {

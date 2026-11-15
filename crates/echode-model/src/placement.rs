@@ -109,7 +109,7 @@ pub(super) fn insert(
     let owner = track.clips[primary].content;
     let local = content_local(&track.clips[primary], draft.start.get())?;
     push_note(contents, owner, fresh.note, local, draft)?;
-    let owner = merge(contents, tracks, track, &hosts, bar)?;
+    let owner = merge(contents, tracks, track, &hosts, bar, None)?;
     check_shared_notes(contents, tracks, track, owner)
 }
 
@@ -365,6 +365,7 @@ fn merge(
     track: &mut Track,
     hosts: &[usize],
     bar: i64,
+    edited: Option<&mut Track>,
 ) -> Result<Id, ModelError> {
     let mut order = hosts.to_vec();
     order.sort_by(|&left, &right| {
@@ -418,7 +419,7 @@ fn merge(
         .map(|(_, content, delta)| (content, delta))
         .collect();
     if !retired.is_empty() {
-        retarget(tracks, track, &retired, primary_content)?;
+        retarget(tracks, track, &retired, primary_content, edited)?;
         // All links to retired contents were retargeted, so prune those contents once.
         contents.retain(|content| {
             #[cfg(test)]
@@ -440,6 +441,7 @@ fn retarget(
     current: &mut Track,
     retired: &HashMap<Id, i64>,
     to: Id,
+    edited: Option<&mut Track>,
 ) -> Result<(), ModelError> {
     let edit = |clip: &mut Placement| -> Result<(), ModelError> {
         #[cfg(test)]
@@ -459,8 +461,20 @@ fn retarget(
     current
         .clips
         .edit(|clips| clips.iter_mut().try_for_each(&edit))?;
+    // Both detached tracks are authoritative; never retarget their stale snapshots.
+    let edited_id = edited.as_ref().map(|track| track.id);
+    if let Some(edited) = edited {
+        edited.clips.edit(|clips| {
+            clips.iter_mut().try_for_each(|clip| {
+                #[cfg(test)]
+                crate::model_scale_tests::refit_edited_probe();
+                edit(clip)
+            })
+        })?;
+    }
     for track in tracks.iter_mut() {
         if track.id == current.id
+            || Some(track.id) == edited_id
             || !track.clips.iter().any(|clip| {
                 #[cfg(test)]
                 crate::model_scale_tests::merge_placement_probe();
@@ -493,7 +507,7 @@ fn refit_auto(
         .iter()
         .any(|clip| clip.content == content && clip.kind == ClipKind::Auto)
     {
-        return refit_current(contents, tracks, current, content, bar);
+        return refit_current(contents, tracks, current, content, bar, None);
     }
     for slot in 0..tracks.len() {
         if tracks[slot].id == current.id {
@@ -507,37 +521,8 @@ fn refit_auto(
             #[cfg(test)]
             crate::model_scale_tests::refit_track_copy();
             let mut owned = (*tracks[slot]).clone();
-            let owner = refit_current(contents, tracks, &mut owned, content, bar)?;
+            let owner = refit_current(contents, tracks, &mut owned, content, bar, Some(current))?;
             crate::model::sort_placements(&mut owned.clips);
-            // Merge may have retargeted fixed windows on the edited track too.
-            // Index once: each fixed window may hold local edits we must retain.
-            if let Some(retargeted) = tracks.iter().find(|track| {
-                #[cfg(test)]
-                crate::model_scale_tests::refit_sync_probe();
-                track.id == current.id
-            }) {
-                let placements: HashMap<_, _> = retargeted
-                    .clips
-                    .iter()
-                    .map(|clip| {
-                        #[cfg(test)]
-                        crate::model_scale_tests::refit_sync_probe();
-                        (clip.id, clip)
-                    })
-                    .collect();
-                current.clips.edit(|clips| {
-                    for clip in clips {
-                        #[cfg(test)]
-                        crate::model_scale_tests::refit_sync_probe();
-                        if let Some(retargeted) = placements.get(&clip.id)
-                            && clip.content != retargeted.content
-                        {
-                            clip.content = retargeted.content;
-                            clip.offset = retargeted.offset;
-                        }
-                    }
-                });
-            }
             tracks[slot] = Arc::new(owned);
             return Ok(owner);
         }
@@ -551,6 +536,8 @@ fn refit_current(
     current: &mut Track,
     content: Id,
     bar: i64,
+    // When the auto host is on another track, this is the detached edited track.
+    edited: Option<&mut Track>,
 ) -> Result<Id, ModelError> {
     let index = current
         .clips
@@ -563,12 +550,12 @@ fn refit_current(
         refit_one(contents, &mut current.clips, index, bar)?;
         Ok(content)
     } else {
-        merge(contents, tracks, current, &hosts, bar)
+        merge(contents, tracks, current, &hosts, bar, edited)
     }
 }
 
-/// Discover against published, start-sorted, non-overlapping windows. Their bar
-/// starts and ends are monotone too, even for sub-bar moves and negative times.
+/// Discover against start-sorted windows, including nested or overlapping ones.
+/// Left candidates are visited by decreasing end, right candidates by start.
 fn refit_hosts<'a>(
     clips: impl IntoIterator<Item = &'a Placement> + Copy,
     index: usize,
@@ -587,6 +574,14 @@ fn refit_hosts<'a>(
             .ok_or(ModelError::InvalidNote)?;
         split += usize::from(range.0 < span.0);
         candidates.push((slot, range));
+    }
+    // Starts alone cannot justify stopping to the left: an earlier window may
+    // contain a nearer, disjoint one. Monotone ends make a gap conclusive.
+    // Published non-overlapping windows already have this order, so retain the
+    // linear path there and sort only when overlapping ends reverse it.
+    let left = &mut candidates[..split];
+    if !left.is_sorted_by_key(|&(_, range)| range.1) {
+        left.sort_unstable_by_key(|&(_, range)| range.1);
     }
     let mut hosts = vec![index];
     let mut fixed = None;

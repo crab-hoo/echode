@@ -675,6 +675,10 @@ IEEE float WAV の異常値・有限値のビット保持・原本とパッケ�
 旧ジャーナルの種類の互換と保存は `crates/echode-history/tests/clip_bar_basis.rs` で検査する
 （[ADR 0170](decisions/0170-content-relative-auto-bars.md)）。
 
+自動配置の候補探索は `placement.rs::refit_hosts`、別トラックの結合時の編集側の参照更新は `retarget` へ直接渡す可変借用で行う。
+重複・包含の候補の独立照合は `placement_host_tests.rs`、段階化したリンクの追加・削除・オフセット変更・整数超過は `placement_tests.rs`。
+公開モデルは重複を拒否したままで、将来の接続条件は [ADR 0377](decisions/0377-overlap-independent-auto-placement.md) にある。
+
 記憶した再生開始位置と停止での復帰は、セッションの `transport.set_start` と停止（`crates/echode-audio-io/src/session.rs`）、
 余韻を切らないエンジンの `PlaybackCommand::Rewind`（`playback.rs`）、パッケージの `transport.json`（`crates/echode-history/src/transport.rs`）に置く。
 画面はピアノロールのルーラーのクリックと印（`PianoRollView.swift`・`PianoFrame.swift`）、Space と一時停止の振り分け（`ProjectController.swift`）、

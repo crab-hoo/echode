@@ -93,12 +93,12 @@ Serde 互換入口は意味の原因を文へ変えるので、型を調べる�
 `placement::check_shared_notes` は変更後の内容を一度集計する。`placement::tests` の独立した i128 の照合と整数上下端の製品編集で、配置ごとの両端検証の範囲を調べる。
 共有配置の検証前の所属探索は `note_edits_do_not_search_unrelated_contents_after_refitting` で、関係のない内容のノート数に増えないことを調べる。
 再適合・結合の戻り値が残った内容を指すかは `placement::tests::merged_note_edits` で確認し、結合先のリンクの範囲外を見落とす不具合と分ける。
-固定リンクから別トラックの自動配置を編集した時だけ遅い場合は、`model_scale_tests::refit::linked_refit` の同期キー訪問とトラック複製回数を調べる。
-`placement::refit_auto` は配置 ID の一時索引で付替えを戻し、`retarget` と共に無関係なトラックを検査のために複製しない。
+固定リンクから別トラックの自動配置を編集した時だけ遅い場合は、`model_scale_tests::refit::linked_refit` の編集配置訪問とトラック複製回数を調べる。
+`placement::refit_auto` は編集側を `retarget` へ直接渡す。結合時だけ各配置を一度訪ね、古い写しを同期せず、無関係なトラックを複製しない。
 この計数は再適合・付替えの範囲だけであり、ID 重複の探索・参照集合・保存待ちの費用とは分ける。
 結合数が多い時だけ遅い場合は、`model_scale_tests::merge::multi_clip_merge_discovery_visits_autos_at_most_twice`
 と逆向きの連鎖の回帰で候補の収集・探索回数を調べる。
-`refit_current` は開始順・非重複の窓から候補を集め、左右の前線を各一度進める。
+`refit_current` は開始順の窓から候補を集め、左を終端の降順、右を開始の昇順で各一度進める。左の終端の逆転がある時だけ整列する。
 `merge::hosts::reverse_chain_discovery` は追加・編集・複製・削除・別トラックのリンクからの経路も検査する。
 固定窓が多い時は `model_scale_tests::merge::multi_clip_merge_wall_queries_do_not_rescan_placements` の壁索引の構築・問い合わせの訪問数を確認する。
 `placement::FixedBars` は固定窓を一度集めて二分探索する。計数には整列の比較を含めず、編集全体の費用とは区別する。
@@ -113,6 +113,14 @@ Serde 互換入口は意味の原因を文へ変えるので、型を調べる�
 `content id order` の拒否は二分探索の前提の破れであり、保存入力を整列する組立てと、変更セット復元の内容の順を調べる。
 モデルが速くても `replace_p50_ms` が遅ければ計画の使い回し（ADR 0274）、保存で待つなら FCA-14 を別に調べる。
 ID 重複の線形探索と、毎回全配置から作る参照集合は残る（[ADR 0242](../decisions/0242-model-content-lookup-and-references.md)）。
+
+### 自動配置の結合で候補や固定リンクが失われる
+
+`cargo test -q -p echode-model --lib placement::` で、製品編集と同じ探索・参照更新を確認する。
+`host_tests` は重複・包含・固定壁を i128 の反復走査と照合する。左の短い窓との隙間で探索を止め、外側の候補を見落としていないかを調べる。
+`tests::linked_refit` は編集側だけに追加・削除・オフセット変更を段階化し、別トラックでの結合後の参照と窓を確認する。
+古い `tracks` の写しを更新して `current` へ戻すと、新規リンクの漏れやオフセットの上書きが起こる（ADR 0377）。
+現行の公開入口は重複配置を拒否する。実操作の再現では配置 ID・内容 ID・原点と編集前後の窓を採り、未接続の重ねる動作と区別する。
 
 ### ノート複製・ベロシティ変更が内容数に応じて遅くなる
 

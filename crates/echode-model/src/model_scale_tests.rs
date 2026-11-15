@@ -15,7 +15,7 @@ struct Work {
     parent_links: usize,
     shared_note_validations: usize,
     note_lookups: usize,
-    refit_sync_probes: usize,
+    refit_edited_probes: usize,
     refit_track_copies: usize,
     used_id_collections: usize,
     used_id_notes: usize,
@@ -76,8 +76,8 @@ pub(crate) fn note_lookup() {
     record(|work| work.note_lookups += 1);
 }
 
-pub(crate) fn refit_sync_probe() {
-    record(|work| work.refit_sync_probes += 1);
+pub(crate) fn refit_edited_probe() {
+    record(|work| work.refit_edited_probes += 1);
 }
 
 pub(crate) fn refit_track_copy() {

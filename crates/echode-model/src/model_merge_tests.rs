@@ -233,10 +233,7 @@ fn multi_clip_merge_retargets_links_and_prunes_contents_in_one_pass() {
                     work.merge_content_probes,
                     project.contents().len()
                 );
-                assert_eq!(
-                    work.refit_track_copies,
-                    if operation == "linked edit" { 3 } else { 2 }
-                );
+                assert_eq!(work.refit_track_copies, 2);
             }
         }
     }

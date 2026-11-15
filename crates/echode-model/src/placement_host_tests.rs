@@ -1,4 +1,4 @@
-//! Compare frontier discovery with the original iterative rule on valid windows.
+//! Compare frontier discovery with an independent iterative interval rule.
 
 use super::*;
 
@@ -115,4 +115,61 @@ fn blocked_containing_window_does_not_hide_a_touching_window_on_its_left() {
     hosts.sort_unstable();
     assert_eq!(hosts, vec![0, 3]);
     assert_eq!(hosts, scalar_hosts(&clips, 3, (0, 0), 4));
+}
+
+#[test]
+fn nested_left_windows_do_not_hide_a_reachable_host_behind_a_gap() {
+    let clips = [
+        clip(0, -10, 11, ClipKind::Auto),
+        clip(1, -5, 1, ClipKind::Auto),
+        clip(2, 4, 1, ClipKind::Auto),
+    ];
+    let mut actual = refit_hosts(&clips, 2, (0, 0), 1).unwrap();
+    actual.sort_unstable();
+    assert_eq!(actual, vec![0, 1, 2], "nested left host discovery");
+    assert_eq!(actual, scalar_hosts(&clips, 2, (0, 0), 1));
+}
+
+#[test]
+fn frontier_hosts_match_scalar_discovery_for_overlapping_windows() {
+    // These window counts bound the regression, not the product. Overlapping
+    // snapshots are not public yet; exercise the same discovery used by edits.
+    for bar in [1, 4, 7] {
+        for base in [-100, 0, i64::MIN + 128, i64::MAX - 128] {
+            for pattern in 0..12 {
+                for mask in 0..32 {
+                    let clips: Vec<_> = (0..5)
+                        .map(|slot| {
+                            clip(
+                                slot,
+                                base + slot as i64 * (pattern % 3),
+                                1 + (slot as i64 * 7 + pattern * 3) % (8 * bar),
+                                if mask & (1 << slot) == 0 {
+                                    ClipKind::Auto
+                                } else {
+                                    ClipKind::Fixed
+                                },
+                            )
+                        })
+                        .collect();
+                    for (index, seed) in clips.iter().enumerate() {
+                        if seed.kind != ClipKind::Auto {
+                            continue;
+                        }
+                        let origin = seed.start.get().div_euclid(bar);
+                        for delta in [(-8, -8), (-2, -1), (-1, 1), (0, 0), (1, 1), (2, 8)] {
+                            let span = (origin + delta.0, origin + delta.1);
+                            let mut actual = refit_hosts(&clips, index, span, bar).unwrap();
+                            actual.sort_unstable();
+                            assert_eq!(
+                                actual,
+                                scalar_hosts(&clips, index, span, bar),
+                                "overlapping hosts: bar={bar}, base={base}, pattern={pattern}, mask={mask}, index={index}, span={span:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

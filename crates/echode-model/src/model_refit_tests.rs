@@ -1,4 +1,4 @@
-//! Linked edits must not copy unrelated tracks or synchronize windows quadratically.
+//! Linked edits update detached windows once and never copy unrelated tracks.
 
 use super::{fixture, measured};
 use crate::{ClipKind, Id, ModelError, NoteDraft, NoteGeometry, Project, Tick, Track};
@@ -185,7 +185,7 @@ fn assert_linked_edit(before: &Project, after: &Project, merged: bool, earlier: 
 }
 
 #[test]
-fn linked_refit_synchronization_is_linear_in_tracks_and_placements() {
+fn linked_refit_visits_detached_placements_at_most_once() {
     for count in [1, 64, 256] {
         for auto_first in [false, true] {
             let project = linked_project(count, auto_first, true);
@@ -193,10 +193,10 @@ fn linked_refit_synchronization_is_linear_in_tracks_and_placements() {
                 for operation in ["edit", "insert", "duplicate"] {
                     let (edited, work) =
                         measured(|| edit_link(&project, operation, merge).unwrap());
-                    assert!(
-                        work.refit_sync_probes <= project.tracks().len() + 2 * count,
-                        "linked refit inspected {} synchronization keys for {count} placements ({operation})",
-                        work.refit_sync_probes,
+                    assert_eq!(
+                        work.refit_edited_probes,
+                        if merge { count } else { 0 },
+                        "linked refit must visit each detached placement once only when merging ({operation})",
                     );
                     assert_linked_edit(&project, &edited, merge, merge);
                 }
@@ -210,13 +210,7 @@ fn linked_refit_does_not_copy_unrelated_tracks() {
     for has_auto in [false, true] {
         for merge in [false, true] {
             let project = linked_project(64, false, has_auto);
-            let expected = if !has_auto {
-                0
-            } else if merge {
-                2
-            } else {
-                1
-            };
+            let expected = usize::from(has_auto);
             for operation in ["edit", "insert", "duplicate"] {
                 let (edited, work) = measured(|| edit_link(&project, operation, merge).unwrap());
                 assert_eq!(
@@ -241,7 +235,7 @@ fn linked_refit_deletion_keeps_work_bounded_and_fixed_windows_unchanged() {
                 .unwrap()
         });
         assert_eq!(work.refit_track_copies, usize::from(has_auto));
-        assert!(work.refit_sync_probes <= project.tracks().len() + 2 * 64);
+        assert_eq!(work.refit_edited_probes, 0);
         edited.check_invariants().unwrap();
         project.check_invariants().unwrap();
         for (before, after) in project.tracks().iter().zip(edited.tracks()) {
