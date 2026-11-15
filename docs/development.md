@@ -151,6 +151,7 @@ Phase 0 の履歴モデル（`echode-history/src/project.rs`・`format.rs`・`st
 直接その通常回帰を動かす時は `cargo test -q -p echode-history --features spike --lib --test roundtrip`、
 計測は従来どおり `make spike-history` を使う。製品の型・保存形式と混同しない
 （[ADR 0211](decisions/0211-opt-in-history-spike.md)）。
+`make verify` は `spike` の構成をビルドしない。全体の段階の `make check-spikes`（GitHub の `full`）が通常回帰を実行する（[ADR 0361](decisions/0361-unshipped-configurations-only-on-github.md)）。
 
 失敗の結果は `PackageError` を共用し、スパイク固有の `SpikeError` だけを feature に閉じる。
 `tests/roundtrip/errors.rs` は公開入口から原因・文面・原本の保持と、初期化失敗後の終了を子プロセスで検査する。

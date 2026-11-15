@@ -574,27 +574,65 @@ class ContractEvidenceTests(unittest.TestCase):
             },
         )
 
-    def test_a_contract_with_features_builds_them_as_check_base_does(self):
-        # ADR 0328: features need their own build; it is check-base's spike run, not one more copy.
-        engine = {"id": "e", "package": "echode-engine", "target": ["--lib", "--features", "spike"]}
-        selection, target = contracts.rust_selection(engine)
-        self.assertEqual((selection, target), (("-p", "echode-engine", "--features", "spike"), ("--lib",)))
+    def test_a_task_builds_only_the_shipped_features_and_leaves_the_others_to_the_full_tier(self):
+        # ADR 0361: a -p set with features builds one more copy of the crates. A task keeps
+        # to the default members' build; the full tier builds a features contract's package.
+        engine = {"id": "e", "runner": "rust", "package": "echode-engine", "target": ["--lib", "--features", "spike"]}
+        self.assertTrue(contracts.names_features(engine))
+        with self.assertRaisesRegex(ValueError, "only the shipped features; the full tier runs e"):
+            contracts.rust_target(engine)
         self.assertEqual(
-            contracts.rust_test_build(selection, [target, target])[-5:],
-            ["-p", "echode-engine", "--features", "spike", "--lib"],
+            contracts.rust_target({"id": "m", "runner": "rust", "package": "p", "target": ["--lib"]}), ("--lib",)
         )
-        self.assertEqual(contracts.rust_selection({"id": "m", "package": "p", "target": ["--test", "t"]})[0], ())
-        self.assertNotIn("--lib", contracts.rust_test_build((), [("--lib",)]), "the default members build it all")
-        for target in (["--bin", "x"], ["--test"], ["--lib", "--test", "t"], ["--features", "spike"]):
+        build = contracts.rust_test_build()
+        self.assertFalse({"-p", "--package", "--features", "--all-features", "--workspace"} & set(build))
+        for target in (["--bin", "x"], ["--test"], ["--lib", "--test", "t"]):
             with self.subTest(target=target), self.assertRaisesRegex(ValueError, "--lib or --test NAME"):
-                contracts.rust_selection({"id": "x", "package": "p", "target": target})
+                contracts.rust_target({"id": "x", "runner": "rust", "package": "p", "target": target})
         policy = json.loads((ROOT / "scripts/verification.json").read_text())
-        base = (ROOT / "Makefile").read_text().split("\ncheck-base:\n", 1)[1].split("\n\n", 1)[0]
-        for contract in policy["product_contracts"]:
-            if contract["runner"] == "rust" and "--features" in contract["target"]:
-                with self.subTest(contract=contract["id"]):
-                    selection, target = contracts.rust_selection(contract)
-                    self.assertIn(f"cargo test -q {' '.join(selection)} {' '.join(target)}\n", base)
+        featured = [c for c in policy["product_contracts"] if contracts.names_features(c)]
+        self.assertTrue(featured, "the measurement contract keeps its spike feature")
+        spikes = (ROOT / "Makefile").read_text().split("\ncheck-spikes:\n", 1)[1].split("\n\n", 1)[0]
+        for contract in featured:
+            with self.subTest(contract=contract["id"]):
+                # The full tier's own run of the same feature set, in check-spikes.
+                features = contract["target"][contract["target"].index("--features") :][:2]
+                self.assertIn(f"-p {contract['package']} {' '.join(features)}", spikes)
+        cases = [
+            {"id": name, "runner": "rust", "package": "p", "target": target, "test": name, "timeout": 5, "purpose": "f"}
+            for name, target in (("a", ["--lib"]), ("e", ["--lib", "--features", "spike"]))
+        ]
+        tested = []
+
+        def run_tests(_root, pending, _invoke, stamps, _evidence, record, batched=False):
+            for case in pending:
+                tested.append((case["id"], batched))
+                record(
+                    {
+                        "id": case["id"],
+                        "status": "passed",
+                        "fingerprint": stamps[case["id"]],
+                        **contracts.evidence_build(case, batched),
+                    }
+                )
+
+        def controls(_root, pending, fingerprints, evidence, record):
+            for contract in pending:
+                record(contracts.control_result(contract, fingerprints[contract["id"]], True, evidence / "x.log", 0))
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = io.StringIO()
+            with (
+                patch.object(contracts, "contract_fingerprints", side_effect=lambda *args: {"a": "1", "e": "2"}),
+                patch.object(contracts.verify, "tool_identity", return_value={}),
+                patch.object(contracts, "run_tests", side_effect=run_tests),
+                patch.object(contracts, "negative_controls", side_effect=controls),
+                redirect_stdout(output),
+            ):
+                self.assertEqual(contracts.run(Path(directory), cases, policy={}, tests_only=True), 0)
+                self.assertIn("1 contracts on unshipped features run in the full tier", output.getvalue())
+                self.assertEqual(contracts.run(Path(directory), cases, policy={}), 0)
+        self.assertEqual(tested, [("a", True), ("a", False), ("e", False)])
 
     def test_a_failed_or_incomplete_test_build_fails_each_contract_with_its_reason(self):
         cases = [

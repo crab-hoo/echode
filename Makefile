@@ -3,7 +3,7 @@
 SHELL := /bin/bash -euo pipefail
 .PHONY: spike-verification-failures
 
-.PHONY: bundled-plugins app dist xcode sign-setup spike-app spike-playhead spike-arrange-frame spike-piano-frame spike-main-thread spike-audio spike-audition spike-plugin-tracks spike-scale check check-format check-lint check-base check-product-contracts check-real-hal verify verify-plan wait-verify check-verification doctor agent-context debug-report fmt setup setup-lint setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-engine-smoke spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-tsan-runtime check-bridge-miri check-shell check-swift check-contract-controls contract-prerequisites verify-full rtsan setup-fuzz fuzz check-fuzz setup-coverage coverage
+.PHONY: bundled-plugins app dist xcode sign-setup spike-app spike-playhead spike-arrange-frame spike-piano-frame spike-main-thread spike-audio spike-audition spike-plugin-tracks spike-scale check check-format check-lint check-base check-product-contracts check-real-hal verify verify-plan wait-verify check-verification doctor agent-context debug-report fmt setup setup-lint setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-engine-smoke spike-bridge spike-render check-bridge check-bridge-features check-spikes check-bridge-asan check-bridge-tsan check-tsan-runtime check-bridge-miri check-shell check-swift check-contract-controls contract-prerequisites verify-full rtsan setup-fuzz fuzz check-fuzz setup-coverage coverage
 
 bundled-plugins:
 	bash scripts/build-bundled-plugins.sh
@@ -80,7 +80,7 @@ check-lint:
 
 # The verifier records the Rust part, the Swift part and product contracts as separate checks.
 # Without -p, cargo selects Cargo.toml's default members: one build for the product, its tests
-# and the contracts (ADR 0328). A -p call only adds features or reaches the bridge spike.
+# and the contracts (ADR 0328). The configurations the app does not ship are in check-spikes.
 check-base:
 	$(MAKE) bundled-plugins
 	python3 -B scripts/check_build_host.py
@@ -88,13 +88,6 @@ check-base:
 	cargo clippy -q --all-targets -- -D warnings
 	$(MAKE) check-swift-actions
 	cargo test -q
-	cargo clippy -q -p echode-bridge-spike --all-targets -- -D warnings
-	cargo test -q -p echode-bridge-spike
-	cargo clippy -q -p echode-history --features spike --all-targets -- -D warnings
-	cargo test -q -p echode-history --features spike --lib --test roundtrip
-	cargo build -q -p echode-engine --features spike --bin echode-engine-spike
-	cargo clippy -q -p echode-engine --features spike --all-targets -- -D warnings
-	cargo test -q -p echode-engine --features spike --lib
 	scripts/check-ffi.sh
 	python3 -B scripts/check_audio_lints.py
 	python3 -B scripts/check_typed_errors.py
@@ -109,6 +102,18 @@ check-swift:
 	python3 -B scripts/check_build_host.py
 	cargo build -q --locked --offline
 	$(MAKE) check-shell
+
+# The configurations the app does not ship: the history and engine `spike` features and the
+# bridge spike. A -p call builds its own copy of the crates (ADR 0328), so these run in the
+# full tier, on GitHub's full workflow for each push to main (ADR 0361).
+check-spikes:
+	cargo clippy -q -p echode-bridge-spike --all-targets -- -D warnings
+	cargo test -q -p echode-bridge-spike
+	cargo clippy -q -p echode-history --features spike --all-targets -- -D warnings
+	cargo test -q -p echode-history --features spike --lib --test roundtrip
+	cargo build -q -p echode-engine --features spike --bin echode-engine-spike
+	cargo clippy -q -p echode-engine --features spike --all-targets -- -D warnings
+	cargo test -q -p echode-engine --features spike --lib
 	$(MAKE) check-bridge
 
 # Each required contract, its tests and its counterexample are listed in scripts/verification.json.

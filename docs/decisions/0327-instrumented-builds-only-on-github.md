@@ -7,6 +7,7 @@
 - 置き換え: ADR 0212 の「作業の段階でサニタイザを選ぶ条件」「作業の段階で反例を選ぶ条件」「合格済みの変更で選び直さない」、
   [ADR 0232](0232-verification-escapes-and-expected-red.md) の ENV-01 の修正（削除行と C の変更行を数える選択）、
   ADR 0271 の「RTSan と変えた契約の反例は作業の段階に残す」
+- 後続: [ADR 0361](0361-unshipped-configurations-only-on-github.md) が、出荷しない構成（`spike` の feature と橋渡しスパイク）も全体の段階へ移した。
 
 ## 背景
 

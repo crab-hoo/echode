@@ -9,7 +9,7 @@
 どちらも同じポリシーから選び、同じ合否の記録を使う。
 
 - `make verify`（作業の段階）: 作業ごとの完了条件。今回の変更で壊れていないかを調べる。
-- `make verify-full`（全体の段階）: 自動検査の全件。ASan、TSan、Miri、RTSan、fuzz、全契約の反例を含む。
+- `make verify-full`（全体の段階）: 自動検査の全件。ASan、TSan、Miri、RTSan、fuzz、全契約の反例、出荷しない構成（`spike` の feature と橋渡しスパイク）を含む。
 
 全体の段階は GitHub Actions の `full` ワークフローが、`main` へのプッシュごとに実行する（[ADR 0269](decisions/0269-github-public-ci-scope.md)）。
 `docs/` と Markdown だけの変更では起動しない。依頼なしに作業の完了条件へ足さない。
@@ -26,7 +26,7 @@ CI の合格は `report.md` に記録しないので、手元の表示では全�
 
 作業の段階は全体の段階の検査を選ばない（[ADR 0327](decisions/0327-instrumented-builds-only-on-github.md)）。
 `unsafe` の変更や、その検査自身のスクリプトの変更でも同じである。
-全体の段階の検査は、計装した別のツールチェーンかソースのコピーで、製品と別のビルドを持つ。
+全体の段階の検査は、計装した別のツールチェーン、ソースのコピー、出荷しない feature の組のどれかで、製品と別のビルドを持つ（[ADR 0361](decisions/0361-unshipped-configurations-only-on-github.md)）。
 手元の容量と時間を抑えるため、そのビルドは GitHub のランナーに任せる。
 手元の `make verify` は、製品と同じ 1 つの構成のビルドとテストに限る。
 `make verify` の合格は全体の段階の合格ではない。
@@ -134,10 +134,8 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
 - `check` (`check-base`): Rust のビルドと全テスト、ランダムな編集の不変条件・Undo / Redo・保存往復、基準音声、保存形式、ブロック長比較、プラグインのクラッシュ・ハング、clippy、FFI、ライセンス。
   `make check-swift-actions` で登録簿・公開スキーマと Swift の生成編集型を照合し、古い生成物を変更せず拒否する。
   FFI の例外はパス・シンボル・ヘッダの組に限り、SDK と clang で照合する（[ADR 0265](decisions/0265-symbol-scoped-foreign-declarations.md)、[0326](decisions/0326-foreign-declarations-checked-against-the-sdk.md)）。
-  履歴の Phase 0 モデルとエンジンの固定グラフ・計測器は既定ではビルドせず、別の Cargo 呼出しで `spike` feature のビルド・lint・通常回帰も維持する。
-  履歴は非計測の往復回帰、エンジンはスケジューラと計測の制御ループの単体テストを含む。
-  既定の workspace の依存解決で両 crate のこの feature が有効でないことは `check-verification` で照合する。
-- `check-swift`: Swift のビルドと全テスト（Swift 6 の厳密な並行性）と、橋渡しスパイクの ABI 検証。
+  `spike` feature と橋渡しスパイクはビルドしない（`check-spikes`）。既定の依存解決でこの feature が有効でないことは `check-verification` が照合する。
+- `check-swift`: Swift のビルドと全テスト（Swift 6 の厳密な並行性）。
   Swift だけの変更では `check` を再利用する。リンク先の Rust が変われば両方を実行する。
   テストが起動するヘルパー・検査用プラグイン・CLI とリンクする `libechode_ffi.a` は、このレシピ自身が `make app` と同じ選択でビルドする。
   `EchodeAppTests` の実行に HAL の代役の報告（`Real HAL reached:`）があれば、テストが合格していても失敗にする。
@@ -152,6 +150,7 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
   まとめた実行のログは `product-contracts/batch-*.log` に残る。
   全反例が現在のソースへ適用できること（置換元が 1 回だけ現れること）を、ビルドせずに確認する。
   反例は実行しない。反例はソースのコピーを別にビルドするので、全体の段階に任せる（[ADR 0327](decisions/0327-instrumented-builds-only-on-github.md)）。
+  出荷しない feature を名指す契約も、通常テストごと全体の段階に任せる。
 - `check-contract-controls`（全体の段階）: 全契約の反例を実行する。
   ソースのコピー上で各契約の `negative_control`（既知の不具合を戻す差分）を適用し、テストの期待値で失敗しなければ検査全体を失敗とする。
   コンパイル失敗は検出の証拠にしない。
@@ -171,7 +170,8 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
 - `rtsan`（全体の段階）: 同梱 Sine Pad の隔離処理・領域拡張、テスト用 DSP、計画の受け渡し、製品の再生・トランスポート・出力バッファ、プラグインヘルパーの処理区間でリアルタイム処理の禁止操作を検出する。
   試聴の有限の先読み・音量補間・指定位置からのコールバックも対象とする。禁止操作はロック、確保、ブロックするシステムコールである。
 - `check-input`: Swift の入力の単体テスト。ウィンドウは開かない。
-- `check-bridge-features`: 橋渡しの全 feature、Rust テスト・clippy・生成器を含むライセンス。
+- `check-spikes`（全体の段階）: 履歴・エンジンの `spike` feature と橋渡しスパイクのビルド・clippy・テスト、橋渡しの ABI 検証。
+- `check-bridge-features`（全体の段階）: 橋渡しの全 feature、Rust テスト・clippy・生成器を含むライセンス。
 - `check-tsan-runtime`（全体の段階）: C だけのスレッド再利用、寿命修正を外した負の対照、生存中の errno を共有する実競合の検出を確認する。
 - `check-real-hal`: バンドルに実物の HAL の参照がないこと、製品とプローブに実物が残っていること、既定の `ProjectController()` の再生が名指しで止まることを確かめる。
   機器は開かない（[ADR 0209](decisions/0209-real-hal-guard.md)）。
@@ -201,13 +201,14 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
 
 作業の段階の Rust のビルド・clippy・テストと `make app`・`make dist` は、`-p` を付けずに Cargo の既定のメンバー（`Cargo.toml` の `default-members`）を選ぶ（[ADR 0328](decisions/0328-one-cargo-selection-for-the-task-tier.md)）。
 Cargo は選んだパッケージだけで feature を解決するので、`-p` の組ごとにワークスペースの crate の別の写しを作り、Rust の編集のたびに写しの数だけコンパイルする。
-`-p` は feature を足す時（`spike`）と、既定のメンバーの外の橋渡しスパイクにだけ使う。`scripts/tests/test_cargo_selection.py` がほかの `-p` と `--workspace` を止める。
+作業の段階は `-p`・`--features`・`--workspace` を使わない。それらは全体の段階の `check-spikes`・`check-bridge-features`、サニタイザ、手動の計測にだけある。
+`scripts/tests/test_cargo_selection.py` が作業の段階の呼出しを照合する（[ADR 0361](decisions/0361-unshipped-configurations-only-on-github.md)）。
 橋渡しスパイクは uniffi を通して serde_json の `unbounded_depth` を有効にし、製品にない構成を作るので、既定のメンバーに入れない。
 
-写しは、出荷するビルド（`cargo build`）と、開発用依存の feature を足すテストのビルド（`cargo test`）の 2 つである。
+作業の段階の写しは、出荷するビルド（`cargo build`）と、開発用依存の feature を足すテストのビルド（`cargo test`）の 2 つである。
 テストのビルドが足してよい feature は、同じテストの `TEST_ONLY_FEATURES` に理由付きで列挙し、それ以外を拒否する。
 作業の段階の Rust の契約は、`cargo test --no-run` の報告から `check` と同じテストのバイナリを探し、パッケージのフォルダから直接起動する。
-feature を名指す契約は、`check` の `spike` の実行と同じ `-p` と feature のビルドを使う。
+feature を名指す契約は作業の段階では実行せず、全体の段階の契約ごとの `cargo test -p` に任せる。
 Swift の契約を先に実行する。`cargo test` は `target/debug` のヘルパーと CLI を自分のビルドで置き換えるが、Swift のテストは出荷するビルドのものを起動するためである。
 全体の段階は契約ごとの `cargo test -p` を保つ。記録の `build`（`members` / `package`）で、どちらの段階も相手の Rust の記録を再利用しない。
 どのメンバーの依存も共有のビルドの feature を変えるので、`check-swift`・`check-real-hal`・契約の入力は `crates/*/Cargo.toml` を含む。
@@ -353,7 +354,7 @@ Xcode や製品アプリは変更しない。通常検査はネットワーク�
 GitHub Actions の `check` は、M4 を要らない `make check-portable` と `make advisories` を実行する（[ADR 0269](decisions/0269-github-public-ci-scope.md)）。
 `check-portable` の前に `make setup-lint` で lint の固定版を入れる。
 M4 のない環境の協力者も同じ入口を使える。
-`full` は全体の段階の 7 件を、手元と同じ apple-m4 のビルドのまま M1 のランナーで実行する。
+`full` は全体の段階の 9 件を、手元と同じ apple-m4 のビルドのまま M1 のランナーで実行する。
 反例は `ECHODE_CONTRACT_SHARD=I/N` で 4 つのジョブに分け、各ジョブは必須テストを全部実行してから自分の分の反例を実行する。
 全体の段階の検査を足したら `full.yml` にも足す。登録簿との差は `check-verification` のテストが止める。
 作業の段階のネイティブ検査は CI になく、手元の `make verify` で行う。

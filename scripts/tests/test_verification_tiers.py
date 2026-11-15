@@ -22,6 +22,9 @@ FULL_TIER = {
     "check-contract-controls",
     "check-fuzz",
     "rtsan",
+    # Configurations the app does not ship (ADR 0361).
+    "check-spikes",
+    "check-bridge-features",
 }
 
 

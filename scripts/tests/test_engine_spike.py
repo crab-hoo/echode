@@ -75,9 +75,12 @@ class EngineSpikeTests(unittest.TestCase):
         base = makefile.split("check-base:\n", 1)[1].split("\n\n", 1)[0]
         self.assertIn("cargo test -q\n", base)
         self.assertIn("cargo clippy -q --all-targets -- -D warnings\n", base)
-        self.assertIn("cargo build -q -p echode-engine --features spike --bin echode-engine-spike\n", base)
-        self.assertIn("cargo clippy -q -p echode-engine --features spike --all-targets -- -D warnings\n", base)
-        self.assertIn("cargo test -q -p echode-engine --features spike --lib\n", base)
+        # ADR 0361: the spike feature is a configuration the app does not ship, so the full tier builds it.
+        self.assertNotIn("--features", base)
+        spikes = makefile.split("check-spikes:\n", 1)[1].split("\n\n", 1)[0]
+        self.assertIn("cargo build -q -p echode-engine --features spike --bin echode-engine-spike\n", spikes)
+        self.assertIn("cargo clippy -q -p echode-engine --features spike --all-targets -- -D warnings\n", spikes)
+        self.assertIn("cargo test -q -p echode-engine --features spike --lib\n", spikes)
         for target in ("spike-engine", "spike-engine-smoke"):
             with self.subTest(target=target):
                 measurement = makefile.split(f"{target}:\n", 1)[1].split("\n\n", 1)[0]

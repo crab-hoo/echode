@@ -160,38 +160,31 @@ LIBRARY_KINDS = {"lib", "rlib", "staticlib", "dylib", "cdylib", "proc-macro"}
 RUST_TEST_BUILD_TIMEOUT = 1200
 
 
-def rust_selection(contract):
-    """The cargo selection whose test build holds this contract's binary, and the binary's target.
+def names_features(contract):
+    """Whether a contract's test is built with features the app does not ship."""
+    return contract["runner"] == "rust" and "--features" in contract["target"]
 
-    Without features this is Cargo's default members, the build check-base tests and the app
-    ships (ADR 0328). A contract that names features builds its own package with them, as
-    check-base's spike runs do; a `-p` set without them would build one more copy of the crates.
+
+def rust_target(contract):
+    """The target of this contract's test binary in the default members' build (ADR 0328).
+
+    That is the build check-base tests and the app ships. A contract that names features is
+    left to the full tier, which builds its own package with them (ADR 0361).
     """
-    target = list(contract["target"])
-    selection = ()
-    if "--features" in target:
-        index = target.index("--features")
-        selection = ("-p", contract["package"], *target[index : index + 2])
-        del target[index : index + 2]
-    if target != ["--lib"] and not (len(target) == 2 and target[0] == "--test"):
+    if names_features(contract):
+        raise ValueError("a task builds only the shipped features; the full tier runs " + contract["id"])
+    target = tuple(contract["target"])
+    if target != ("--lib",) and not (len(target) == 2 and target[0] == "--test"):
         raise ValueError("a Rust contract names --lib or --test NAME: " + contract["id"])
-    return selection, tuple(target)
+    return target
 
 
-def rust_test_build(selection, targets):
-    """`cargo test --no-run` of one selection, reporting each test binary as JSON."""
-    # The default members build every test target, exactly as check-base's `cargo test` does.
-    filters = [] if not selection else list(dict.fromkeys(item for target in targets for item in target))
-    return [
-        "cargo",
-        "test",
-        "--locked",
-        "--offline",
-        "--no-run",
-        "--message-format=json-render-diagnostics",
-        *selection,
-        *filters,
-    ]
+def rust_test_build():
+    """`cargo test --no-run` of the default members, reporting each test binary as JSON.
+
+    It builds every test target, exactly as check-base's `cargo test` does.
+    """
+    return ["cargo", "test", "--locked", "--offline", "--no-run", "--message-format=json-render-diagnostics"]
 
 
 def test_executables(output, members):
@@ -219,36 +212,33 @@ def test_executables(output, members):
 
 
 def locate_rust_tests(root, contracts, invoke, evidence):
-    """Each Rust contract's test binary, built once per selection, or the build's failure.
+    """Each Rust contract's test binary, from one build of the default members, or the build's failure.
 
     Returns {id: (executable, package folder)} and {id: failure output}.
     """
     members = verify.workspace_members(root)
-    selections = {}
-    for contract in contracts:
-        selection, target = rust_selection(contract)
-        selections.setdefault(selection, []).append((contract, target))
+    targets = {contract["id"]: rust_target(contract) for contract in contracts}
+    args = rust_test_build()
+    log = evidence / "rust-test-build.log"
+    try:
+        built = invoke(args, cwd=root, capture_output=True, text=True, timeout=RUST_TEST_BUILD_TIMEOUT)
+        # Diagnostics go to stderr; stdout is one JSON message per artifact.
+        output, executables = built.stderr, test_executables(built.stdout, members)
+        ok = built.returncode == 0
+    except (OSError, subprocess.SubprocessError) as error:
+        output, executables, ok = str(error), {}, False
+    found = "".join(f"{package} {' '.join(target)}: {path}\n" for (package, target), path in executables.items())
+    log.write_text(" ".join(args) + "\n" + output + "\n" + found)
     located, failed = {}, {}
-    for index, (selection, entries) in enumerate(selections.items()):
-        args = rust_test_build(selection, [target for _contract, target in entries])
-        log = evidence / f"rust-test-build-{index}.log"
-        try:
-            built = invoke(args, cwd=root, capture_output=True, text=True, timeout=RUST_TEST_BUILD_TIMEOUT)
-            # Diagnostics go to stderr; stdout is one JSON message per artifact.
-            output, executables = built.stderr, test_executables(built.stdout, members)
-            ok = built.returncode == 0
-        except (OSError, subprocess.SubprocessError) as error:
-            output, executables, ok = str(error), {}, False
-        found = "".join(f"{package} {' '.join(target)}: {path}\n" for (package, target), path in executables.items())
-        log.write_text(" ".join(args) + "\n" + output + "\n" + found)
-        for contract, target in entries:
-            executable = executables.get((contract["package"], target))
-            if ok and executable:
-                located[contract["id"]] = (executable, members[contract["package"]])
-            elif ok:
-                failed[contract["id"]] = f"{' '.join(args)} built no {' '.join(target)} test of {contract['package']}\n"
-            else:
-                failed[contract["id"]] = f"{' '.join(args)} failed; see {log}\n" + output[-5000:]
+    for contract in contracts:
+        target = targets[contract["id"]]
+        executable = executables.get((contract["package"], target))
+        if ok and executable:
+            located[contract["id"]] = (executable, members[contract["package"]])
+        elif ok:
+            failed[contract["id"]] = f"{' '.join(args)} built no {' '.join(target)} test of {contract['package']}\n"
+        else:
+            failed[contract["id"]] = f"{' '.join(args)} failed; see {log}\n" + output[-5000:]
     return located, failed
 
 
@@ -1017,7 +1007,8 @@ def run(
 
     A task runs `tests_only`: the counterexamples build mutated copies of the tree, so
     they run in the full tier on GitHub (ADR 0327). A task's Rust tests run from the build
-    check-base tests, the full tier's from `cargo test -p` of each package (ADR 0328).
+    check-base tests, the full tier's from `cargo test -p` of each package (ADR 0328), and
+    a contract on features the app does not ship only in the full tier (ADR 0361).
     With `shard`, only that share of the counterexamples runs; every required test still runs.
     """
     started = time.monotonic()
@@ -1057,7 +1048,10 @@ def run(
     reused_controls = set(controls)
     reused_tests = set(tests)
     reused = reused_tests & reused_controls
-    pending = [contract for contract in contracts if contract["id"] not in reused_tests]
+    # A task builds only what the app ships (ADR 0327, 0361); a contract on other features
+    # runs in the full tier, with every counterexample.
+    proven = [contract for contract in contracts if not (tests_only and names_features(contract))]
+    pending = [contract for contract in proven if contract["id"] not in reused_tests]
     pending_controls = [
         contract for contract in contracts if contract["id"] in required and contract["id"] not in reused_controls
     ]
@@ -1108,7 +1102,7 @@ def run(
     run_tests(root, pending, invoke, test_stamps, directory, record_test, batched=tests_only)
     execution["normal_seconds"] = round(time.monotonic() - normal_started, 3)
     execution["normal_batched"] = sum(tests.get(c["id"], {}).get("isolation") == "batch" for c in pending)
-    if pending_controls and all(tests.get(c["id"], {}).get("status") == "passed" for c in contracts):
+    if pending_controls and all(tests.get(c["id"], {}).get("status") == "passed" for c in proven):
         control_started = time.monotonic()
         execution["negative"] = negative_controls(root, pending_controls, fingerprints, directory, record_control)
         execution["negative_seconds"] = round(time.monotonic() - control_started, 3)
@@ -1122,13 +1116,14 @@ def run(
                 if current.get(name) != before.get(name):
                     entries[name] = dict(entries[name], status="stale", fingerprint=None)
                     print(f"{name}: inputs changed during the run; run it again", file=sys.stderr, flush=True)
-    ok = all(tests.get(c["id"], {}).get("status") == "passed" for c in contracts) and all(
+    ok = all(tests.get(c["id"], {}).get("status") == "passed" for c in proven) and all(
         controls.get(name, {}).get("status") == "passed" for name in required
     )
     if ok and tests_only:
         print(
-            f"product contracts: {len(tests)} passed; every counterexample still applies"
-            " and runs in the full tier (GitHub full)",
+            f"product contracts: {len(proven)} passed; every counterexample still applies."
+            f" The counterexamples and {len(contracts) - len(proven)} contracts on unshipped features"
+            " run in the full tier (GitHub full)",
             flush=True,
         )
     elif ok and shard is not None:

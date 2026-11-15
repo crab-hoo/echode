@@ -306,6 +306,8 @@ release の proc-macro / cdylib 読込失敗（`E0463` / `mis-aligned LINKEDIT s
 `check` は `make check-portable` と `make advisories`、`full` は全体の段階を実行する（[ADR 0269](../decisions/0269-github-public-ci-scope.md)）。
 ログは `gh run view <実行ID> -R crab-hoo/echode --log-failed` で読む。
 `full` の失敗は、同じ make の入口を手元で実行して再現する。反例の 1 シャードは `ECHODE_CONTRACT_SHARD=<I>/4 make check-contract-controls`。
+`spikes` のジョブは `make check-spikes` と `make check-bridge-features` で再現する。
+作業の段階はこの構成（`spike` の feature と橋渡しスパイク）をビルドしないので、その中だけのコンパイルエラーや lint はプッシュまで出ない（[ADR 0361](../decisions/0361-unshipped-configurations-only-on-github.md)）。
 
 - `toolchain '<版>-aarch64-apple-darwin' is not installed`: ランナーの rustup は `rust-toolchain.toml` の固定版を自動では入れない。
   手元の rustup は既定で自動導入するので、そのままでは再現しない。

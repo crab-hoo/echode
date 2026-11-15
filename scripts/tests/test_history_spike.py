@@ -49,8 +49,11 @@ class HistorySpikeTests(unittest.TestCase):
         base = makefile.split("check-base:\n", 1)[1].split("\n\n", 1)[0]
         self.assertIn("cargo test -q\n", base)
         self.assertIn("cargo clippy -q --all-targets -- -D warnings\n", base)
-        self.assertIn("cargo clippy -q -p echode-history --features spike --all-targets -- -D warnings\n", base)
-        self.assertIn("cargo test -q -p echode-history --features spike --lib --test roundtrip\n", base)
+        # ADR 0361: the spike feature is a configuration the app does not ship, so the full tier builds it.
+        self.assertNotIn("--features", base)
+        spikes = makefile.split("check-spikes:\n", 1)[1].split("\n\n", 1)[0]
+        self.assertIn("cargo clippy -q -p echode-history --features spike --all-targets -- -D warnings\n", spikes)
+        self.assertIn("cargo test -q -p echode-history --features spike --lib --test roundtrip\n", spikes)
         measurement = makefile.split("spike-history:\n", 1)[1].split("\n\n", 1)[0]
         self.assertIn("-p echode-history --features spike --test roundtrip", measurement)
         self.assertIn("--include-ignored --test-threads=1", measurement)

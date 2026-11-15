@@ -86,8 +86,8 @@ Echode は macOS 専用の DAW です。このファイルは全エージェン�
 
 着手時に `make agent-context` または `make verify-plan`、変更を終えたら `make verify` を実行します。
 変更箇所と追加検査の対応は `scripts/verification.json` だけに置きます。
-`make verify` は、フォーマット、clippy、Rust / Swift、FFI、ライセンス、必須契約の通常テストに加え、変更に応じて入力の単体テスト、橋渡しの全 feature を選びます。
-ASan・TSan・Miri・RTSan・fuzz と全契約の反例は全体検査の段階で、作業では選びません。
+`make verify` は、フォーマット、clippy、Rust / Swift、FFI、ライセンス、必須契約の通常テストに加え、変更に応じて入力の単体テストを選びます。ビルドするのは出荷する 1 つの構成だけです。
+ASan・TSan・Miri・RTSan・fuzz、全契約の反例、出荷しない構成（`spike` の feature と橋渡しスパイク）は全体検査の段階で、作業では選びません。
 全体検査は GitHub の `full` が main へのプッシュごとに実行し、節目（依頼・プッシュ後・配布前・受入）ではその合格を確かめます。作業の完了条件へ足しません。
 `make verify` の合格を全体検査の合格と言いません。
 実行方法と検査範囲は `docs/verification.md` を読んでください（[ADR 0212](docs/decisions/0212-verification-tiers.md)）。

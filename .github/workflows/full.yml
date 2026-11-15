@@ -1,5 +1,5 @@
 # The full tier of `make verify-full` on GitHub's M1 runners, so a local Mac need not
-# build and keep the sanitizer, RTSan and counterexample trees (ADR 0269). A task's
+# build and keep the sanitizer, RTSan, counterexample and spike trees (ADR 0269, 0361). A task's
 # `make verify` never runs these; this workflow is their only routine run (ADR 0327). The binaries keep
 # the apple-m4 baseline of ADR 0114: none of them used an instruction the M1 lacks.
 # An "Illegal instruction" crash here is a new M4-only instruction, not a product bug
@@ -82,6 +82,26 @@ jobs:
         if: failure()
         run: >-
           find target/fuzz/artifacts -type f -print -exec xxd {} \; || true
+
+  # The configurations the app does not ship: the history and engine spike features and
+  # the bridge spike in each of its feature sets (ADR 0361). spike-bridge.sh builds offline.
+  spikes:
+    runs-on: xcode-27
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the toolchain in rust-toolchain.toml
+        run: rustup toolchain install
+      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
+        with:
+          tool: cargo-deny@0.20.2
+      - run: cargo fetch --locked
+      - run: make check-spikes
+      # Independent of the step above, so one failure does not hide the other.
+      - if: ${{ !cancelled() }}
+        run: make check-bridge-features
 
   contracts:
     strategy:

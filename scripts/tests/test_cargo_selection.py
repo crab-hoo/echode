@@ -1,4 +1,4 @@
-"""Task-tier cargo calls share one build of Cargo's default members (ADR 0328).
+"""Task-tier cargo calls share one build of Cargo's default members (ADR 0328, 0361).
 
 Cargo resolves features over the packages a command selects, so each `-p` set builds
 its own copy of the workspace crates. These tests keep the task tier, the Swift tests
@@ -101,22 +101,16 @@ class CargoSelectionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.policy = verify.load_policy(ROOT)
-        members, defaults = default_members()
-        names = {path: tomllib.loads((ROOT / path / "Cargo.toml").read_text())["package"]["name"] for path in members}
-        cls.default_names = {names[path] for path in defaults}
 
     def assert_shared(self, where, line):
-        """A call names packages only to add features or to reach a crate outside the default members."""
+        """A task's call selects the default members with the shipped features (ADR 0328, 0361).
+
+        A `-p` set builds another copy of the crates; another feature set is a configuration
+        the app does not ship, which the full tier builds (check-spikes, check-bridge-features).
+        """
         words = shlex.split(line.split(" -- ", 1)[0])
-        self.assertNotIn("--workspace", words, f"{where}: {line}")
-        self.assertNotIn("--all", words, f"{where}: {line}")
-        packages = [words[index + 1] for index, word in enumerate(words) if word in ("-p", "--package")]
-        adds_features = "--features" in words or "--all-features" in words
-        if packages and not adds_features:
-            self.assertFalse(
-                set(packages) & self.default_names,
-                f"{where}: `-p` without features builds another copy of the default members: {line}",
-            )
+        for flag in ("--workspace", "--all", "-p", "--package", "--features", "--all-features"):
+            self.assertNotIn(flag, words, f"{where}: {line}")
 
     def test_task_checks_build_the_default_members_once(self):
         calls = 0

@@ -6,6 +6,7 @@
   [ADR 0276](0276-priority-order-and-delegated-decisions.md)（優先順位）、[ADR 0327](0327-instrumented-builds-only-on-github.md)
 - 置き換え: [ADR 0148](0148-verification-pipeline-speed.md) の「Rust の契約は 1 契約 1 プロセスの `cargo test -p` で実行する」を作業の段階について。
   ADR 0148 の見送り「`check-base` の結果を契約の通常実行に流用しない」の理由（`--workspace` と `-p` の構成の違い）
+- 後続: [ADR 0361](0361-unshipped-configurations-only-on-github.md) が、`spike` の feature と橋渡しスパイクの構成を作業の段階から GitHub の `full` へ移した。
 
 ## 背景
 
