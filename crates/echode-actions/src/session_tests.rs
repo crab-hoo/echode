@@ -28,7 +28,7 @@ fn no_op_commands_and_cancelled_groups_preserve_session_history() {
     session
         .transaction(|tx| {
             tx.perform(Command::SetMeter { meter })?;
-            Ok(())
+            Ok::<_, ActionError>(())
         })
         .unwrap();
     session
@@ -37,7 +37,7 @@ fn no_op_commands_and_cancelled_groups_preserve_session_history() {
                 meter: Meter::try_new(3, 4).unwrap(),
             })?;
             tx.perform(Command::SetMeter { meter })?;
-            Ok(())
+            Ok::<_, ActionError>(())
         })
         .unwrap();
     assert_eq!(session.project(), &base);
@@ -174,6 +174,44 @@ fn a_failed_transaction_restores_the_redo_stack() {
         })
         .unwrap_err();
     assert_eq!(error, ActionError::Model(ModelError::InvalidNote));
+    assert!(session.project().tracks().is_empty());
+    assert!(session.journal().is_empty());
+
+    session.redo().unwrap();
+    assert_eq!(session.project().tracks()[0].name, "piano");
+    assert_eq!(
+        replay(&base, session.journal()).unwrap(),
+        *session.project()
+    );
+}
+
+#[test]
+fn a_transaction_returns_caller_errors_directly_and_restores_redo() {
+    #[derive(Debug, PartialEq, Eq)]
+    enum CallerError {
+        Aborted,
+        Action(ActionError),
+    }
+
+    let base = Project::new();
+    let mut session = Session::open(base.clone());
+    session
+        .perform(Command::AddTrack {
+            name: "piano".into(),
+        })
+        .unwrap();
+    session.undo().unwrap();
+
+    let error = session
+        .transaction(|tx| -> Result<(), CallerError> {
+            tx.perform(Command::AddTrack {
+                name: "drums".into(),
+            })
+            .map_err(CallerError::Action)?;
+            Err(CallerError::Aborted)
+        })
+        .unwrap_err();
+    assert_eq!(error, CallerError::Aborted);
     assert!(session.project().tracks().is_empty());
     assert!(session.journal().is_empty());
 

@@ -7,13 +7,38 @@ import Foundation
 final class PluginActivityReader: @unchecked Sendable {
     private let lock = NSLock()
     private var stopped = false
+    private let finished = NSCondition()
+    private var exited = false
 
-    init(document: Document, deliver: @escaping @Sendable ([PluginActivity]) -> Void) {
+    convenience init(document: Document, deliver: @escaping @Sendable ([PluginActivity]) -> Void) {
+        self.init(
+            poll: { try document.pluginActivity(after: $0, timeout: 0.25) },
+            deliver: deliver)
+    }
+
+    init(
+        poll: @escaping @Sendable (UInt64) throws -> PluginActivityPage,
+        deliver: @escaping @Sendable ([PluginActivity]) -> Void,
+        recordFailure: @escaping @Sendable (String) -> Void = { EchodeLog.write(.error, "plugin", $0) }
+    ) {
         let thread = Thread { [self] in
+            defer {
+                finished.lock()
+                exited = true
+                finished.broadcast()
+                finished.unlock()
+            }
             var next: UInt64 = 0
             while !isStopped {
                 // A short wait, so a stop request is noticed soon.
-                guard let page = try? document.pluginActivity(after: next, timeout: 0.25) else { return }
+                let page: PluginActivityPage
+                do { page = try poll(next) } catch {
+                    if !isStopped {
+                        let detail = (error as? BridgeError)?.message ?? String(describing: error)
+                        recordFailure("plugin activity reader stopped at sequence \(next): \(detail)")
+                    }
+                    return
+                }
                 next = page.next
                 if !page.entries.isEmpty && !isStopped { deliver(page.entries) }
                 if page.closed { return }
@@ -26,6 +51,16 @@ final class PluginActivityReader: @unchecked Sendable {
     private var isStopped: Bool { lock.withLock { stopped } }
 
     func stop() { lock.withLock { stopped = true } }
+
+    func waitUntilFinished(timeout: TimeInterval = 2) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        finished.lock()
+        defer { finished.unlock() }
+        while !exited {
+            if !finished.wait(until: deadline) { return exited }
+        }
+        return true
+    }
 }
 
 /// Plugin windows and the changes a plugin makes in its own window (ADR 0132).

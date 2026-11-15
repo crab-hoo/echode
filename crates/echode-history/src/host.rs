@@ -8,7 +8,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::thread::{self, JoinHandle};
 
-use echode_actions::{Action, ActionError, Command, HistoryUsage, JournalLine, JournalOp, Session};
+use echode_actions::{Action, Command, HistoryUsage, JournalLine, JournalOp, Session};
 use echode_model::{ChangeSet, Id, Project};
 use gix::ObjectId;
 use serde_json::{Map, Value};
@@ -40,38 +40,18 @@ pub struct RecoveryNotice {
     pub reason: crate::RecoveryReason,
 }
 
+type WriteCall = Box<dyn FnOnce(Result<&mut Worker, HostError>) + Send>;
+
 enum Request {
-    Perform {
-        command: Command,
-        imports: StagedImports,
-        reply: Sender<Result<Action, HostError>>,
-    },
-    Apply {
-        actions: Vec<Value>,
-        imports: StagedImports,
-        reply: Sender<Result<Vec<Action>, HostError>>,
-    },
-    Undo {
-        reply: Sender<Result<(), HostError>>,
-    },
-    Redo {
-        reply: Sender<Result<(), HostError>>,
-    },
-    /// A captured state; its object is written only after the halted check.
-    AbsorbPluginState {
-        device: Id,
-        capture: Arc<crate::PluginState>,
-        reply: Sender<Result<bool, HostError>>,
-    },
+    /// A write handled only while the document has not halted.
+    Write(WriteCall),
+    /// Read-only, so a halted thread still answers it.
     Revisions {
         reply: Sender<Result<Vec<SavedRevision>, HostError>>,
     },
     /// Read-only, so a halted thread still answers it.
     Usage {
         reply: Sender<Result<HistoryUsage, HostError>>,
-    },
-    AcceptRecovery {
-        reply: Sender<Result<(), HostError>>,
     },
     #[cfg(test)]
     StopAutosave {
@@ -224,16 +204,19 @@ impl DocumentHost {
             base_revision = id.to_string();
         }
         let (request, incoming) = mpsc::channel();
-        let published = Arc::clone(&snapshot);
-        let owned = directory.clone();
-        let pending = Arc::clone(&recovery_pending);
+        let worker = Worker {
+            directory: directory.clone(),
+            autosave,
+            snapshot: Arc::clone(&snapshot),
+            session: Session::open(project),
+            recovery_pending: Arc::clone(&recovery_pending),
+            inflight: Vec::new(),
+            next_seq,
+            autosave_status: crate::retry::BackgroundRetry::default(),
+        };
         let thread = thread::Builder::new()
             .name("echode-document".to_string())
-            .spawn(move || {
-                worker(
-                    owned, project, autosave, published, incoming, pending, next_seq,
-                )
-            })
+            .spawn(move || worker.run(incoming))
             .map_err(PackageError::from)?;
         Ok(Self {
             request,
@@ -272,25 +255,48 @@ impl DocumentHost {
         self.commit_plugin_save(device, Arc::new(crate::PluginState::new(bytes.to_vec())))
     }
 
+    fn call<T>(
+        &self,
+        build: impl FnOnce(Sender<Result<T, HostError>>) -> Request,
+    ) -> Result<T, HostError> {
+        let (reply, incoming) = mpsc::channel();
+        self.request
+            .send(build(reply))
+            .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?;
+        incoming
+            .recv()
+            .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?
+    }
+
+    fn write_unconfirmed<T: Send + 'static>(
+        &self,
+        action: impl FnOnce(&mut Worker) -> Result<T, HostError> + Send + 'static,
+    ) -> Result<T, HostError> {
+        self.call(|reply| {
+            Request::Write(Box::new(move |worker| {
+                // Bind the outcome so any captured StagedImports drop before reply.
+                let result = worker.and_then(action);
+                let _ = reply.send(result);
+            }))
+        })
+    }
+
+    fn write<T: Send + 'static>(
+        &self,
+        action: impl FnOnce(&mut Worker) -> Result<T, HostError> + Send + 'static,
+    ) -> Result<T, HostError> {
+        self.require_recovery_confirmation()
+            .map_err(HostError::Package)?;
+        self.write_unconfirmed(action)
+    }
+
     /// Records a capture without rewriting its object after a journal failure.
     pub fn commit_plugin_save(
         &self,
         device: Id,
         capture: Arc<crate::PluginState>,
     ) -> Result<bool, HostError> {
-        self.require_recovery_confirmation()
-            .map_err(HostError::Package)?;
-        let (reply, incoming) = mpsc::channel();
-        self.request
-            .send(Request::AbsorbPluginState {
-                device,
-                capture,
-                reply,
-            })
-            .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?;
-        incoming
-            .recv()
-            .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?
+        self.write(move |worker| worker.absorb_plugin_state(device, capture))
     }
 
     /// No more writes may be attempted until this document is reopened.
@@ -311,19 +317,7 @@ impl DocumentHost {
         command: Command,
         imports: StagedImports,
     ) -> Result<Action, HostError> {
-        self.require_recovery_confirmation()
-            .map_err(HostError::Package)?;
-        let (reply, incoming) = mpsc::channel();
-        self.request
-            .send(Request::Perform {
-                command,
-                imports,
-                reply,
-            })
-            .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?;
-        incoming
-            .recv()
-            .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?
+        self.write(move |worker| worker.perform(command, imports))
     }
 
     /// Applies every action as one undo step. References are resolved in order.
@@ -338,32 +332,12 @@ impl DocumentHost {
         actions: Vec<Value>,
         imports: StagedImports,
     ) -> Result<Vec<Action>, HostError> {
-        self.require_recovery_confirmation()
-            .map_err(HostError::Package)?;
-        let (reply, incoming) = mpsc::channel();
-        self.request
-            .send(Request::Apply {
-                actions,
-                imports,
-                reply,
-            })
-            .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?;
-        incoming
-            .recv()
-            .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?
+        self.write(move |worker| worker.apply(actions, imports))
     }
 
     /// Undoes the newest undo step and appends an `undo` journal line.
     pub fn undo(&self) -> Result<(), HostError> {
-        self.require_recovery_confirmation()
-            .map_err(HostError::Package)?;
-        let (reply, incoming) = mpsc::channel();
-        self.request
-            .send(Request::Undo { reply })
-            .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?;
-        incoming
-            .recv()
-            .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?
+        self.write(|worker| worker.step_history(true))
     }
 
     /// Pending consent is not an edit and never creates an Undo step.
@@ -395,13 +369,7 @@ impl DocumentHost {
                 DocumentError::RecoveryMismatch,
             )));
         }
-        let (reply, incoming) = mpsc::channel();
-        self.request
-            .send(Request::AcceptRecovery { reply })
-            .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?;
-        incoming
-            .recv()
-            .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?
+        self.write_unconfirmed(Worker::accept_recovery)
     }
 
     /// Autosave tip and the journal sequence included in the recovered project.
@@ -416,13 +384,7 @@ impl DocumentHost {
     ///
     /// Saves still in flight are finished first, so the list includes them.
     pub fn revisions(&self) -> Result<Vec<SavedRevision>, HostError> {
-        let (reply, incoming) = mpsc::channel();
-        self.request
-            .send(Request::Revisions { reply })
-            .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?;
-        incoming
-            .recv()
-            .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?
+        self.call(|reply| Request::Revisions { reply })
     }
 
     /// What undo and redo keep in memory beyond the current project (ADR 0286).
@@ -430,26 +392,12 @@ impl DocumentHost {
     /// The document thread walks its history, so the time grows with the
     /// number of steps. Call it for diagnosis, not on every frame.
     pub fn history_usage(&self) -> Result<HistoryUsage, HostError> {
-        let (reply, incoming) = mpsc::channel();
-        self.request
-            .send(Request::Usage { reply })
-            .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?;
-        incoming
-            .recv()
-            .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?
+        self.call(|reply| Request::Usage { reply })
     }
 
     /// Redoes the newest undone step and appends a `redo` journal line.
     pub fn redo(&self) -> Result<(), HostError> {
-        self.require_recovery_confirmation()
-            .map_err(HostError::Package)?;
-        let (reply, incoming) = mpsc::channel();
-        self.request
-            .send(Request::Redo { reply })
-            .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?;
-        incoming
-            .recv()
-            .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?
+        self.write(|worker| worker.step_history(false))
     }
 }
 
@@ -462,339 +410,393 @@ impl Drop for DocumentHost {
     }
 }
 
-fn worker(
+struct Worker {
     directory: std::path::PathBuf,
-    project: Project,
     autosave: Autosave,
     snapshot: Arc<SharedDocument>,
-    incoming: Receiver<Request>,
+    session: Session,
     recovery_pending: Arc<AtomicBool>,
-    mut next_seq: u64,
-) {
-    let halted = &snapshot.halted;
-    let mut session = Session::open(project);
-    let mut inflight: Vec<(u64, PendingAutosave)> = Vec::new();
-    let mut autosave_status = crate::retry::BackgroundRetry::default();
-    while let Ok(request) = incoming.recv() {
-        finish_saves(&directory, &mut inflight);
-        if halted.load(Ordering::Acquire)
-            && !matches!(
-                request,
-                Request::Shutdown | Request::Revisions { .. } | Request::Usage { .. }
-            )
-        {
-            reply_halted(request);
-            continue;
+    inflight: Vec<(u64, PendingAutosave)>,
+    next_seq: u64,
+    autosave_status: crate::retry::BackgroundRetry,
+}
+
+impl Worker {
+    fn halted(&self) -> bool {
+        self.snapshot.halted.load(Ordering::Acquire)
+    }
+
+    fn run(mut self, incoming: Receiver<Request>) {
+        while let Ok(request) = incoming.recv() {
+            self.finish_saves();
+            match request {
+                Request::Shutdown => break,
+                #[cfg(test)]
+                Request::StopAutosave { reply } => {
+                    if !self.halted() {
+                        self.autosave.stop_for_test();
+                    }
+                    let _ = reply.send(());
+                }
+                Request::Revisions { reply } => {
+                    self.wait_for_saves();
+                    let _ = reply.send(self.autosave.revisions().map_err(HostError::Package));
+                }
+                Request::Usage { reply } => {
+                    let mut usage = self.session.usage();
+                    usage.autosave_stopped = self.autosave_status.stopped();
+                    let _ = reply.send(Ok(usage));
+                }
+                Request::Write(call) => {
+                    let outcome = if self.halted() {
+                        Err(HostError::Package(PackageError::durability_unknown()))
+                    } else {
+                        Ok(&mut self)
+                    };
+                    call(outcome);
+                }
+            }
         }
-        match request {
-            Request::Shutdown => break,
-            #[cfg(test)]
-            Request::StopAutosave { reply } => {
-                autosave.stop_for_test();
-                let _ = reply.send(());
-            }
-            Request::AcceptRecovery { reply } => {
-                let result = if recovery_pending.load(Ordering::Acquire) {
-                    let seq = next_seq.saturating_sub(1);
-                    autosave
-                        .save(Arc::new(session.project().clone()), seq)
-                        .and_then(|pending| pending.wait())
-                        .and_then(|_| compact_journal(&directory, seq))
-                        .map(|()| recovery_pending.store(false, Ordering::Release))
-                        .map_err(HostError::Package)
-                } else {
-                    Ok(())
-                };
-                let _ = reply.send(result);
-            }
-            Request::Perform {
-                command,
-                mut imports,
-                reply,
-            } => {
-                let result = match command {
-                    Command::Restore { revision } => {
-                        wait_for_saves(&directory, &mut inflight);
-                        let parked = session.park_redo();
-                        match restore_revision(&mut session, &autosave, &revision) {
-                            Ok(changes) if changes.is_empty() => {
-                                session.unpark_redo(parked);
-                                Ok(Action::Restore { revision })
-                            }
-                            Ok(_) => {
-                                let saved = publish_edit(&mut Publish {
-                                    directory: &directory,
-                                    snapshot: &snapshot,
-                                    autosave: &autosave,
-                                    inflight: &mut inflight,
-                                    next_seq: &mut next_seq,
-                                    autosave_status: &mut autosave_status,
-                                    session: &session,
-                                });
-                                settle(&mut session, parked, halted, saved)
-                                    .map(|()| Action::Restore { revision })
-                            }
-                            Err(error) => {
-                                session.unpark_redo(parked);
-                                Err(error)
-                            }
-                        }
+        self.wait_for_saves();
+        self.log_closed();
+    }
+
+    fn accept_recovery(&mut self) -> Result<(), HostError> {
+        if !self.recovery_pending.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        let seq = self.next_seq.saturating_sub(1);
+        self.autosave
+            .save(Arc::new(self.session.project().clone()), seq)
+            .and_then(|pending| pending.wait())
+            .and_then(|_| compact_journal(&self.directory, seq))
+            .map(|()| self.recovery_pending.store(false, Ordering::Release))
+            .map_err(HostError::Package)
+    }
+
+    fn perform(
+        &mut self,
+        command: Command,
+        mut imports: StagedImports,
+    ) -> Result<Action, HostError> {
+        let result = match command {
+            Command::Restore { revision } => {
+                self.wait_for_saves();
+                let parked = self.session.park_redo();
+                match restore_revision(&mut self.session, &self.autosave, &revision) {
+                    Ok(changes) if changes.is_empty() => {
+                        self.session.unpark_redo(parked);
+                        Ok(Action::Restore { revision })
                     }
-                    Command::ImportAudio { track, start, path } => {
-                        match imports.take_or_stage(&directory, &path) {
-                            Ok(staged) => {
-                                let stored = staged.stored().clone();
-                                let parked = session.park_redo();
-                                match session.perform(Command::PlaceAudio {
-                                    track,
-                                    start,
-                                    hash: stored.hash,
-                                    sample_rate: stored.sample_rate,
-                                    channels: stored.channels,
-                                    frames: stored.frames,
-                                }) {
-                                    Ok(action) => {
-                                        let saved = publish_with_media(
-                                            &mut Publish {
-                                                directory: &directory,
-                                                snapshot: &snapshot,
-                                                autosave: &autosave,
-                                                inflight: &mut inflight,
-                                                next_seq: &mut next_seq,
-                                                autosave_status: &mut autosave_status,
-                                                session: &session,
-                                            },
-                                            vec![staged],
-                                        );
-                                        settle(&mut session, parked, halted, saved).map(|()| action)
-                                    }
-                                    Err(error) => {
-                                        session.unpark_redo(parked);
-                                        Err(HostError::Action(error))
-                                    }
-                                }
-                            }
-                            Err(error) => Err(HostError::Package(error)),
-                        }
-                    }
-                    command => {
-                        let journal_len = session.journal().len();
-                        let parked = session.park_redo();
-                        match session.perform(command) {
-                            Ok(action) if session.journal().len() == journal_len => {
-                                session.unpark_redo(parked);
-                                Ok(action)
-                            }
-                            Ok(action) => {
-                                let saved = publish_edit(&mut Publish {
-                                    directory: &directory,
-                                    snapshot: &snapshot,
-                                    autosave: &autosave,
-                                    inflight: &mut inflight,
-                                    next_seq: &mut next_seq,
-                                    autosave_status: &mut autosave_status,
-                                    session: &session,
-                                });
-                                settle(&mut session, parked, halted, saved).map(|()| action)
-                            }
-                            Err(error) => {
-                                session.unpark_redo(parked);
-                                Err(HostError::Action(error))
-                            }
-                        }
-                    }
-                };
-                // An unused stage is removed before the caller hears back.
-                drop(imports);
-                let _ = reply.send(result);
-            }
-            Request::Apply {
-                actions,
-                mut imports,
-                reply,
-            } => {
-                let journal_len = session.journal().len();
-                let parked = session.park_redo();
-                let mut staged = Vec::new();
-                let result = match apply_transaction(
-                    &mut session,
-                    &directory,
-                    actions,
-                    &mut imports,
-                    &mut staged,
-                ) {
-                    Ok(applied) if session.journal().len() == journal_len => {
-                        session.unpark_redo(parked);
-                        Ok(applied)
-                    }
-                    Ok(applied) => {
-                        let saved = publish_with_media(
-                            &mut Publish {
-                                directory: &directory,
-                                snapshot: &snapshot,
-                                autosave: &autosave,
-                                inflight: &mut inflight,
-                                next_seq: &mut next_seq,
-                                autosave_status: &mut autosave_status,
-                                session: &session,
-                            },
-                            std::mem::take(&mut staged),
-                        );
-                        settle(&mut session, parked, halted, saved).map(|()| applied)
-                    }
+                    Ok(_) => self
+                        .commit_edit(parked, Vec::new())
+                        .map(|()| Action::Restore { revision }),
                     Err(error) => {
-                        session.unpark_redo(parked);
+                        self.session.unpark_redo(parked);
                         Err(error)
                     }
-                };
-                // An unused stage is removed before the caller hears back.
-                drop(imports);
-                let _ = reply.send(result);
-            }
-            Request::Undo { reply } => {
-                let before = session.project().clone();
-                let result = match session.undo() {
-                    Ok(stored) => {
-                        let after = session.project().clone();
-                        let changes = connecting_changeset(&after, &before, stored);
-                        let saved = publish(
-                            &mut Publish {
-                                directory: &directory,
-                                snapshot: &snapshot,
-                                autosave: &autosave,
-                                inflight: &mut inflight,
-                                next_seq: &mut next_seq,
-                                autosave_status: &mut autosave_status,
-                                session: &session,
-                            },
-                            JournalOp::Undo,
-                            Vec::new(),
-                            changes,
-                        );
-                        invert_on_failure(&mut session, halted, saved, true)
-                    }
-                    Err(error) => Err(HostError::Action(error)),
-                };
-                let _ = reply.send(result);
-            }
-            Request::Revisions { reply } => {
-                wait_for_saves(&directory, &mut inflight);
-                let _ = reply.send(autosave.revisions().map_err(HostError::Package));
-            }
-            Request::Usage { reply } => {
-                let mut usage = session.usage();
-                usage.autosave_stopped = autosave_status.stopped();
-                let _ = reply.send(Ok(usage));
-            }
-            Request::Redo { reply } => {
-                let before = session.project().clone();
-                let result = match session.redo() {
-                    Ok(stored) => {
-                        let after = session.project().clone();
-                        let changes = connecting_changeset(&before, &after, stored);
-                        let saved = publish(
-                            &mut Publish {
-                                directory: &directory,
-                                snapshot: &snapshot,
-                                autosave: &autosave,
-                                inflight: &mut inflight,
-                                next_seq: &mut next_seq,
-                                autosave_status: &mut autosave_status,
-                                session: &session,
-                            },
-                            JournalOp::Redo,
-                            Vec::new(),
-                            changes,
-                        );
-                        invert_on_failure(&mut session, halted, saved, false)
-                    }
-                    Err(error) => Err(HostError::Action(error)),
-                };
-                let _ = reply.send(result);
-            }
-            Request::AbsorbPluginState {
-                device,
-                capture,
-                reply,
-            } => {
-                if device_state(session.project(), device).is_none() {
-                    let _ = reply.send(Ok(false));
-                    continue;
                 }
-                let state = match capture.store(&directory) {
-                    Ok(state) => state,
+            }
+            Command::ImportAudio { track, start, path } => {
+                let staged = imports
+                    .take_or_stage(&self.directory, &path)
+                    .map_err(HostError::Package)?;
+                let stored = staged.stored().clone();
+                let parked = self.session.park_redo();
+                match self.session.perform(Command::PlaceAudio {
+                    track,
+                    start,
+                    hash: stored.hash,
+                    sample_rate: stored.sample_rate,
+                    channels: stored.channels,
+                    frames: stored.frames,
+                }) {
+                    Ok(action) => self.commit_edit(parked, vec![staged]).map(|()| action),
                     Err(error) => {
-                        let _ = reply.send(Err(HostError::Package(error)));
-                        continue;
+                        self.session.unpark_redo(parked);
+                        Err(HostError::Action(error))
                     }
-                };
-                let previous = session.project().clone();
-                let result = match session.absorb_plugin_state(device, Some(state.clone())) {
-                    Ok(None) => Ok(true),
-                    Ok(Some(changes)) => {
-                        let saved = publish(
-                            &mut Publish {
-                                directory: &directory,
-                                snapshot: &snapshot,
-                                autosave: &autosave,
-                                inflight: &mut inflight,
-                                next_seq: &mut next_seq,
-                                autosave_status: &mut autosave_status,
-                                session: &session,
-                            },
-                            JournalOp::Edit,
-                            vec![Action::SetPluginState {
-                                device,
-                                state: Some(state),
-                            }],
-                            changes,
-                        );
-                        match saved {
-                            Ok(()) => Ok(true),
-                            Err(error) => {
-                                session.reinstall_current(previous);
-                                if error.durability_unknown() {
-                                    note_failure(halted, &error);
-                                }
-                                Err(error)
-                            }
-                        }
+                }
+            }
+            command => {
+                let journal_len = self.session.journal().len();
+                let parked = self.session.park_redo();
+                match self.session.perform(command) {
+                    Ok(action) if self.session.journal().len() == journal_len => {
+                        self.session.unpark_redo(parked);
+                        Ok(action)
                     }
+                    Ok(action) => self.commit_edit(parked, Vec::new()).map(|()| action),
                     Err(error) => {
-                        if device_state(session.project(), device).is_none() {
-                            Ok(false)
-                        } else {
-                            Err(HostError::Action(error))
-                        }
+                        self.session.unpark_redo(parked);
+                        Err(HostError::Action(error))
                     }
-                };
-                let _ = reply.send(result);
+                }
+            }
+        };
+        // An unused stage is removed before the caller hears back.
+        drop(imports);
+        result
+    }
+
+    fn apply(
+        &mut self,
+        actions: Vec<Value>,
+        mut imports: StagedImports,
+    ) -> Result<Vec<Action>, HostError> {
+        let journal_len = self.session.journal().len();
+        let parked = self.session.park_redo();
+        let mut staged = Vec::new();
+        let result = match apply_transaction(
+            &mut self.session,
+            &self.directory,
+            actions,
+            &mut imports,
+            &mut staged,
+        ) {
+            Ok(applied) if self.session.journal().len() == journal_len => {
+                self.session.unpark_redo(parked);
+                Ok(applied)
+            }
+            Ok(applied) => self.commit_edit(parked, staged).map(|()| applied),
+            Err(error) => {
+                self.session.unpark_redo(parked);
+                Err(error)
+            }
+        };
+        // An unused stage is removed before the caller hears back.
+        drop(imports);
+        result
+    }
+
+    fn step_history(&mut self, undo: bool) -> Result<(), HostError> {
+        let before = self.session.project().clone();
+        let stored = if undo {
+            self.session.undo()
+        } else {
+            self.session.redo()
+        }
+        .map_err(HostError::Action)?;
+        let after = self.session.project().clone();
+        let (op, changes) = if undo {
+            (
+                JournalOp::Undo,
+                connecting_changeset(&after, &before, stored),
+            )
+        } else {
+            (
+                JournalOp::Redo,
+                connecting_changeset(&before, &after, stored),
+            )
+        };
+        let saved = self.publish(op, Vec::new(), changes);
+        self.invert_on_failure(saved, undo)
+    }
+
+    fn absorb_plugin_state(
+        &mut self,
+        device: Id,
+        capture: Arc<crate::PluginState>,
+    ) -> Result<bool, HostError> {
+        if device_state(self.session.project(), device).is_none() {
+            return Ok(false);
+        }
+        let state = capture.store(&self.directory).map_err(HostError::Package)?;
+        let previous = self.session.project().clone();
+        match self
+            .session
+            .absorb_plugin_state(device, Some(state.clone()))
+        {
+            Ok(None) => Ok(true),
+            Ok(Some(changes)) => {
+                let saved = self.publish(
+                    JournalOp::Edit,
+                    vec![Action::SetPluginState {
+                        device,
+                        state: Some(state),
+                    }],
+                    changes,
+                );
+                match saved {
+                    Ok(()) => Ok(true),
+                    Err(error) => {
+                        self.session.reinstall_current(previous);
+                        if error.durability_unknown() {
+                            note_failure(&self.snapshot.halted, &error);
+                        }
+                        Err(error)
+                    }
+                }
+            }
+            Err(error) => {
+                if device_state(self.session.project(), device).is_none() {
+                    Ok(false)
+                } else {
+                    Err(HostError::Action(error))
+                }
             }
         }
     }
-    for (seq, pending) in inflight {
-        if pending.wait().is_ok() {
-            let _ = compact_journal(&directory, seq);
+
+    fn commit_edit(
+        &mut self,
+        parked: echode_actions::ParkedRedo,
+        staged: Vec<crate::media::StagedAudio>,
+    ) -> Result<(), HostError> {
+        let saved = self.publish_with_media(staged);
+        self.settle(parked, saved)
+    }
+
+    /// Keeps a published edit. A failed publish removes that edit and restores the
+    /// redo stacks that were parked, without copying the undo history.
+    fn settle(
+        &mut self,
+        parked: echode_actions::ParkedRedo,
+        result: Result<(), HostError>,
+    ) -> Result<(), HostError> {
+        match result {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                note_failure(&self.snapshot.halted, &error);
+                let _ = self.session.revert_commit(parked);
+                Err(error)
+            }
         }
     }
-    // Read at close, where the walk over every version delays no edit (ADR 0286).
-    let usage = session.usage();
-    log::info!(
-        target: LOG,
-        package = package_name(&directory).as_str(),
-        halted = halted.load(Ordering::Acquire),
-        autosave_stopped = autosave_status.stopped(),
-        undo_steps = usage.undo_steps,
-        redo_steps = usage.redo_steps,
-        version_bytes = usage.versions.bytes,
-        version_tracks = usage.versions.tracks,
-        version_placements = usage.versions.placements,
-        version_contents = usage.versions.contents,
-        version_notes = usage.versions.notes,
-        journal_changes = usage.journal_changes,
-        journal_bytes = usage.journal_bytes;
-        "a document closed"
-    );
+
+    /// Undo and redo invert each other. `undo` is true when the failed publish
+    /// followed `Session::undo`, so `redo` puts that step back.
+    fn invert_on_failure(
+        &mut self,
+        result: Result<(), HostError>,
+        undo: bool,
+    ) -> Result<(), HostError> {
+        match result {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                note_failure(&self.snapshot.halted, &error);
+                let restored = if undo {
+                    self.session.redo().map(|_| ())
+                } else {
+                    self.session.undo().map(|_| ())
+                };
+                if restored.is_err() {
+                    self.snapshot.halted.store(true, Ordering::Release);
+                }
+                Err(error)
+            }
+        }
+    }
+
+    /// Publishes the media an accepted edit imported, then its journal line.
+    ///
+    /// The objects and their directory entries are synced before the line that
+    /// names them (XCA-03). When the line is cleanly not written, objects this
+    /// edit created are removed again; when its durability is unknown they stay,
+    /// because reopening may replay the line (EXT-02).
+    fn publish_with_media(
+        &mut self,
+        staged: Vec<crate::media::StagedAudio>,
+    ) -> Result<(), HostError> {
+        for audio in staged {
+            audio.publish(&self.directory).map_err(HostError::Package)?;
+        }
+        let entry = self
+            .session
+            .journal()
+            .last()
+            .expect("a committed edit records a journal entry");
+        let actions = entry.actions.clone();
+        let changes = entry.changes.clone().unwrap_or_default();
+        self.publish(JournalOp::Edit, actions, changes)
+    }
+
+    fn publish(
+        &mut self,
+        op: JournalOp,
+        actions: Vec<Action>,
+        changes: ChangeSet,
+    ) -> Result<(), HostError> {
+        let line = JournalLine {
+            seq: self.next_seq,
+            op,
+            actions,
+            changes,
+        };
+        append_journal(&self.directory, &line).map_err(HostError::Package)?;
+        self.next_seq = self.next_seq.saturating_add(1);
+        let published = Arc::new(self.session.project().clone());
+        *self
+            .snapshot
+            .project
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Arc::clone(&published);
+        if !self.autosave_status.stopped() {
+            match self.autosave.save(published, line.seq) {
+                Ok(pending) => self.inflight.push((line.seq, pending)),
+                Err(error) => {
+                    if self.autosave_status.stop(&error) {
+                        log::error!(
+                            target: LOG,
+                            package = package_name(&self.directory).as_str(),
+                            error:% = error,
+                            cause:? = error;
+                            "autosave stopped accepting snapshots; edits remain in the journal"
+                        );
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn wait_for_saves(&mut self) {
+        for (seq, pending) in self.inflight.drain(..) {
+            if pending.wait().is_ok() {
+                let _ = compact_journal(&self.directory, seq);
+            }
+        }
+    }
+
+    fn finish_saves(&mut self) {
+        while let Some((seq, pending)) = self.inflight.first() {
+            match pending.try_wait() {
+                None => return,
+                Some(Ok(_)) => {
+                    let seq = *seq;
+                    self.inflight.remove(0);
+                    if let Err(error) = compact_journal(&self.directory, seq) {
+                        log::warn!(target: LOG, seq = seq, error:% = error, cause:? = error; "the journal was not compacted");
+                    }
+                }
+                Some(Err(error)) => {
+                    log::warn!(target: LOG, seq = *seq, error:% = error, cause:? = error; "an autosave failed");
+                    self.inflight.remove(0);
+                }
+            }
+        }
+    }
+
+    fn log_closed(&self) {
+        // Read at close, where the walk over every version delays no edit (ADR 0286).
+        let usage = self.session.usage();
+        log::info!(
+            target: LOG,
+            package = package_name(&self.directory).as_str(),
+            halted = self.halted(),
+            autosave_stopped = self.autosave_status.stopped(),
+            undo_steps = usage.undo_steps,
+            redo_steps = usage.redo_steps,
+            version_bytes = usage.versions.bytes,
+            version_tracks = usage.versions.tracks,
+            version_placements = usage.versions.placements,
+            version_contents = usage.versions.contents,
+            version_notes = usage.versions.notes,
+            journal_changes = usage.journal_changes,
+            journal_bytes = usage.journal_bytes;
+            "a document closed"
+        );
+    }
 }
 
 /// The log's target for the document thread.
@@ -805,16 +807,6 @@ fn package_name(directory: &Path) -> String {
     directory
         .file_name()
         .map_or_else(String::new, |name| name.to_string_lossy().into_owned())
-}
-
-struct Publish<'a> {
-    directory: &'a Path,
-    snapshot: &'a Arc<SharedDocument>,
-    autosave: &'a Autosave,
-    inflight: &'a mut Vec<(u64, PendingAutosave)>,
-    next_seq: &'a mut u64,
-    autosave_status: &'a mut crate::retry::BackgroundRetry,
-    session: &'a Session,
 }
 
 fn note_failure(halted: &AtomicBool, error: &HostError) {
@@ -831,81 +823,6 @@ fn note_failure(halted: &AtomicBool, error: &HostError) {
     }
 }
 
-/// Keeps a published edit. A failed publish removes that edit and restores the
-/// redo stacks that were parked, without copying the undo history.
-fn settle(
-    session: &mut Session,
-    parked: echode_actions::ParkedRedo,
-    halted: &AtomicBool,
-    result: Result<(), HostError>,
-) -> Result<(), HostError> {
-    match result {
-        Ok(()) => Ok(()),
-        Err(error) => {
-            note_failure(halted, &error);
-            let _ = session.revert_commit(parked);
-            Err(error)
-        }
-    }
-}
-
-/// Undo and redo invert each other. `undo` is true when the failed publish
-/// followed `Session::undo`, so `redo` puts that step back.
-fn invert_on_failure(
-    session: &mut Session,
-    halted: &AtomicBool,
-    result: Result<(), HostError>,
-    undo: bool,
-) -> Result<(), HostError> {
-    match result {
-        Ok(()) => Ok(()),
-        Err(error) => {
-            note_failure(halted, &error);
-            let restored = if undo {
-                session.redo().map(|_| ())
-            } else {
-                session.undo().map(|_| ())
-            };
-            if restored.is_err() {
-                halted.store(true, Ordering::Release);
-            }
-            Err(error)
-        }
-    }
-}
-
-fn reply_halted(request: Request) {
-    let error = HostError::Package(PackageError::durability_unknown());
-    match request {
-        Request::Perform { reply, .. } => {
-            let _ = reply.send(Err(error));
-        }
-        Request::Apply { reply, .. } => {
-            let _ = reply.send(Err(error));
-        }
-        Request::Undo { reply } | Request::Redo { reply } => {
-            let _ = reply.send(Err(error));
-        }
-        Request::AbsorbPluginState { reply, .. } => {
-            let _ = reply.send(Err(error));
-        }
-        Request::Revisions { reply } => {
-            let _ = reply.send(Err(error));
-        }
-        Request::Usage { reply } => {
-            let _ = reply.send(Err(error));
-        }
-        Request::AcceptRecovery { reply } => {
-            let _ = reply.send(Err(error));
-        }
-        #[cfg(test)]
-        Request::StopAutosave { reply } => {
-            let _ = reply.send(());
-        }
-        Request::Shutdown => {}
-    }
-}
-
 /// Uses `stored` when it still connects the two snapshots. An absorbed plugin
 /// hash changes the current project without an undo step, so undo and redo
 /// then publish the snapshot difference instead of the older changeset.
@@ -915,74 +832,6 @@ fn connecting_changeset(from: &Project, to: &Project, stored: ChangeSet) -> Chan
     } else {
         from.diff(to)
     }
-}
-
-/// Publishes the media an accepted edit imported, then its journal line.
-///
-/// The objects and their directory entries are synced before the line that
-/// names them (XCA-03). When the line is cleanly not written, objects this
-/// edit created are removed again; when its durability is unknown they stay,
-/// because reopening may replay the line (EXT-02).
-fn publish_with_media(
-    commit: &mut Publish<'_>,
-    staged: Vec<crate::media::StagedAudio>,
-) -> Result<(), HostError> {
-    for audio in staged {
-        audio
-            .publish(commit.directory)
-            .map_err(HostError::Package)?;
-    }
-    publish_edit(commit)
-}
-
-fn publish_edit(commit: &mut Publish<'_>) -> Result<(), HostError> {
-    let entry = commit
-        .session
-        .journal()
-        .last()
-        .expect("a committed edit records a journal entry");
-    let actions = entry.actions.clone();
-    let changes = entry.changes.clone().unwrap_or_default();
-    publish(commit, JournalOp::Edit, actions, changes)
-}
-
-fn publish(
-    commit: &mut Publish<'_>,
-    op: JournalOp,
-    actions: Vec<Action>,
-    changes: ChangeSet,
-) -> Result<(), HostError> {
-    let line = JournalLine {
-        seq: *commit.next_seq,
-        op,
-        actions,
-        changes,
-    };
-    append_journal(commit.directory, &line).map_err(HostError::Package)?;
-    *commit.next_seq = commit.next_seq.saturating_add(1);
-    let published = Arc::new(commit.session.project().clone());
-    *commit
-        .snapshot
-        .project
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Arc::clone(&published);
-    if !commit.autosave_status.stopped() {
-        match commit.autosave.save(published, line.seq) {
-            Ok(pending) => commit.inflight.push((line.seq, pending)),
-            Err(error) => {
-                if commit.autosave_status.stop(&error) {
-                    log::error!(
-                        target: LOG,
-                        package = package_name(commit.directory).as_str(),
-                        error:% = error,
-                        cause:? = error;
-                        "autosave stopped accepting snapshots; edits remain in the journal"
-                    );
-                }
-            }
-        }
-    }
-    Ok(())
 }
 
 /// Applies `actions` as one edit group. Imports are staged into `staged`;
@@ -996,60 +845,37 @@ fn apply_transaction(
 ) -> Result<Vec<Action>, HostError> {
     let mut applied = Vec::with_capacity(actions.len());
     let mut prior = Vec::with_capacity(actions.len());
-    let mut failure: Option<HostError> = None;
-    let result = session.transaction(|transaction| {
+    session.transaction(|transaction| {
         for (index, action) in actions.iter().enumerate() {
             let mut value = action.clone();
-            if let Err(error) = resolve_refs(&mut value, &prior) {
-                failure = Some(HostError::Element {
-                    index,
-                    error: ElementError::Reference(error),
-                });
-                return Err(ActionError::CorruptJournal);
-            }
-            let command = match Command::from_value(value) {
-                Ok(command) => command,
-                Err(error) => {
-                    failure = Some(HostError::Element {
-                        index,
-                        error: ElementError::Parameters(error),
-                    });
-                    return Err(ActionError::CorruptJournal);
-                }
-            };
+            resolve_refs(&mut value, &prior).map_err(|error| HostError::Element {
+                index,
+                error: ElementError::Reference(error),
+            })?;
+            let command = Command::from_value(value).map_err(|error| HostError::Element {
+                index,
+                error: ElementError::Parameters(error),
+            })?;
             // Import external media staged off or on this thread, then commit
             // only a durable PCM reference. A failure rolls back the whole edit
             // group and drops every stage, so no media remains (EXT-02).
-            let command = match import_command(directory, command, imports, staged) {
-                Ok(command) => command,
-                Err(error) => {
-                    failure = Some(HostError::Element {
-                        index,
-                        error: ElementError::Package(error),
-                    });
-                    return Err(ActionError::NotApplied);
+            let command = import_command(directory, command, imports, staged).map_err(|error| {
+                HostError::Element {
+                    index,
+                    error: ElementError::Package(error),
                 }
-            };
-            match transaction.perform(command) {
-                Ok(action) => {
-                    prior.push(serde_json::to_value(&action).expect("a committed action is json"));
-                    applied.push(action);
-                }
-                Err(error) => {
-                    failure = Some(HostError::Element {
-                        index,
-                        error: ElementError::Action(error.clone()),
-                    });
-                    return Err(error);
-                }
-            }
+            })?;
+            let action = transaction
+                .perform(command)
+                .map_err(|error| HostError::Element {
+                    index,
+                    error: ElementError::Action(error),
+                })?;
+            prior.push(serde_json::to_value(&action).expect("a committed action is json"));
+            applied.push(action);
         }
-        Ok(())
-    });
-    match result {
-        Ok(()) => Ok(applied),
-        Err(_) => Err(failure.expect("a failed transaction records the element")),
-    }
+        Ok(applied)
+    })
 }
 
 fn import_command(
@@ -1125,14 +951,6 @@ fn is_reference(map: &Map<String, Value>) -> bool {
     map.len() == 2 && map.contains_key("ref") && map.contains_key("field")
 }
 
-fn wait_for_saves(directory: &Path, inflight: &mut Vec<(u64, PendingAutosave)>) {
-    for (seq, pending) in inflight.drain(..) {
-        if pending.wait().is_ok() {
-            let _ = compact_journal(directory, seq);
-        }
-    }
-}
-
 fn restore_revision(
     session: &mut Session,
     autosave: &Autosave,
@@ -1144,25 +962,6 @@ fn restore_revision(
     session
         .restore(project, revision.to_string())
         .map_err(HostError::Action)
-}
-
-fn finish_saves(directory: &Path, inflight: &mut Vec<(u64, PendingAutosave)>) {
-    while let Some((seq, pending)) = inflight.first() {
-        match pending.try_wait() {
-            None => return,
-            Some(Ok(_)) => {
-                let seq = *seq;
-                inflight.remove(0);
-                if let Err(error) = compact_journal(directory, seq) {
-                    log::warn!(target: LOG, seq = seq, error:% = error, cause:? = error; "the journal was not compacted");
-                }
-            }
-            Some(Err(error)) => {
-                log::warn!(target: LOG, seq = *seq, error:% = error, cause:? = error; "an autosave failed");
-                inflight.remove(0);
-            }
-        }
-    }
 }
 
 #[cfg(test)]

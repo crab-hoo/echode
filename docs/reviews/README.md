@@ -30,6 +30,7 @@
   監査当時の IQA-01・02 の再現は通常回帰にした。
   自動保存を頼めない IQA-05 は ADR 0360 で初回の error と停止の診断を追加した。
   失敗後に作業ツリーのキャッシュが残る IQA-04 は [ADR 0363](../decisions/0363-invalidate-failed-autosave-cache.md) で失敗時の無効化と全量再保存へ改めた。
+  文書スレッドの `Worker`・送受信共通化と `Session::transaction<T, E>`（IQA-07）、Swift の開く失敗時の終了待ちと `PluginActivityReader` の失敗ログ（IQA-11）を対応した。
 - [2026-11-13 全体の横断監査](2026-11-13-professional-cross-audit.md): PCA-01〜10。
   PDC・フォルダバスを含む現行コードの精読で、新しい実装の誤りは見つからなかった。
   書出しの途中で遅延が変わるとずれたファイルを成功として書く（PCA-01）を `audit_pca01*` で再現した。

@@ -42,6 +42,11 @@ public final class ProjectController {
     @ObservationIgnored var endDocument: @Sendable (Document) async -> Void = { document in
         await Task.detached { document.shutdown() }.value
     }
+
+    /// Reads the initial snapshot of an opening document.
+    @ObservationIgnored var readSnapshot: @Sendable (Document) async throws -> Snapshot = {
+        try await $0.snapshot()
+    }
     @ObservationIgnored let auditionLog: AuditionLog
     /// One document change at a time. A repeated step waits instead of being dropped.
     @ObservationIgnored let edits = EditTurn()
@@ -175,31 +180,40 @@ public final class ProjectController {
                 let opened = try await Task.detached {
                     try creating ? Document(creating: url.path) : Document(opening: url.path)
                 }.value
-                guard !request.isCancelled else {
-                    await Task.detached { opened.shutdown() }.value
+                let outcome = await self.prepareSession(opened, url: url, request: request)
+                guard case .success(let next?) = outcome else {
+                    await self.endDocument(opened)
+                    if case .failure(let error) = outcome { self.report(error) }
                     return
                 }
-                var initial = try await opened.snapshot()
-                if let notice = try initial.historyReport().recovery {
-                    let accepted = await self.confirmRecovery(
-                        RecoveryPrompt(url: url, id: request.id, notice: notice), request: request)
-                    guard accepted, !request.isCancelled else {
-                        await Task.detached { opened.shutdown() }.value
-                        return
-                    }
-                    do { initial = try await opened.history(.acceptRecovery(notice)) } catch {
-                        await Task.detached { opened.shutdown() }.value
-                        throw error
-                    }
-                }
-                let next = DocumentSession(
-                    opening: opened, at: url, audio: try initial.audioState(), auditionLog: self.auditionLog)
-                next.publish(initial)
                 let previous = self.replaceSession(with: next)
                 self.startPluginActivity(next)
                 await self.shutDown(previous)
                 if self.preparesOutput { self.prepareOutput(opened) }
             } catch { self.report(error) }
+        }
+    }
+
+    private func prepareSession(
+        _ opened: Document, url: URL, request: RecoveryOpenRequest
+    ) async -> Result<DocumentSession?, any Error> {
+        guard !request.isCancelled else { return .success(nil) }
+        do {
+            var initial = try await self.readSnapshot(opened)
+            if let notice = try initial.historyReport().recovery {
+                let accepted = await self.confirmRecovery(
+                    RecoveryPrompt(url: url, id: request.id, notice: notice), request: request)
+                guard accepted, !request.isCancelled else {
+                    return .success(nil)
+                }
+                initial = try await opened.history(.acceptRecovery(notice))
+            }
+            let next = DocumentSession(
+                opening: opened, at: url, audio: try initial.audioState(), auditionLog: self.auditionLog)
+            next.publish(initial)
+            return .success(next)
+        } catch {
+            return .failure(error)
         }
     }
 

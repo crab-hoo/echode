@@ -161,4 +161,58 @@ struct PluginWindowStatusTests {
         release.continuation.finish()
         await controller.close()
     }
+
+    @Test func pluginActivityReaderLogsPollErrorsAndStopsQuietlyWhenStopped() throws {
+        let log = LockedMessages()
+        let reader = PluginActivityReader(
+            poll: { _ in
+                log.recordAttempt()
+                throw DecodingError.dataCorrupted(
+                    .init(codingPath: [], debugDescription: "corrupt activity page"))
+            },
+            deliver: { _ in },
+            recordFailure: { log.recordFailure($0) })
+        #expect(reader.waitUntilFinished())
+        #expect(log.attemptCount == 1)
+        #expect(log.failureCount == 1, "poll failure must be logged before exiting")
+        #expect(log.firstFailure?.contains("corrupt activity page") == true)
+
+        let stoppedLog = LockedMessages()
+        let holder = ReaderBox()
+        let stoppedReader = PluginActivityReader(
+            poll: { sequence in
+                stoppedLog.recordAttempt()
+                if sequence == 0 { return PluginActivityPage(next: 4) }
+                holder.stop()
+                throw DecodingError.dataCorrupted(
+                    .init(codingPath: [], debugDescription: "post-stop failure"))
+            },
+            deliver: { _ in },
+            recordFailure: { stoppedLog.recordFailure($0) })
+        holder.set(stoppedReader)
+        #expect(stoppedReader.waitUntilFinished())
+        #expect(stoppedLog.attemptCount == 2)
+        #expect(stoppedLog.failureCount == 0)
+    }
+}
+
+private final class LockedMessages: @unchecked Sendable {
+    private let lock = NSLock()
+    private var attempts = 0
+    private var failures: [String] = []
+
+    var attemptCount: Int { lock.withLock { attempts } }
+    var failureCount: Int { lock.withLock { failures.count } }
+    var firstFailure: String? { lock.withLock { failures.first } }
+
+    func recordAttempt() { lock.withLock { attempts += 1 } }
+    func recordFailure(_ message: String) { lock.withLock { failures.append(message) } }
+}
+
+private final class ReaderBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var reader: PluginActivityReader?
+
+    func set(_ reader: PluginActivityReader) { lock.withLock { self.reader = reader } }
+    func stop() { lock.withLock { reader }?.stop() }
 }

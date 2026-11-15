@@ -52,11 +52,11 @@ ADR 0291〜0320 でエラーを型にした成果が、最も必要な「開け�
 | IQA-04 | 堅牢性 | 失敗した自動保存の後、キャッシュが作業ツリーと食い違ったまま使われる | 対応済み（[ADR 0363](../decisions/0363-invalidate-failed-autosave-cache.md)） |
 | IQA-05 | 保守性 | 自動保存を頼めなかった時に記録がなく、ジャーナルが黙って伸び続ける | 対応済み（[ADR 0360](../decisions/0360-background-recording-retry-policy.md)） |
 | IQA-06 | 堅牢性 | 出力機器の一覧が、1 台の問い合わせの失敗で全体を失敗にする | 対応済み（[ADR 0366](../decisions/0366-hal-fault-isolation-and-overload-notices.md)） |
-| IQA-07 | 保守性 | 文書スレッドの `worker` が 307 行で、同じ定型を 6〜8 回書く | 未対応 |
+| IQA-07 | 保守性 | 文書スレッドの `worker` が 307 行で、同じ定型を 6〜8 回書く | 対応済み（2026-11-15） |
 | IQA-08 | 保守性 | 2,000 行を超えるファイルが 3 つ、90 行を超える関数が 28 個 | 未対応 |
 | IQA-09 | 効率 | コミットチェーンが切り詰められず、開く 1 回でリポジトリを 7 回開く | 未対応（未測定） |
 | IQA-10 | 堅牢性 | モノの出力機器では、中央の音が +3 dB になって機器へ出る | 判断の確認 |
-| IQA-11 | 保守性 | Swift の開く経路の失敗で主アクターが閉じる処理を待ち、活動の読取りは黙って止まる | 未対応 |
+| IQA-11 | 保守性 | Swift の開く経路の失敗で主アクターが閉じる処理を待ち、活動の読取りは黙って止まる | 対応済み（2026-11-15） |
 
 IQA-12 は指摘ではなく、確かめて問題がなかった項目の一覧である。
 
@@ -181,6 +181,10 @@ IQA-12 は指摘ではなく、確かめて問題がなかった項目の一覧�
 - **影響**: 今は正しい。要求の種類を足す時に、停止の応答・巻戻し・公開のどれかを 1 か所だけ書き忘れやすい形である。
 - **案**: 状態を `struct Worker` にまとめ、公開と巻戻しをメソッドにする。送受信は 1 つの関数にする。
   中断は、トランザクションの閉包がエラーの型を選べる形にする。振る舞いは変えない。
+- **対応（2026-11-15）**:
+  - `host.rs` のスレッド状態を `struct Worker` へまとめ、`Request::Write` にクロージャを受ける形へ統合して `reply_halted` と `Publish` 組立の重複を除いた。
+  - `DocumentHost` の送受信と停止判定を `call` / `write` / `write_unconfirmed` へ、`Worker` の履歴・公開・巻戻しをメソッド（`step_history`・`commit_edit` 等）へまとめた。
+  - `Session::transaction<T, E>` を汎用エラー型 `E` に対応させ、`apply_transaction` が `HostError` を直接返す形へ改めた（回帰: `a_transaction_returns_caller_errors_directly_and_restores_redo`）。
 
 ### IQA-08 大きいファイルと長い関数
 
@@ -222,6 +226,9 @@ IQA-12 は指摘ではなく、確かめて問題がなかった項目の一覧�
     以後、その文書ではプラグインの窓の開閉と、窓での変更が画面へ届かない。
   - `prepareOutput` は `try?` で失敗を捨てる。こちらは、ポーリングする音声の状態に出るとコメントにある。
 - **案**: 開く経路は `defer` で 1 か所にまとめる。読取りは、終える前に理由を製品のログへ書く。
+- **対応（2026-11-15）**:
+  - `ProjectController.open` からセッション準備を `prepareSession` へ分離し、取消と失敗のいずれでも `endDocument(opened)` を主アクター外で呼んで待機するようにした（回帰: `failedSnapshotShutsDownOpenedDocumentOffMainActorAndReleasesLock`）。
+  - `PluginActivityReader` はポーリング／復号の失敗時に `stop()` 済みでなければ `EchodeLog`（`app::plugin`）へ原因を残してからスレッドを終えるようにした（回帰: `pluginActivityReaderLogsPollErrorsAndStopsQuietlyWhenStopped`）。
 
 ### IQA-12 確かめて問題がなかった項目
 

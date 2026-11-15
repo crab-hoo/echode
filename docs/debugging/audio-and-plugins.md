@@ -861,6 +861,7 @@ HAL 自身の周期超過は上の「音切れがあるのにエンジンの期�
 開く要求の返答から楽観的に表示を更新していないか、未読圧縮で最後の寿命を保っているかも調べる。
 削除・オフライン後の残留は `publish`、文書交換後の残留は `DocumentSession.retire` と、処理が保持するセッションを確認する
 （[ADR 0138](../decisions/0138-plugin-window-status.md)）。
+活動のポーリングや復号が失敗した時は、`PluginActivityReader` が終了前に `app::plugin` へ `plugin activity reader stopped at sequence` を記録する（`pluginActivityReaderLogsPollErrorsAndStopsQuietlyWhenStopped`）。
 
 ### プラグイン付きトラックの選択が止まる・パラメーター画面が重い
 

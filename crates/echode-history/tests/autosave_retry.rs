@@ -134,7 +134,7 @@ fn edit(session: &mut Session) {
                 track: id,
                 draft: note(),
             })?;
-            Ok(())
+            Ok::<_, echode_actions::ActionError>(())
         })
         .unwrap();
 }

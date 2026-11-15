@@ -140,10 +140,10 @@ impl Session {
 
     /// Runs several commands as one undo step. A failure puts the session back.
     /// A group with no net change succeeds without touching history or redo.
-    pub fn transaction<T>(
+    pub fn transaction<T, E>(
         &mut self,
-        body: impl FnOnce(&mut Transaction<'_>) -> Result<T, ActionError>,
-    ) -> Result<T, ActionError> {
+        body: impl FnOnce(&mut Transaction<'_>) -> Result<T, E>,
+    ) -> Result<T, E> {
         let checkpoint = self.current.clone();
         let mut actions = Vec::new();
         let mut changes = ChangeSet::new();
