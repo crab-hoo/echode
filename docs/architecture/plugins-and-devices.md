@@ -120,6 +120,8 @@ MIDI の全発音停止は互換用の終了処理であり、MIDI・MPE・MIDI 
 - `SIGABRT`、`SIGSEGV`、`SIGBUS`、`SIGILL` でヘルパーが共有領域へ印を書いてから信号を上げ直す
   （[ADR 0079](../decisions/0079-failed-export.md)、[ADR 0111](../decisions/0111-macos-helper-notices.md)）
 - 再起動ではヘルパーを起動し直して最後に取得した状態を復元する
+  共有領域は毎回新しく作り、世代番号と親だけが持つ破棄済みの世代を旧領域から引き継がない。
+  既存領域を初期化して再利用する入口は持たない（[ADR 0364](../decisions/0364-remove-unused-region-restart-reset.md)）。
   準備・状態復元に失敗した新しいヘルパーは、エラーを返す前に終了・回収し、終了監視を join する。
   ホストの破棄でも終了要求の成否にかかわらず監視を join し、共有領域と fan-in の生ポインタの寿命を閉じる
   （[ADR 0362](../decisions/0362-published-media-and-helper-lifetimes.md)）。

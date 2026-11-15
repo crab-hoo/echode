@@ -251,10 +251,4 @@ fn a_forged_published_counter_does_not_number_the_hosts_blocks() {
     }
     region.header().published.store(u64::MAX, Ordering::Release);
     assert_eq!(region.submit_activation().expect("activation"), 3);
-    region.reset_for_restart();
-    assert_eq!(region.published(), 0);
-    let generation = region
-        .submit_block(4, &input, &[])
-        .expect("submit after a restart");
-    assert_eq!(generation, 1);
 }

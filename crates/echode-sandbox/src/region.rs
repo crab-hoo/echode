@@ -567,28 +567,6 @@ impl MappedRegion {
         Ok(())
     }
 
-    /// Clear generations and slot headers before a new helper attaches.
-    /// The caller is not inside `request`. The name stays unlinked; the fd is reused.
-    pub fn reset_for_restart(&self) {
-        let header = self.header();
-        header.ready.store(0, Ordering::Release);
-        header.dead.store(0, Ordering::Release);
-        header.fail_len.store(0, Ordering::Release);
-        self.issue(0);
-        header.completed.store(0, Ordering::Release);
-        for index in 0..SLOTS {
-            let head = self.slot_head_index(index);
-            head.command.store(0, Ordering::Release);
-            head.frames.store(0, Ordering::Release);
-            head.input_events.store(0, Ordering::Release);
-            head.output_events.store(0, Ordering::Release);
-        }
-        header.epoch.fetch_add(1, Ordering::Release);
-        header.notice.fetch_add(1, Ordering::Release);
-        sync::wake_one(&header.notice, SyncFlags::PROCESS);
-        self.bump_alarm();
-    }
-
     pub fn block_command(&self, generation: u64) -> u32 {
         self.slot_head(generation).command.load(Ordering::Acquire)
     }

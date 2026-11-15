@@ -22,6 +22,8 @@ mod note_ports;
 mod param_rescan;
 #[path = "isolation/plugin_log.rs"]
 mod plugin_log;
+#[path = "isolation/restart.rs"]
+mod restart;
 #[path = "isolation/state_saves.rs"]
 mod state_saves;
 #[path = "isolation/tail.rs"]
