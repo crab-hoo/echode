@@ -122,6 +122,17 @@ ASan・TSan・Miri の `target/bridge`（2026-11-09 に 5.9 GB）、TSan のラ�
 `target/debug/incremental` の crate ごとの写しの数は `ls target/debug/incremental | sed -E 's/-[^-]+$//' | sort | uniq -c | sort -rn | head` で見る。
 2026-11-12 までは Cargo の `-p` の組ごとに別の写しができ、同じ日に `echode_engine` が 70 個あった。
 以後の作業の段階は既定のメンバーの 1 つの選択にそろえる（[Cargo の選択](../verification.md#cargo-の選択)）。写しが増えたら `-p` を足した呼出しを探す。
+Cargo は、今の選択がもう作らないハッシュの出力を消さない。`cargo clean -p` は今の写しも消す。
+2026-11-15 は `target/debug` 36 GB のうち 25.4 GiB がそれだった（古い依存の組、ADR 0361 で全体の段階へ移した `spike` の構成など）。
+今の単位は、作業の段階の選択に `--message-format=json` を付けて得る。全部が最新ならコンパイルしない。
+選択は `cargo build`、`cargo clippy --all-targets -- -D warnings`、`cargo test --no-run`、`cargo build --example swift_actions`、
+`cargo build -p echode-plugin-host`（`echode-cli` の `render` のテストが実行中に作る）である。
+`deps`・`build`・`examples` は報告のファイル名のハッシュで残す。ハッシュのない上げた写しは、`deps` の同じ内容のファイルで引く。
+`incremental` の `<crate>-<id>` は、ライブラリなら今の `.rmeta` が `<id>`（36 進）の 8 バイトを含むかで、
+実行ファイルなら `deps/<crate>-<hash>.<CGU>.<x>.rcgu.o` の CGU 名がセッションの `<CGU>.o` と一致するかで引く。
+検査モードのテストとバイナリの `.rmeta` は中身のない仮のものなので、crate ごとに新しい順に単位の数だけ残す。
+消した後に同じ選択を流し直し、最新のままかを確かめる。2026-11-15 は `render` のテストが上書きする `echode-plugin-host` だけが作り直された。
+`swift/EchodeApp/.build`・`swift/EchodeBridge/.build` は、`--scratch-path` なしの手動の `swift build` の残りである。リポジトリの手順は `target/` の下だけを使う。
 2026-11-12 は、多くの crate が依存する `echode-sandbox` を変えた後の `make verify` が、`check-swift` の後で空きを使い切った。
 空きが尽きると Claude Code のシェルは出力の一時ファイルを作れず、どのコマンドも始まらない。エージェントは自分で消せないので、ユーザーに少し空けてもらう。
 検査の終了後に 647 MiB 戻り、`product-contract-mutations`（8.9 GB）・`target/release`（1.0 GB）・`.rcgu.o`（1.0 GB）・合格済みの ASan の `target/bridge/address`（3.8 GB）を消して 14 GiB にした。
