@@ -555,6 +555,7 @@ fn retained_stream_publishes_a_stopped_locate_before_its_callback() {
     stream.pause().unwrap();
     stream.locate(&project, 705_600 * 2).unwrap();
     assert_eq!(stream.status().tick, 705_600 * 2);
+    assert_eq!(stream.status().playhead_tick, 705_600 * 2);
     // Another command may be consumed in the same callback as Locate.
     stream.resume(0).unwrap();
     let (mut left, mut right) = (vec![0.0; 64], vec![0.0; 64]);
@@ -565,6 +566,7 @@ fn retained_stream_publishes_a_stopped_locate_before_its_callback() {
         false,
     );
     assert_eq!(stream.status().tick, 705_600 * 2);
+    assert_eq!(stream.status().playhead_tick, 705_600 * 2);
     stream.resume(0).unwrap();
     player.render(&mut left, &mut right);
     assert_eq!(stream.status().sample, 48000 + 64);

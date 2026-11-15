@@ -104,6 +104,46 @@ fn sibling_tracks_meet_at_master_for_every_block_size_under_rtsan() {
     }
 }
 
+/// The displayed position must count the music leaving the compensated master,
+/// not the source frames the callback is preparing ahead of it.
+#[test]
+fn the_playhead_counts_the_delayed_master_for_every_block_size_under_rtsan() {
+    let (project, track) = Project::new().add_track("delayed");
+    let project = project
+        .add_clap_device(track, Id::generate(), "dev.echode.test-gain")
+        .unwrap();
+    let routes = [delay_route("dev.echode.test-gain", "37", false)];
+    for block in BLOCKS {
+        let (mut control, mut audio) =
+            playback_with_plugins(&project, 48_000, block, &host_bin(), &routes).unwrap();
+        control.set_clip_loader(impulses(vec![(track, 20, 0.5, -0.25)]));
+        control.replace(&project).unwrap();
+        control.command(PlaybackCommand::Play).unwrap();
+        let (mut left, mut right) = (vec![0.0; block], vec![0.0; block]);
+        // Only this regression's duration and buffer sizes are bounded here.
+        let mut heard = Vec::new();
+        let mut rendered = 0;
+        while rendered < SECTION {
+            let count = block.min(SECTION - rendered);
+            render_content(&mut audio, &mut left[..count], &mut right[..count]);
+            rendered += count;
+            heard.extend_from_slice(&left[..count]);
+            let status = control.status();
+            assert_eq!(status.sample, rendered as i64);
+            let audible = (rendered as i64 - 37).max(0);
+            let expected = echode_engine::sample_to_tick(audible, project.tempo(), 48_000)
+                .unwrap()
+                .get();
+            assert_eq!(
+                status.playhead_tick, expected,
+                "PDC playhead must follow master: block {block}, rendered {rendered}"
+            );
+        }
+        assert_impulse(&heard, 57, 0.5, "PDC playhead waveform");
+        assert!(control.plugin_failure().is_none());
+    }
+}
+
 /// A folder's own clip and first instrument wait for its slowest child, and
 /// the folder's delaying effect is waited for at master (ADR 0277, ADR 0339).
 #[test]
@@ -209,6 +249,18 @@ fn a_restart_with_another_latency_moves_the_compensation() {
         render_content(&mut audio, &mut left, &mut right);
         control.service();
         assert!(control.take_preparation_error().is_none());
+        let status = control.status();
+        assert_eq!(
+            status.playhead_tick,
+            echode_engine::sample_to_tick(
+                (status.sample - status.latency_samples as i64).max(0),
+                project.tempo(),
+                48_000
+            )
+            .unwrap()
+            .get(),
+            "the playhead used a latency from another adopted plan"
+        );
     }
     assert_eq!(control.latency_samples(), 48);
     assert!(control.latency_settled());
@@ -281,12 +333,29 @@ fn a_loop_plays_each_impulse_once_per_pass_for_every_block_size_under_rtsan() {
                 end: length as i64,
             })
             .unwrap();
+        // Apply the selected range while stopped. A live range change starts
+        // its own display trajectory and is covered by playback_playhead_tests.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while control.status().pending_plan {
+            assert!(Instant::now() < deadline, "loop plan was not adopted");
+            render_content(&mut audio, &mut [], &mut []);
+            control.service();
+        }
         control.command(PlaybackCommand::Play).unwrap();
         let (mut left, mut right) = (vec![0.0; block], vec![0.0; block]);
         let mut heard = Vec::new();
         while heard.len() < passes * length {
             render_content(&mut audio, &mut left, &mut right);
             heard.extend_from_slice(&left);
+            let audible = heard.len().saturating_sub(late) % length;
+            assert_eq!(
+                control.status().playhead_tick,
+                echode_engine::sample_to_tick(audible as i64, project.tempo(), 48_000)
+                    .unwrap()
+                    .get(),
+                "loop playhead: block {block}, rendered {}",
+                heard.len()
+            );
             assert!(!control.status().failed);
         }
         for (frame, sample) in heard.iter().enumerate() {

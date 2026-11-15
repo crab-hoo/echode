@@ -83,6 +83,7 @@
 |---|---|---|---|---|
 | UC-87 | 読めない機器がある時も正常な機器で再生・試聴でき、機器を戻すと一覧と明示選択が復帰する。自動回帰では実ドライバの抜去・再通知の順序は分からない | 実機 | [ADR 0366](decisions/0366-hal-fault-isolation-and-overload-notices.md) | 2026-11-15 |
 | UC-88 | UC-50・64 の音切れ時に HAL 過負荷の機器 ID・時刻をログへ残せる。自動回帰は通知を注入するだけで、実 HAL の発火条件と到着を保証しない | 実機・聴感 | [ADR 0366](decisions/0366-hal-fault-isolation-and-overload-notices.md) | 2026-11-15 |
+| UC-89 | 遅延の大きい第三者 CLAP とメトロノームを再生し、アレンジとピアノロールの再生ヘッドが音に追従する。開始・一時停止・再開・位置移動・短いループ・遅延変更を比べる。自動回帰では実画面の更新周期と物理出力の遅れ、第三者の報告値の正しさは分からない | 実画面・聴感・第三者 | [ADR 0373](decisions/0373-pdc-playhead-position.md) | 2026-11-15 |
 | UC-17 | 停止で記憶した開始位置へ戻る操作感と、その時の音 | 画面・聴感 | [ADR 0155](decisions/0155-remembered-playback-start.md) | 2026-10-25 |
 | UC-18 | 再生ヘッドの追従のページ送りの見え方と、トグルの VoiceOver | 画面・VO | [ADR 0159](decisions/0159-playhead-follow.md) | 2026-10-25 |
 | UC-19 | 開いた直後の最初の再生の待ちが減った量と操作感 | 実機・画面 | [ADR 0147](decisions/0147-output-prewarm-and-background-media.md) | 2026-10-22 |

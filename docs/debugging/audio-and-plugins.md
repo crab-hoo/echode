@@ -699,6 +699,18 @@ I/O は `CliIoOperation` とパス・元の errno、引数は `ArgumentError` �
 `hosted_playback/latency.rs` は 256 → 512 → 0 を別プロセスで報告させる。`PluginLatencyTests` は機器なしで表示と旧文書の拒否を確認する。
 第三者の設定・出力レート・報告値・再起動前後を記録する（[ADR 0246](../decisions/0246-plugin-latency-reporting.md)、UC-51・74）。
 
+### PDC の再生ヘッドが音より先行する・停止で跳ぶ
+
+`PlaybackStatus::sample`・`tick` は次の素材を処理する時計で、表示の位置ではない。
+`playhead_tick` と `latency_samples` を同じ状態から読み、`Session::state`・`position` が表示用の値を文書へ渡しているかを見る。
+開始から遅延分の間は原点に保ち、一時停止と停止フェードでは最後の表示位置に保つ。
+位置移動・巻戻し・ループ範囲の採用では新しい原点をすぐ表示し、到着を待つ。
+折返した生の位置から遅延を直接引かず、`playback_playhead.rs` の原点・経過フレーム・最後のブロックの遅延を確かめる。
+採用待ちの位置移動は `OutputStream::status` が処理位置と表示位置を一緒に上書きする。
+`playback_playhead_tests.rs` は初回進入と長い遅延、ライブの停止・計画交換を、`hosted_playback/compensation.rs` は実際に遅れる別プロセスの波形と表示を照合する。
+セッションへの表示値の接続は `session_playhead_tests.rs` で確かめる。位置移動の後片付けは非同期なので、初回の発音を断定する時は `until_running` で待つ。
+実画面の更新間隔と HAL の物理出力の遅れは補正外なので、第三者の報告値と合わせて UC-89 で区別する（[ADR 0373](../decisions/0373-pdc-playhead-position.md)）。
+
 ### パラメーターの変更通知で `RefCell already borrowed` が出てヘルパーが終了する
 
 ヘルパーの stderr に `host_params_rescan`・`RefCell already borrowed`・`panic in a function that cannot unwind` が並ぶ場合、説明の読取り中の再走査通知を疑う。

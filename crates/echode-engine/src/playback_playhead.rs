@@ -1,0 +1,53 @@
+//! Display position of the compensated master, without moving the render clock.
+use crate::PlaybackError;
+
+/// One continuous source trajectory. Jumps and loop-range changes start a new
+/// trajectory; the display holds its origin until that source reaches master.
+/// Counting device frames, rather than subtracting from the wrapped clock,
+/// also handles the first loop entry and delays longer than a loop.
+pub(super) struct Playhead {
+    origin: i64,
+    frames: u64,
+    /// The last successfully rendered source block, not a newly prepared plan.
+    latency: u64,
+    loop_bounds: Option<(i64, i64)>,
+}
+
+impl Playhead {
+    pub(super) fn new(origin: i64, bounds: (Option<i64>, Option<i64>)) -> Self {
+        Self {
+            origin,
+            frames: 0,
+            latency: 0,
+            loop_bounds: bounds
+                .0
+                .zip(bounds.1)
+                .filter(|&(start, end)| start < end && origin < end),
+        }
+    }
+
+    pub(super) fn advance(&mut self, frames: usize, latency: u64) -> Result<(), PlaybackError> {
+        self.frames = self
+            .frames
+            .checked_add(frames as u64)
+            .ok_or(PlaybackError::Time)?;
+        self.latency = latency;
+        Ok(())
+    }
+
+    pub(super) fn sample(&self) -> i64 {
+        let elapsed = i128::from(self.frames.saturating_sub(self.latency));
+        let position = if let Some((start, end)) = self.loop_bounds {
+            let until_end = i128::from(end) - i128::from(self.origin);
+            if elapsed >= until_end {
+                i128::from(start) + (elapsed - until_end) % (i128::from(end) - i128::from(start))
+            } else {
+                i128::from(self.origin) + elapsed
+            }
+        } else {
+            i128::from(self.origin) + elapsed
+        };
+        // A running non-looping render clock rejects overflow before publishing.
+        i64::try_from(position).unwrap_or(i64::MAX)
+    }
+}

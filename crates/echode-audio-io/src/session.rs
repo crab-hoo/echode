@@ -765,7 +765,7 @@ impl Session {
             running: self.playing
                 && self.cancellation.is_current(self.play_revision)
                 && status.is_some_and(|status| status.playing && !status.failed),
-            tick: status.map_or(self.tick, |status| status.tick),
+            tick: status.map_or(self.tick, |status| status.playhead_tick),
             start: self.start,
             paused: self.paused,
             selected_uid: self.selected_uid.clone(),
@@ -808,7 +808,7 @@ impl Session {
         (
             self.stream
                 .as_ref()
-                .map_or(self.tick, |stream| stream.status().tick),
+                .map_or(self.tick, |stream| stream.status().playhead_tick),
             self.playing && self.cancellation.is_current(self.play_revision),
         )
     }

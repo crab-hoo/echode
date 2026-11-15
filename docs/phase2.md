@@ -209,7 +209,8 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
 先行分として、フォルダのミュート・ソロの子孫への反映（[ADR 0244](decisions/0244-folder-mute-and-solo-gates.md)）と、
 子の音を親のチェイン・音量・パンへ通すフォルダバス（[ADR 0338](decisions/0338-folder-bus.md)）を接続した。
 PDC は、トラックとフォルダの合流点の遅延線で揃え、書出しはマスターの遅れの分を先頭から捨てる（[ADR 0339](decisions/0339-plugin-delay-compensation.md)）。
-バイパスした装置は遅延を保ち、実行中の遅延の変化は計画を作り直して追う。再生ヘッドの表示の補正は残る。
+バイパスした装置は遅延を保ち、実行中の遅延の変化は計画を作り直して追う。
+再生ヘッドは処理の時計から分け、マスターの遅れを補正して表示する（[ADR 0373](decisions/0373-pdc-playhead-position.md)）。
 計算は遅延グラフの最長経路で、計画ごとに検証してから公開し、循環と持てない遅延は断る（[ADR 0340](decisions/0340-latency-graph.md)）。
 センド・サイドチェイン・ドラム用の MIDI 配布は未接続で、合流はこのグラフの辺として足す。
 CLAP の遅延の取得とデバイス列の表示は [ADR 0246](decisions/0246-plugin-latency-reporting.md) で接続した。

@@ -8,6 +8,8 @@ mod background;
 mod commands;
 #[path = "playback_media_tests.rs"]
 mod media_loading;
+#[path = "playback_playhead_tests.rs"]
+mod playhead;
 #[test]
 fn every_option_rejects_a_negative_start_before_opening_helpers() {
     let project = Project::new();

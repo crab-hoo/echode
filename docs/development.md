@@ -124,6 +124,7 @@ lint の固定版（ruff・shellcheck・shfmt）は `make setup-lint` が `targe
 | 文書・復旧・設定の失敗 | `crates/echode-history/src` | `error_document.rs`（`DocumentError`・`JournalError`・`SettingsError`）、`host_error.rs`（`HostError`・`ElementError`・参照の拒否） |
 | 再生計画・カーソル | `crates/echode-realtime` | `lib.rs`（サンプル時刻の計画・鳴っている集合・ID の索引）、`event.rs`（イベント列）、`cursor_tests.rs`（境界の訪問数） |
 | オーディオエンジン | `crates/echode-engine` | `playback.rs`（再生器の入口 `playback` と `PlaybackOptions`・`PlaybackAudio`・`CachedTrack`）、`plugins.rs`（別プロセス CLAP ステージ）、`bypass.rs`（ドライ平面の通過）、`mix.rs`（フェーダー補間・f64 加算）、`declick.rs`（停止減衰）、`render.rs`（オフライン書出し）、`device.rs`（機器問い合わせ）、`device_measurement.rs`（非既定 feature の実機計測）、`audio_log.rs`（コールバックの出来事のリングとノード名付きの記録） |
+| 再生位置の表示 | `crates/echode-engine/src/playback_playhead.rs` | マスターに揃える表示用の軌跡。`PlaybackStatus::sample`・`tick` は処理の時計、`playhead_tick` は表示の位置 |
 | エンジンの素材の入口 | `crates/echode-engine` | `planes.rs`（`FinitePlanes`・`PlacedPlanes`。配置とキャッシュの面の有限性・ピークを作る時に確かめる。[ADR 0369](decisions/0369-checked-sample-planes-at-the-engine-entrance.md)） |
 | 製品のログ | `crates/echode-log` | `install`（ファイル・統合ログ・stderr の出力先）、`file.rs`（書込みスレッドと共通の回転 `append_lines`）、`testing.rs`（テストの記録の取得）。書き方は `log` のマクロと欄（[ADR 0322](decisions/0322-product-log.md)） |
 | CoreAudio I/O | `crates/echode-audio-io` | `stream.rs`（HAL 入出力）、`opening.rs`（別スレッドの出力準備・機器なしの検査用出力）、`session.rs`（音声セッション）、`workgroup.rs` / `hardware.rs`（Workgroup・機器一覧と通知）、`overload.rs`（HAL 過負荷の集約） |

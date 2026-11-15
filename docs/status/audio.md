@@ -29,5 +29,6 @@
 - **規模・ミックスと履歴（FCA-05〜07・19）**: モデル ID の線形探索と履歴のメモリ予算は残る（[ADR 0274](../decisions/0274-reused-track-plans.md)）。
   ノートと配置の編集の 1 段は触れた run と中身の一覧を持つ。多くを変える編集はその分を持ち、総量の予算はない（[ADR 0353](../decisions/0353-shared-placement-runs.md)）。
   子は親の FX・音量・パンを通る（UC-47・49・73、[ADR 0338](../decisions/0338-folder-bus.md)）。
-  PDC は最遅の経路に揃え、再生ヘッドと後段のノートは未補正（UC-51・74、[ADR 0340](../decisions/0340-latency-graph.md)）。
+  PDC は最遅の経路に揃えるが、後段のノートは未補正（UC-51・74、[ADR 0340](../decisions/0340-latency-graph.md)）。
+  再生ヘッドの実画面と聴感は UC-89。物理的な出力遅延と描画周期は補正しない（[ADR 0373](../decisions/0373-pdc-playhead-position.md)）。
 - **長い素材**: 全体を復号して 1 コピーを常駐させ、逐次読込みはない（[ADR 0273](../decisions/0273-shared-source-clip-windows.md)）。

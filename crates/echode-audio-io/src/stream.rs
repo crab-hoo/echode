@@ -299,6 +299,12 @@ impl OutputStream {
         self.control.set_routes(host, routes);
     }
 
+    /// Rebuild with the injected routes instead of querying installed plugins.
+    #[cfg(test)]
+    pub(crate) fn replace_test_plan(&mut self, project: &Project) -> Result<(), AudioError> {
+        Ok(self.control.replace(project)?)
+    }
+
     pub(crate) fn preparing_graph(&self) -> bool {
         self.control.preparing_graph()
     }
@@ -563,6 +569,7 @@ impl OutputStream {
             && !status.failed
         {
             status.tick = tick;
+            status.playhead_tick = tick;
             status.sample = sample;
         }
         status

@@ -1,4 +1,6 @@
 use super::*;
+#[path = "session_playhead_tests.rs"]
+mod playhead;
 #[test]
 fn cancelled_queued_play_does_not_query_hardware_or_open_a_stream() {
     let gate = TransportCancellation::default();

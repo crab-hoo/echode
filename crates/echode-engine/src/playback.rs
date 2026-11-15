@@ -45,6 +45,9 @@ use bus::Bus;
 #[path = "playback_transport.rs"]
 mod musical_time;
 use musical_time::Timeline;
+#[path = "playback_playhead.rs"]
+mod playhead;
+use playhead::Playhead;
 /// Clock providers consume device frames. External synchronization may supply
 /// another provider without making the UI timer advance the transport.
 pub trait ClockSource: Send {
@@ -133,8 +136,11 @@ pub use crate::output_guard::GUARD_DBFS as MASTER_GUARD_DBFS;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PlaybackStatus {
     pub playing: bool,
+    /// Processing position, not the latency-compensated display position.
     pub sample: i64,
     pub tick: i64,
+    /// Master-aligned display position; held on pause, reset by a locate/rewind.
+    pub playhead_tick: i64,
     pub failed: bool,
     pub applied_command: u64,
     /// Cumulative callbacks with a plugin processing/submit/deadline failure.
@@ -157,6 +163,7 @@ struct Status {
     /// it places the next plan in advance; a stale pair is only slower.
     chase_from: AtomicI64,
     tick: AtomicI64,
+    playhead_tick: AtomicI64,
     failed: AtomicBool,
     applied_command: AtomicU64,
     plugin_missed_blocks: AtomicU64,
@@ -1818,6 +1825,7 @@ pub struct PlaybackAudio {
     clear_preview_after: Option<u64>,
     hosts: Box<HostGraph>,
     current: Box<Prepared>,
+    playhead: Playhead,
     clock: Box<dyn ClockSource>,
     playing: bool,
     failed: bool,
@@ -1998,6 +2006,12 @@ fn transport_pair(
                 .sample_to_tick(clock.position(), rate)
                 .unwrap_or(0),
         ),
+        playhead_tick: AtomicI64::new(
+            current
+                .tempo
+                .sample_to_tick(clock.position(), rate)
+                .unwrap_or(0),
+        ),
         failed: AtomicBool::new(false),
         applied_command: AtomicU64::new(0),
         plugin_missed_blocks: AtomicU64::new(0),
@@ -2068,6 +2082,7 @@ fn transport_pair(
         fader_preview: None,
         clear_preview_after: None,
         hosts: Box::new(HostGraph::empty()),
+        playhead: Playhead::new(clock.position(), (None, None)),
         current,
         clock,
         playing: false,
@@ -2796,6 +2811,7 @@ impl PlaybackControl {
                 playing: self.status.playing.load(Ordering::SeqCst),
                 sample: self.status.sample.load(Ordering::SeqCst),
                 tick: self.status.tick.load(Ordering::SeqCst),
+                playhead_tick: self.status.playhead_tick.load(Ordering::SeqCst),
                 failed: self.status.failed.load(Ordering::SeqCst),
                 applied_command: self.status.applied_command.load(Ordering::SeqCst),
                 plugin_missed_blocks: self.status.plugin_missed_blocks.load(Ordering::Relaxed),
@@ -2990,6 +3006,17 @@ impl PlaybackAudio {
                 .unwrap_or(0),
             Ordering::SeqCst,
         );
+        let displayed = self.playhead.sample();
+        self.status.playhead_tick.store(
+            self.current
+                .tempo
+                .sample_to_tick(displayed, self.current.sample_rate)
+                .unwrap_or(0),
+            Ordering::SeqCst,
+        );
+        self.status
+            .latency
+            .store(self.current.latency, Ordering::Release);
         self.status.playing.store(
             self.playing && !self.hosts.cleanup_pending(),
             Ordering::SeqCst,
@@ -3067,9 +3094,6 @@ impl PlaybackAudio {
                 std::mem::swap(&mut next.prepared, &mut self.current);
                 std::mem::swap(&mut next.hosts, &mut self.hosts);
                 self.current.meters_committed = false;
-                self.status
-                    .latency
-                    .store(self.current.latency, Ordering::Release);
                 faders_changed = true;
                 self.status
                     .applied_plan
@@ -3253,6 +3277,7 @@ impl PlaybackAudio {
         if self.metronome {
             mix_metronome(self, span_count, left, right, None)?;
         }
+        self.playhead.advance(left.len(), self.current.latency)?;
         self.clock.locate(end);
         self.live_output |= live;
         Ok(())
@@ -3321,6 +3346,7 @@ impl PlaybackAudio {
 
     fn arm_loop(&mut self) {
         self.loop_armed = self.loop_end.is_some_and(|end| self.clock.position() < end);
+        self.playhead = Playhead::new(self.clock.position(), self.active_loop());
     }
 
     fn active_loop(&self) -> (Option<i64>, Option<i64>) {
