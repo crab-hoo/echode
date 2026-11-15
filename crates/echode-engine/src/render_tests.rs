@@ -124,9 +124,9 @@ fn offline_clips_match_playback() {
     let loaded = vec![crate::playback::LoadedClip {
         track: project.tracks()[0].id.raw(),
         start_sample: 0,
-        samples: Arc::clone(&samples),
-        right: None,
-        window: None,
+        audio: crate::FinitePlanes::new(Arc::clone(&samples), None)
+            .unwrap()
+            .into(),
         gain: 1.0,
         fade_in: 8,
         fade_out: 8,
@@ -150,9 +150,9 @@ fn offline_clips_match_playback() {
         Ok(vec![crate::playback::LoadedClip {
             track: track_raw,
             start_sample: 0,
-            samples: Arc::clone(&samples),
-            right: None,
-            window: None,
+            audio: crate::FinitePlanes::new(Arc::clone(&samples), None)
+                .unwrap()
+                .into(),
             gain: 1.0,
             fade_in: 8,
             fade_out: 8,

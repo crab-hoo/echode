@@ -11,13 +11,18 @@
 //! only the frames they play and release the decoded file (M27-03). When the
 //! distinct trims of a source add up to at least the source itself, every
 //! placement reads a window of one shared copy instead (EXT-01).
+//!
+//! The planes are the engine's [`FinitePlanes`], checked once when they are
+//! made, and each window keeps its peak. The engine judges a placement gain
+//! by that peak at its entrance, so this loader does not (NFA-04).
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use echode_engine::{
-    ClipLoader, ClipWindow, LoadedClip, MediaInputs, PlaybackError, resample_into, tick_to_sample,
+    ClipLoader, ClipWindow, FinitePlanes, LoadedClip, MediaInputs, PlacedPlanes, PlaybackError,
+    resample_into, tick_to_sample,
 };
 use echode_history::{DecodedPcm, read_pcm};
 use echode_model::{AudioRef, Project, Tick, clip_gain_allowed, fade_frames, placement_media_lead};
@@ -41,45 +46,18 @@ struct PreparedMedia {
     key: MediaKey,
     clips: Vec<LoadedClip>,
     /// Whole-source planes that windows of a shared source read.
-    sources: HashMap<SourceKey, Planes>,
+    sources: HashMap<SourceKey, FinitePlanes>,
     windows: HashMap<WindowKey, Window>,
     #[cfg(test)]
     peak_sources: usize,
 }
 
-#[derive(Clone)]
-pub(crate) struct Planes {
-    pub(crate) left: Arc<[f32]>,
-    pub(crate) right: Option<Arc<[f32]>>,
-    // Cached once so gain edits can reject overflow without scanning the PCM.
-    peak: f32,
-}
-
-impl Planes {
-    fn new(left: Arc<[f32]>, right: Option<Arc<[f32]>>) -> Result<Self, PlaybackError> {
-        let mut peak = 0.0f32;
-        for &sample in left
-            .iter()
-            .chain(right.iter().flat_map(|plane| plane.iter()))
-        {
-            if !sample.is_finite() {
-                return Err(PlaybackError::Media);
-            }
-            peak = peak.max(sample.abs());
-        }
-        Ok(Self { left, right, peak })
-    }
-}
-
 /// The planes one placement shape reads.
 #[derive(Clone)]
 struct Window {
-    /// The shared source, or a copy of just the frames played.
-    planes: Planes,
-    /// Where the placement reads a shared source. `None` plays all of `planes`.
-    view: Option<ClipWindow>,
-    /// The peak of the frames played, so a gain is judged by what it scales.
-    peak: f32,
+    /// The shared source, or a copy of just the frames played, with the peak
+    /// of the frames played, so a gain edit is judged without a scan.
+    audio: PlacedPlanes,
     shared: bool,
 }
 
@@ -199,26 +177,6 @@ fn shared_sources(placed: &[Placed<'_>]) -> Result<HashSet<SourceKey>, PlaybackE
     Ok(shared)
 }
 
-/// The largest magnitude among the frames `window` plays; silence outside
-/// the plane adds nothing.
-fn window_peak(planes: &Planes, window: ClipWindow) -> f32 {
-    let len = planes.left.len();
-    let from = usize::try_from(window.lead.max(0))
-        .unwrap_or(usize::MAX)
-        .min(len);
-    let to = i64::try_from(window.frames)
-        .ok()
-        .and_then(|frames| window.lead.checked_add(frames))
-        .map_or(len, |end| {
-            usize::try_from(end.max(0)).unwrap_or(usize::MAX).min(len)
-        })
-        .max(from);
-    std::iter::once(&planes.left)
-        .chain(planes.right.as_ref())
-        .flat_map(|plane| plane.get(from..to).unwrap_or_default())
-        .fold(0.0f32, |peak, sample| peak.max(sample.abs()))
-}
-
 pub(crate) fn media_loader(package: PathBuf) -> ClipLoader {
     // Only PlaybackControl invokes this closure. Keep one successful preparation
     // resident; loop/transport/fader/note edits must not read the same PCM again.
@@ -264,7 +222,7 @@ fn prepare_media(
         *remaining.entry(&placement.window.source).or_default() += 1;
     }
     let mut loaded = Vec::with_capacity(placed.len());
-    let mut sources = HashMap::<SourceKey, Planes>::new();
+    let mut sources = HashMap::<SourceKey, FinitePlanes>::new();
     let mut windows = HashMap::<WindowKey, Window>::new();
     #[cfg(test)]
     let mut peak_sources = 0;
@@ -303,24 +261,20 @@ fn prepare_media(
                         frames: key.frames,
                     };
                     Window {
-                        peak: window_peak(source, view),
-                        planes: source.clone(),
-                        view: (key.lead != 0 || key.frames != source.left.len()).then_some(view),
+                        audio: PlacedPlanes::windowed(source.clone(), view),
                         shared: true,
                     }
                 } else {
-                    let planes = Planes::new(
-                        placed_plane(&source.left, key.lead, key.frames)?,
+                    let planes = FinitePlanes::new(
+                        placed_plane(source.left(), key.lead, key.frames)?,
                         source
-                            .right
-                            .as_ref()
+                            .right()
                             .map(|plane| placed_plane(plane, key.lead, key.frames))
                             .transpose()?,
-                    )?;
+                    )
+                    .map_err(PlaybackError::Planes)?;
                     Window {
-                        peak: planes.peak,
-                        planes,
-                        view: None,
+                        audio: PlacedPlanes::whole(planes),
                         shared: false,
                     }
                 }
@@ -328,15 +282,10 @@ fn prepare_media(
             windows.insert(key.clone(), window.clone());
             window
         };
-        if !(window.peak * placement.gain).is_finite() {
-            return Err(PlaybackError::Media);
-        }
         loaded.push(LoadedClip {
             track: placement.track,
             start_sample: placement.start,
-            samples: window.planes.left,
-            right: window.planes.right,
-            window: window.view,
+            audio: window.audio,
             gain: placement.gain,
             fade_in: placement.fade_in,
             fade_out: placement.fade_out,
@@ -359,7 +308,11 @@ fn prepare_media(
     })
 }
 
-fn source_planes(package: &Path, audio: &AudioRef, rate: u32) -> Result<Planes, PlaybackError> {
+fn source_planes(
+    package: &Path,
+    audio: &AudioRef,
+    rate: u32,
+) -> Result<FinitePlanes, PlaybackError> {
     let pcm = read_pcm(package, &audio.hash).map_err(media_error)?;
     if (pcm.sample_rate, pcm.channels, pcm.frames)
         != (audio.sample_rate, audio.channels, audio.frames)
@@ -370,8 +323,9 @@ fn source_planes(package: &Path, audio: &AudioRef, rate: u32) -> Result<Planes, 
 }
 
 /// Splits interleaved PCM into planes at the device `rate`, the same way for
-/// placed clips and for a sample audition.
-pub(crate) fn device_planes(pcm: &DecodedPcm, rate: u32) -> Result<Planes, PlaybackError> {
+/// placed clips and for a sample audition. The stored PCM was finite; a
+/// conversion that is not is [`PlaybackError::Planes`], not a read failure.
+pub(crate) fn device_planes(pcm: &DecodedPcm, rate: u32) -> Result<FinitePlanes, PlaybackError> {
     if !matches!(pcm.channels, 1 | 2) {
         return Err(PlaybackError::Media);
     }
@@ -396,29 +350,21 @@ pub(crate) fn device_planes(pcm: &DecodedPcm, rate: u32) -> Result<Planes, Playb
     } else {
         None
     };
-    Planes::new(planes.pop().ok_or(PlaybackError::Media)?, right)
+    FinitePlanes::new(planes.pop().ok_or(PlaybackError::Media)?, right)
+        .map_err(PlaybackError::Planes)
 }
 
+/// The frames a short trim plays, copied out of finite source planes.
 fn placed_plane(
     source: &Arc<[f32]>,
     lead: i64,
     window: usize,
 ) -> Result<Arc<[f32]>, PlaybackError> {
     if lead == 0 && source.len() == window {
-        if source.iter().any(|sample| !sample.is_finite()) {
-            return Err(PlaybackError::Media);
-        }
         return Ok(Arc::clone(source));
     }
     let samples = (0..window)
-        .map(|index| {
-            let sample = placed_sample(source, lead, index)?;
-            if sample.is_finite() {
-                Ok(sample)
-            } else {
-                Err(PlaybackError::Media)
-            }
-        })
+        .map(|index| placed_sample(source, lead, index))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Arc::from(samples))
 }

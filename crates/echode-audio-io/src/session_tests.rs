@@ -309,15 +309,14 @@ fn audio_tracks_sound(session: &mut Session) {
             .tracks()
             .iter()
             .filter(|track| track.name == "audio")
-            .map(|track| echode_engine::LoadedClip {
-                track: track.id.raw(),
-                start_sample: 0,
-                samples: vec![0.25; rate as usize * 4].into(),
-                right: None,
-                window: None,
-                gain: 1.0,
-                fade_in: 0,
-                fade_out: 0,
+            .map(|track| {
+                echode_engine::LoadedClip::new(
+                    track.id.raw(),
+                    0,
+                    echode_engine::FinitePlanes::new(vec![0.25; rate as usize * 4].into(), None)
+                        .unwrap()
+                        .into(),
+                )
             })
             .collect())
     });
@@ -746,9 +745,12 @@ fn gated_media(session: &mut Session, gate: &MediaGate) {
                     .map(move |clip| echode_engine::LoadedClip {
                         track: track.id.raw(),
                         start_sample: 0,
-                        samples: vec![0.25; rate as usize * 4].into(),
-                        right: None,
-                        window: None,
+                        audio: echode_engine::FinitePlanes::new(
+                            vec![0.25; rate as usize * 4].into(),
+                            None,
+                        )
+                        .unwrap()
+                        .into(),
                         gain: clip.gain,
                         fade_in: 0,
                         fade_out: 0,

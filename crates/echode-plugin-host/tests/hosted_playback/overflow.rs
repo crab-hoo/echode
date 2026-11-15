@@ -1,5 +1,4 @@
-//! Regression coverage and open item NFA-04 from the finite-overflow audit,
-//! through a real helper. `make known-bugs` runs the ignored ones.
+//! Regression coverage from the finite-overflow audit, through a real helper.
 //!
 //! The levels are near `f32::MAX` (3.4e38), where a finite sum or product
 //! stops being an `f32`. The rate, block and planes bound these regressions only.
@@ -28,9 +27,9 @@ fn constant(track: Id, level: f32, gain: f32) -> LoadedClip {
     LoadedClip {
         track: track.raw(),
         start_sample: 0,
-        samples: Arc::clone(&samples),
-        right: Some(samples),
-        window: None,
+        audio: echode_engine::FinitePlanes::new(Arc::clone(&samples), Some(samples))
+            .unwrap()
+            .into(),
         gain,
         fade_in: 0,
         fade_out: 0,
@@ -204,12 +203,13 @@ fn a_folder_bus_overflow_mutes_a_hosted_parent_without_blaming_its_devices() {
     }
 }
 
-/// NFA-04: the engine accepts a clip whose gain overflows its samples
-/// (`echode-audio-io` refuses it first). On a track whose first device is an
-/// effect, the infinity is that effect's input, and the effect is then named
-/// for the infinity it passes on.
+/// NFA-04: the engine accepted a clip whose gain overflows its samples
+/// (`echode-audio-io` refused it first). On a track whose first device is an
+/// effect, the infinity was that effect's input, and the effect was then
+/// named for the infinity it passed on. The engine's entrance now refuses
+/// the clip, so the helper never sees it and the plan it had still plays
+/// (ADR 0369).
 #[test]
-#[ignore = "NFA-04: an effect receives an infinity from a clip the engine accepted"]
 fn audit_nfa04_an_effect_never_receives_an_infinity_from_placed_audio() {
     let (project, track) = Project::new().add_track("effect first");
     let effect = Id::generate();
@@ -221,10 +221,15 @@ fn audit_nfa04_an_effect_never_receives_an_infinity_from_placed_audio() {
         playback_with_plugins(&project, RATE, FRAMES, &host_bin(), &routes).unwrap();
     let clip = constant(track, 3.0e38, 2.0);
     control.set_clip_loader(Arc::new(move |_, _| Ok(vec![clip.clone()])));
-    if control.replace(&project).is_err() {
-        // Refusing the clip is a fix: nothing reaches the effect.
-        return;
-    }
+    let refused = control.replace(&project);
+    assert!(
+        matches!(
+            refused,
+            Err(echode_engine::PlaybackError::ClipGainOverflow { track: id, start_sample: 0 })
+                if id == track.raw()
+        ),
+        "the engine accepted the clip: {refused:?}"
+    );
     control.command(PlaybackCommand::Play).unwrap();
     let (mut left, mut right) = (vec![0.0; FRAMES], vec![0.0; FRAMES]);
     for _ in 0..2 {
@@ -232,9 +237,11 @@ fn audit_nfa04_an_effect_never_receives_an_infinity_from_placed_audio() {
         control.service();
     }
     assert!(
-        auto_mute(&control, track).is_none_or(|mute| mute.device != Some(effect.raw())),
+        auto_mute(&control, track).is_none(),
         "the effect was given an infinity and named for returning it"
     );
+    assert!(control.plugin_failure().is_none());
+    assert!(left.iter().chain(&right).all(|sample| *sample == 0.0));
 }
 
 /// NFA-07: a parent's instrument is delayed to meet its children (ADR 0339).

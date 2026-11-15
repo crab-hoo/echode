@@ -15,6 +15,7 @@
   NFA-01〜07 を `audit_nfa*` で再現した。NFA-07 は [ADR 0340](../decisions/0340-latency-graph.md) で直した。
   NFA-05 は [ADR 0345](../decisions/0345-track-mix-fault-attribution.md) で対応し、ホストの合流は装置なしのトラックの障害として表示・記録し、書出しを拒否する。
   NFA-01〜03・08 は [ADR 0359](../decisions/0359-finite-overflow-is-a-fault.md) で対応し、f32 を超える積と和を 0 にせず、機器は自動ミュート、書出しは位置付きの型付きの拒否にする。
+  NFA-04 は [ADR 0369](../decisions/0369-checked-sample-planes-at-the-engine-entrance.md) で、クリップとキャッシュの面を確かめた型にし、入口でゲインの積を断る。
 - [2026-11-13 実装の詳細監査](2026-11-13-detailed-implementation-audit.md): DIA-01〜13。
   PCA・IQA が読んでいない層（カーソル、隔離の制御、文書ワーカー、保管、API）を精読した。
   失敗の後に状態を戻さない経路（確定の失敗で編集中のまま、DIA-02。断られた保存で印が消える、DIA-04）と、

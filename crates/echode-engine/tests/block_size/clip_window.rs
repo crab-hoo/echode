@@ -53,9 +53,14 @@ fn windowed_clips_match_copied_windows_for_every_block_size_under_rtsan() {
             let clip = LoadedClip {
                 track: track.raw(),
                 start_sample: start,
-                samples: Arc::clone(&left),
-                right: stereo.then(|| Arc::clone(&right)),
-                window: Some(window),
+                audio: echode_engine::PlacedPlanes::windowed(
+                    echode_engine::FinitePlanes::new(
+                        Arc::clone(&left),
+                        stereo.then(|| Arc::clone(&right)),
+                    )
+                    .unwrap(),
+                    window,
+                ),
                 gain: 0.83,
                 fade_in: 61,
                 fade_out: 53,
@@ -64,9 +69,12 @@ fn windowed_clips_match_copied_windows_for_every_block_size_under_rtsan() {
                 assert_eq!(clip.left_at(index), copied(&left, window)[index]);
             }
             copies.push(LoadedClip {
-                samples: copied(&left, window),
-                right: stereo.then(|| copied(&right, window)),
-                window: None,
+                audio: echode_engine::FinitePlanes::new(
+                    copied(&left, window),
+                    stereo.then(|| copied(&right, window)),
+                )
+                .unwrap()
+                .into(),
                 ..clip.clone()
             });
             shared.push(clip);

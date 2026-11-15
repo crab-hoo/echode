@@ -203,8 +203,8 @@ fn callback(probe: &Probe, block: usize) -> AuditionCallback {
 fn planes(path: &std::path::Path, rate: u32) -> (Vec<f32>, Vec<f32>) {
     let pcm = echode_history::decode_audio_file(path, &|| true).unwrap();
     let planes = crate::clips::device_planes(&pcm, rate).unwrap();
-    let right = planes.right.unwrap_or_else(|| Arc::clone(&planes.left));
-    (planes.left.to_vec(), right.to_vec())
+    let right = planes.right().unwrap_or(planes.left());
+    (planes.left().to_vec(), right.to_vec())
 }
 
 fn fade(age: usize) -> f32 {
@@ -787,13 +787,13 @@ fn contract_sample_position_and_volume_reach_the_product_callback_under_rtsan() 
                 );
                 assert_eq!(report.history.back().unwrap().start_frame, start);
                 let callback = callback(&probe, block);
-                let heard = hear(&callback, expected.left.len() + 1, block);
-                for (index, frame) in heard.iter().take(expected.left.len()).enumerate() {
+                let heard = hear(&callback, expected.left().len() + 1, block);
+                for (index, frame) in heard.iter().take(expected.left().len()).enumerate() {
                     close(
                         *frame,
                         [
-                            expected.left[index] * 0.25,
-                            expected.right.as_ref().unwrap()[index] * 0.25,
+                            expected.left()[index] * 0.25,
+                            expected.right().unwrap()[index] * 0.25,
                         ],
                         "seek and volume",
                     );

@@ -26,6 +26,7 @@
 - 素材と窓の左右の絶対ピークを、作成時に一度だけ検証・記録する。
   ゲイン変更時は `peak * gain` の有限性を調べ、全 PCM を走査し直さずに従来の桁あふれの拒否を保つ。
   失敗しても最後に成功した準備を失わない。トリム外の有限の極大値は、その窓のゲインを拒否する理由にしない。
+  （2026-11-15 追記: ピークの記録と `peak * gain` の判定はエンジンの `PlacedPlanes` と `Prepared::new` へ移した。[ADR 0369](0369-checked-sample-planes-at-the-engine-entrance.md)。）
 
 公開の `render_faded_clips` は単位ゲインの入口として残す。
 素材ローダーの `LoadedClip.samples` はゲイン適用前になり、独自のローダーも `gain` を別に渡す。

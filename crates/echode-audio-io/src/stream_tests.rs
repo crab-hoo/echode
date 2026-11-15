@@ -3,16 +3,13 @@ use echode_engine::{PlaybackOptions, playback};
 
 fn fixture_clips(track: u128, rate: u32) -> Vec<echode_engine::LoadedClip> {
     // This constant source covers these device-free HAL fixtures only.
-    vec![echode_engine::LoadedClip {
+    vec![echode_engine::LoadedClip::new(
         track,
-        start_sample: 0,
-        samples: vec![0.25; rate as usize * 4].into(),
-        right: None,
-        window: None,
-        gain: 1.0,
-        fade_in: 0,
-        fade_out: 0,
-    }]
+        0,
+        echode_engine::FinitePlanes::new(vec![0.25; rate as usize * 4].into(), None)
+            .unwrap()
+            .into(),
+    )]
 }
 
 #[test]
@@ -42,16 +39,13 @@ fn delayed_control_pause_preserves_stop_and_trace_matches_native_buffers_under_r
             let left: Arc<[f32]> = (0..rate as usize).map(|i| wave(i, 0)).collect();
             let right: Arc<[f32]> = (0..rate as usize).map(|i| wave(i, 1)).collect();
             control.set_clip_loader(Arc::new(move |_, _| {
-                Ok(vec![echode_engine::LoadedClip {
-                    track: track.raw(),
-                    start_sample: 0,
-                    samples: Arc::clone(&left),
-                    right: Some(Arc::clone(&right)),
-                    window: None,
-                    gain: 1.0,
-                    fade_in: 0,
-                    fade_out: 0,
-                }])
+                Ok(vec![echode_engine::LoadedClip::new(
+                    track.raw(),
+                    0,
+                    echode_engine::FinitePlanes::new(Arc::clone(&left), Some(Arc::clone(&right)))
+                        .unwrap()
+                        .into(),
+                )])
             }));
             control.replace(&project).unwrap();
             control.command(PlaybackCommand::Play).unwrap();
@@ -201,16 +195,16 @@ fn contract_transport_discontinuities_declick_hal_output_under_rtsan() {
                 let (mut control, player) =
                     playback(&project, rate, frames, PlaybackOptions::default()).unwrap();
                 control.set_clip_loader(Arc::new(move |_, _| {
-                    Ok(vec![echode_engine::LoadedClip {
-                        track: track.raw(),
-                        start_sample: 0,
-                        samples: vec![0.25; 10_000].into(),
-                        right: Some(vec![-0.5; 10_000].into()),
-                        window: None,
-                        gain: 1.0,
-                        fade_in: 0,
-                        fade_out: 0,
-                    }])
+                    Ok(vec![echode_engine::LoadedClip::new(
+                        track.raw(),
+                        0,
+                        echode_engine::FinitePlanes::new(
+                            vec![0.25; 10_000].into(),
+                            Some(vec![-0.5; 10_000].into()),
+                        )
+                        .unwrap()
+                        .into(),
+                    )])
                 }));
                 control.replace(&project).unwrap();
                 control.command(PlaybackCommand::Play).unwrap();
@@ -316,16 +310,16 @@ fn contract_stop_preserves_waveform_while_fading_under_rtsan() {
                     let pcm_left: Arc<[f32]> = (0..length).map(|i| sample(i, 0)).collect();
                     let pcm_right: Arc<[f32]> = (0..length).map(|i| sample(i, 1)).collect();
                     control.set_clip_loader(Arc::new(move |_, _| {
-                        Ok(vec![echode_engine::LoadedClip {
-                            track: track.raw(),
-                            start_sample: 0,
-                            samples: Arc::clone(&pcm_left),
-                            right: Some(Arc::clone(&pcm_right)),
-                            window: None,
-                            gain: 1.0,
-                            fade_in: 0,
-                            fade_out: 0,
-                        }])
+                        Ok(vec![echode_engine::LoadedClip::new(
+                            track.raw(),
+                            0,
+                            echode_engine::FinitePlanes::new(
+                                Arc::clone(&pcm_left),
+                                Some(Arc::clone(&pcm_right)),
+                            )
+                            .unwrap()
+                            .into(),
+                        )])
                     }));
                     control.replace(&project).unwrap();
                     control.command(PlaybackCommand::Play).unwrap();
@@ -445,16 +439,16 @@ fn in_flight_stop_preserves_heard_audio_and_cancels_unheard_starts_under_rtsan()
         )
         .unwrap();
         control.set_clip_loader(Arc::new(move |_, _| {
-            Ok(vec![echode_engine::LoadedClip {
-                track: track.raw(),
-                start_sample: 0,
-                samples: vec![0.25; 4096].into(),
-                right: Some(vec![-0.5; 4096].into()),
-                window: None,
-                gain: 1.0,
-                fade_in: 0,
-                fade_out: 0,
-            }])
+            Ok(vec![echode_engine::LoadedClip::new(
+                track.raw(),
+                0,
+                echode_engine::FinitePlanes::new(
+                    vec![0.25; 4096].into(),
+                    Some(vec![-0.5; 4096].into()),
+                )
+                .unwrap()
+                .into(),
+            )])
         }));
         control.replace(&project).unwrap();
         control.command(PlaybackCommand::Play).unwrap();

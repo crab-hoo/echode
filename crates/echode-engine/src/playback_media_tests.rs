@@ -78,9 +78,9 @@ fn gated_loader(gate: Arc<Gate>) -> ClipLoader {
                     .map(move |clip| LoadedClip {
                         track: track.id.raw(),
                         start_sample: 0,
-                        samples: vec![0.25; rate as usize].into(),
-                        right: None,
-                        window: None,
+                        audio: crate::FinitePlanes::new(vec![0.25; rate as usize].into(), None)
+                            .unwrap()
+                            .into(),
                         gain: clip.gain,
                         fade_in: 0,
                         fade_out: 0,

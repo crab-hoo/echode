@@ -25,15 +25,17 @@ fn impulses(clips: Vec<(Id, i64, f32, f32)>) -> echode_engine::ClipLoader {
     Arc::new(move |_, _| {
         Ok(clips
             .iter()
-            .map(|&(track, start_sample, left, right)| LoadedClip {
-                track: track.raw(),
-                start_sample,
-                samples: Arc::from(vec![left]),
-                right: Some(Arc::from(vec![right])),
-                window: None,
-                gain: 1.0,
-                fade_in: 0,
-                fade_out: 0,
+            .map(|&(track, start_sample, left, right)| {
+                LoadedClip::new(
+                    track.raw(),
+                    start_sample,
+                    echode_engine::FinitePlanes::new(
+                        Arc::from(vec![left]),
+                        Some(Arc::from(vec![right])),
+                    )
+                    .unwrap()
+                    .into(),
+                )
             })
             .collect())
     })
@@ -375,16 +377,16 @@ fn a_latency_no_machine_can_hold_is_refused_and_the_old_plan_keeps_playing() {
     let (mut control, mut audio) =
         playback_with_plugins(&project, 48_000, block, &host_bin(), &routes).unwrap();
     let level = Arc::new(move |_: &Project, _: u32| {
-        Ok(vec![LoadedClip {
-            track: dry[0].raw(),
-            start_sample: 0,
-            samples: Arc::from(vec![0.25f32; 48_000]),
-            right: Some(Arc::from(vec![0.25f32; 48_000])),
-            window: None,
-            gain: 1.0,
-            fade_in: 0,
-            fade_out: 0,
-        }])
+        Ok(vec![LoadedClip::new(
+            dry[0].raw(),
+            0,
+            echode_engine::FinitePlanes::new(
+                Arc::from(vec![0.25f32; 48_000]),
+                Some(Arc::from(vec![0.25f32; 48_000])),
+            )
+            .unwrap()
+            .into(),
+        )])
     });
     control.set_clip_loader(level);
     control.replace(&project).unwrap();

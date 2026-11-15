@@ -80,16 +80,13 @@ fn offline_devices_keep_stereo_clips_independent_of_block_size_under_rtsan() {
             let source = Arc::clone(&input);
             let right = Arc::clone(&other);
             control.set_clip_loader(Arc::new(move |_, _| {
-                Ok(vec![LoadedClip {
-                    track: track.raw(),
-                    start_sample: 0,
-                    samples: Arc::clone(&source),
-                    right: Some(Arc::clone(&right)),
-                    window: None,
-                    gain: 1.0,
-                    fade_in: 0,
-                    fade_out: 0,
-                }])
+                Ok(vec![LoadedClip::new(
+                    track.raw(),
+                    0,
+                    echode_engine::FinitePlanes::new(Arc::clone(&source), Some(Arc::clone(&right)))
+                        .unwrap()
+                        .into(),
+                )])
             }));
             control.replace(&project).unwrap();
             control.command(PlaybackCommand::Play).unwrap();
@@ -127,16 +124,16 @@ fn contract_loops_enter_from_before_and_bypass_from_the_end_under_rtsan() {
                     playback(&project, rate, block as usize, PlaybackOptions::default()).unwrap();
                 let samples = Arc::clone(&source);
                 control.set_clip_loader(Arc::new(move |_, _| {
-                    Ok(vec![LoadedClip {
-                        track: track.raw(),
-                        start_sample: 0,
-                        samples: Arc::clone(&samples),
-                        right: Some(Arc::clone(&samples)),
-                        window: None,
-                        gain: 1.0,
-                        fade_in: 0,
-                        fade_out: 0,
-                    }])
+                    Ok(vec![LoadedClip::new(
+                        track.raw(),
+                        0,
+                        echode_engine::FinitePlanes::new(
+                            Arc::clone(&samples),
+                            Some(Arc::clone(&samples)),
+                        )
+                        .unwrap()
+                        .into(),
+                    )])
                 }));
                 control
                     .command(PlaybackCommand::SetLoop { start, end })
@@ -266,8 +263,11 @@ fn contract_pre_fader_cached_track_bypasses_devices_under_rtsan() {
                 track: track.raw(),
                 sample_rate: rate,
                 start_sample: 137,
-                samples: vec![0.25; 3000].into(),
-                right: Some(vec![-0.5; 3000].into()),
+                planes: echode_engine::FinitePlanes::new(
+                    vec![0.25; 3000].into(),
+                    Some(vec![-0.5; 3000].into()),
+                )
+                .unwrap(),
             };
             control
                 .set_cached_tracks(std::slice::from_ref(&cache))
@@ -329,16 +329,13 @@ fn contract_pre_fader_cached_track_bypasses_devices_under_rtsan() {
             control.set_cached_tracks(&[]).unwrap();
             control.set_routes(std::path::Path::new(""), &[]);
             control.set_clip_loader(std::sync::Arc::new(move |_, _| {
-                Ok(vec![echode_engine::LoadedClip {
-                    track: track.raw(),
-                    start_sample: 0,
-                    samples: vec![0.5; 48_000].into(),
-                    right: None,
-                    window: None,
-                    gain: 1.0,
-                    fade_in: 0,
-                    fade_out: 0,
-                }])
+                Ok(vec![echode_engine::LoadedClip::new(
+                    track.raw(),
+                    0,
+                    echode_engine::FinitePlanes::new(vec![0.5; 48_000].into(), None)
+                        .unwrap()
+                        .into(),
+                )])
             }));
             control.replace(&live).unwrap();
             for _ in 0..4 {
@@ -677,16 +674,13 @@ fn clip_player(
 }
 
 fn stereo_clip(track: Id, left: Vec<f32>, right: Vec<f32>) -> echode_engine::LoadedClip {
-    echode_engine::LoadedClip {
-        track: track.raw(),
-        start_sample: 0,
-        samples: left.into(),
-        right: Some(right.into()),
-        window: None,
-        gain: 1.0,
-        fade_in: 0,
-        fade_out: 0,
-    }
+    echode_engine::LoadedClip::new(
+        track.raw(),
+        0,
+        echode_engine::FinitePlanes::new(left.into(), Some(right.into()))
+            .unwrap()
+            .into(),
+    )
 }
 
 #[test]
@@ -928,16 +922,13 @@ fn short_audio_loops_keep_an_interior_and_never_depend_on_blocks() {
 #[test]
 fn mono_and_stereo_placements_keep_their_bus_gains_on_the_same_track() {
     let (project, track) = Project::new().add_track("mixed");
-    let mono = echode_engine::LoadedClip {
-        track: track.raw(),
-        start_sample: 0,
-        samples: Arc::from(vec![0.5; 8]),
-        right: None,
-        window: None,
-        gain: 1.0,
-        fade_in: 0,
-        fade_out: 0,
-    };
+    let mono = echode_engine::LoadedClip::new(
+        track.raw(),
+        0,
+        echode_engine::FinitePlanes::new(Arc::from(vec![0.5; 8]), None)
+            .unwrap()
+            .into(),
+    );
     let mut stereo = stereo_clip(track, vec![0.5; 8], vec![-0.25; 8]);
     stereo.start_sample = 8;
     for block in BLOCKS {
@@ -1142,16 +1133,13 @@ fn a_stop_returning_to_the_start_replays_the_same_audio_for_every_block_size() {
         .unwrap();
         let samples = Arc::clone(&clip);
         control.set_clip_loader(Arc::new(move |_, _| {
-            Ok(vec![LoadedClip {
+            Ok(vec![LoadedClip::new(
                 track,
-                start_sample: 0,
-                samples: Arc::clone(&samples),
-                right: None,
-                window: None,
-                gain: 1.0,
-                fade_in: 0,
-                fade_out: 0,
-            }])
+                0,
+                echode_engine::FinitePlanes::new(Arc::clone(&samples), None)
+                    .unwrap()
+                    .into(),
+            )])
         }));
         control.replace(&project).unwrap();
         control.command(PlaybackCommand::Locate(start)).unwrap();
@@ -1213,16 +1201,13 @@ fn an_initial_position_matches_a_queued_locate_for_every_block_size() {
         };
         let track = project.tracks()[0].id.raw();
         control.set_clip_loader(std::sync::Arc::new(move |_, _| {
-            Ok(vec![echode_engine::LoadedClip {
+            Ok(vec![echode_engine::LoadedClip::new(
                 track,
-                start_sample: 0,
-                samples: vec![0.25; 48_000].into(),
-                right: None,
-                window: None,
-                gain: 1.0,
-                fade_in: 0,
-                fade_out: 0,
-            }])
+                0,
+                echode_engine::FinitePlanes::new(vec![0.25; 48_000].into(), None)
+                    .unwrap()
+                    .into(),
+            )])
         }));
         control.replace(&project).unwrap();
         control
@@ -1363,9 +1348,9 @@ fn product_audio_clips_match_across_block_sizes() {
             Ok(vec![echode_engine::LoadedClip {
                 track: track_raw,
                 start_sample: 0,
-                samples: Arc::clone(&samples),
-                right: None,
-                window: None,
+                audio: echode_engine::FinitePlanes::new(Arc::clone(&samples), None)
+                    .unwrap()
+                    .into(),
                 gain: 1.0,
                 fade_in: 8,
                 fade_out: 8,
@@ -1721,16 +1706,16 @@ fn stopped_callbacks_do_not_play_sources_or_advance_the_loop_under_rtsan() {
         let (mut control, mut audio) =
             playback(&project, RATE, frames, PlaybackOptions::default()).unwrap();
         control.set_clip_loader(Arc::new(move |_, _| {
-            Ok(vec![LoadedClip {
-                track: track.raw(),
-                start_sample: 0,
-                samples: vec![0.25; 1024].into(),
-                right: Some(vec![-0.5; 1024].into()),
-                window: None,
-                gain: 1.0,
-                fade_in: 0,
-                fade_out: 0,
-            }])
+            Ok(vec![LoadedClip::new(
+                track.raw(),
+                0,
+                echode_engine::FinitePlanes::new(
+                    vec![0.25; 1024].into(),
+                    Some(vec![-0.5; 1024].into()),
+                )
+                .unwrap()
+                .into(),
+            )])
         }));
         control.replace(&project).unwrap();
         control
@@ -1856,16 +1841,13 @@ fn live_stop_fades_the_continuing_waveform_independently_of_blocks() {
                 playback(&project, rate, block as usize, PlaybackOptions::default()).unwrap();
             let clip = Arc::clone(&pcm);
             control.set_clip_loader(Arc::new(move |_, _| {
-                Ok(vec![echode_engine::LoadedClip {
-                    track: track.raw(),
-                    start_sample: 0,
-                    samples: Arc::clone(&clip),
-                    right: Some(Arc::clone(&clip)),
-                    window: None,
-                    gain: 1.0,
-                    fade_in: 0,
-                    fade_out: 0,
-                }])
+                Ok(vec![echode_engine::LoadedClip::new(
+                    track.raw(),
+                    0,
+                    echode_engine::FinitePlanes::new(Arc::clone(&clip), Some(Arc::clone(&clip)))
+                        .unwrap()
+                        .into(),
+                )])
             }));
             control.replace(&project).unwrap();
             control.command(PlaybackCommand::Play).unwrap();
@@ -1927,16 +1909,13 @@ fn live_stop_does_not_start_future_clips_or_metronome_beats() {
     )
     .unwrap();
     control.set_clip_loader(Arc::new(move |_, _| {
-        Ok(vec![echode_engine::LoadedClip {
-            track: track.raw(),
-            start_sample: RATE as i64 / 2,
-            samples: vec![1.0; 512].into(),
-            right: None,
-            window: None,
-            gain: 1.0,
-            fade_in: 0,
-            fade_out: 0,
-        }])
+        Ok(vec![echode_engine::LoadedClip::new(
+            track.raw(),
+            RATE as i64 / 2,
+            echode_engine::FinitePlanes::new(vec![1.0; 512].into(), None)
+                .unwrap()
+                .into(),
+        )])
     }));
     control.replace(&project).unwrap();
     control
@@ -1979,16 +1958,16 @@ fn live_stop_preserves_the_active_loop_seam_instead_of_restoring_full_volume() {
                     playback(&project, rate, block as usize, PlaybackOptions::default()).unwrap();
                 // This fixture's clip length covers the loop and the stop tail.
                 control.set_clip_loader(Arc::new(move |_, _| {
-                    Ok(vec![echode_engine::LoadedClip {
-                        track: track.raw(),
-                        start_sample: 0,
-                        samples: vec![0.25; end + fade].into(),
-                        right: Some(vec![-0.5; end + fade].into()),
-                        window: None,
-                        gain: 1.0,
-                        fade_in: 0,
-                        fade_out: 0,
-                    }])
+                    Ok(vec![echode_engine::LoadedClip::new(
+                        track.raw(),
+                        0,
+                        echode_engine::FinitePlanes::new(
+                            vec![0.25; end + fade].into(),
+                            Some(vec![-0.5; end + fade].into()),
+                        )
+                        .unwrap()
+                        .into(),
+                    )])
                 }));
                 control
                     .command(PlaybackCommand::SetLoop {
@@ -2074,8 +2053,11 @@ fn cached_stop_does_not_start_a_later_region_or_pass_the_loop_end() {
                 track: track.raw(),
                 sample_rate: rate,
                 start_sample: 1_000,
-                samples: vec![0.5; 2_000].into(),
-                right: Some(vec![0.5; 2_000].into()),
+                planes: echode_engine::FinitePlanes::new(
+                    vec![0.5; 2_000].into(),
+                    Some(vec![0.5; 2_000].into()),
+                )
+                .unwrap(),
             };
             control
                 .set_cached_tracks(std::slice::from_ref(&late))
@@ -2127,8 +2109,11 @@ fn cached_stop_does_not_start_a_later_region_or_pass_the_loop_end() {
                 track: track.raw(),
                 sample_rate: rate,
                 start_sample: 0,
-                samples: inside.clone().into(),
-                right: Some(inside.into()),
+                planes: echode_engine::FinitePlanes::new(
+                    inside.clone().into(),
+                    Some(inside.into()),
+                )
+                .unwrap(),
             };
             control
                 .set_cached_tracks(std::slice::from_ref(&cache))

@@ -58,17 +58,13 @@ impl Drop for AuditionWriter {
 
 impl AuditionSound {
     pub fn new(left: Arc<[f32]>, right: Option<Arc<[f32]>>) -> Result<Self, PlaybackError> {
-        let samples = left
-            .iter()
-            .chain(right.iter().flat_map(|right| right.iter()));
-        if left.is_empty()
-            || right
-                .as_ref()
-                .is_some_and(|right| right.len() != left.len())
-            || samples.copied().any(|sample| !sample.is_finite())
-        {
+        // The same rule as a placed clip's planes (NFA-04).
+        let planes = crate::FinitePlanes::new(left, right).map_err(PlaybackError::Planes)?;
+        if planes.frames() == 0 {
             return Err(PlaybackError::Media);
         }
+        let left = Arc::clone(planes.left());
+        let right = planes.right().cloned();
         Ok(Self {
             left,
             right,

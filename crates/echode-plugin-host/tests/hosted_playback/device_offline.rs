@@ -28,16 +28,16 @@ fn offline_middle_effect_keeps_stereo_input_and_neighboring_effects_under_rtsan(
     )
     .unwrap();
     control.set_clip_loader(Arc::new(move |_, _| {
-        Ok(vec![LoadedClip {
-            track: track.raw(),
-            start_sample: 0,
-            samples: vec![0.125; 4096].into(),
-            right: Some(vec![-0.0625; 4096].into()),
-            window: None,
-            gain: 1.0,
-            fade_in: 0,
-            fade_out: 0,
-        }])
+        Ok(vec![LoadedClip::new(
+            track.raw(),
+            0,
+            echode_engine::FinitePlanes::new(
+                vec![0.125; 4096].into(),
+                Some(vec![-0.0625; 4096].into()),
+            )
+            .unwrap()
+            .into(),
+        )])
     }));
     control.replace(&offline).unwrap();
     control.command(PlaybackCommand::Play).unwrap();

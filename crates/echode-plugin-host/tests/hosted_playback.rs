@@ -243,16 +243,13 @@ fn live_workgroup_survives_product_edits_and_helper_restart() {
     .unwrap();
     control.set_clip_loader(Arc::new(move |_, _| {
         // This source covers the device-free workgroup lifecycle fixture only.
-        Ok(vec![LoadedClip {
-            track: track.raw(),
-            start_sample: 0,
-            samples: vec![0.25; 4096].into(),
-            right: None,
-            window: None,
-            gain: 1.0,
-            fade_in: 0,
-            fade_out: 0,
-        }])
+        Ok(vec![LoadedClip::new(
+            track.raw(),
+            0,
+            echode_engine::FinitePlanes::new(vec![0.25; 4096].into(), None)
+                .unwrap()
+                .into(),
+        )])
     }));
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     let project = project
@@ -1288,16 +1285,13 @@ fn effect_route(path: &Path) -> PluginRoute {
 fn constant_clips(track: u128, value: f32, frames: usize) -> echode_engine::ClipLoader {
     let samples: Arc<[f32]> = vec![value; frames].into();
     Arc::new(move |_project, _rate| {
-        Ok(vec![LoadedClip {
+        Ok(vec![LoadedClip::new(
             track,
-            start_sample: 0,
-            samples: Arc::clone(&samples),
-            right: None,
-            window: None,
-            gain: 1.0,
-            fade_in: 0,
-            fade_out: 0,
-        }])
+            0,
+            echode_engine::FinitePlanes::new(Arc::clone(&samples), None)
+                .unwrap()
+                .into(),
+        )])
     })
 }
 
@@ -1394,16 +1388,16 @@ fn bypassed_runs_preserve_stereo_audio_between_active_effects_under_rtsan() {
                 playback_with_plugins(&project, 48000, block, &host_bin(), &[effect_route(&path)])
                     .unwrap();
             control.set_clip_loader(Arc::new(move |_, _| {
-                Ok(vec![LoadedClip {
-                    track: track.raw(),
-                    start_sample: 0,
-                    samples: vec![0.125; 256].into(),
-                    right: Some(vec![-0.25; 256].into()),
-                    window: None,
-                    gain: 1.0,
-                    fade_in: 0,
-                    fade_out: 0,
-                }])
+                Ok(vec![LoadedClip::new(
+                    track.raw(),
+                    0,
+                    echode_engine::FinitePlanes::new(
+                        vec![0.125; 256].into(),
+                        Some(vec![-0.25; 256].into()),
+                    )
+                    .unwrap()
+                    .into(),
+                )])
             }));
             control.replace(&project).unwrap();
             control.command(PlaybackCommand::Play).unwrap();
@@ -1490,16 +1484,16 @@ fn contract_stereo_planes_survive_effects_and_instrument_injection() {
         )
         .unwrap();
         control.set_clip_loader(Arc::new(move |_, _| {
-            Ok(vec![LoadedClip {
-                track: track.raw(),
-                start_sample: 0,
-                samples: Arc::from(vec![0.125; 256]),
-                right: Some(Arc::from(vec![-0.25; 256])),
-                window: None,
-                gain: 1.0,
-                fade_in: 0,
-                fade_out: 0,
-            }])
+            Ok(vec![LoadedClip::new(
+                track.raw(),
+                0,
+                echode_engine::FinitePlanes::new(
+                    Arc::from(vec![0.125; 256]),
+                    Some(Arc::from(vec![-0.25; 256])),
+                )
+                .unwrap()
+                .into(),
+            )])
         }));
         control.replace(&project).unwrap();
         control.command(PlaybackCommand::Play).unwrap();
@@ -1538,16 +1532,16 @@ fn mono_gain_route() -> PluginRoute {
 
 fn stereo_clips(track: u128, left: f32, right: f32) -> echode_engine::ClipLoader {
     Arc::new(move |_, _| {
-        Ok(vec![LoadedClip {
+        Ok(vec![LoadedClip::new(
             track,
-            start_sample: 0,
-            samples: Arc::from(vec![left; 1024]),
-            right: Some(Arc::from(vec![right; 1024])),
-            window: None,
-            gain: 1.0,
-            fade_in: 0,
-            fade_out: 0,
-        }])
+            0,
+            echode_engine::FinitePlanes::new(
+                Arc::from(vec![left; 1024]),
+                Some(Arc::from(vec![right; 1024])),
+            )
+            .unwrap()
+            .into(),
+        )])
     })
 }
 

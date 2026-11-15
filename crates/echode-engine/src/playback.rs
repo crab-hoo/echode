@@ -14,6 +14,8 @@ use echode_realtime::{Cursor, Event, Plan, Span, TempoIndex, sort_events};
 use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::mix::{FaderState, GateRamp, Signal};
+pub use crate::planes::ClipWindow;
+use crate::planes::{FinitePlanes, PlacedPlanes};
 use crate::plugins::{
     BlockEvents, ChainDevice, HostGraph, PluginRoute, PluginWorkgroup, Progress, StageFault,
     Submitted, TrackChain, collect_deadline,
@@ -214,70 +216,51 @@ struct StoredClip {
     fade_out: u32,
 }
 
-/// The frames of a clip's planes that its placement plays.
-///
-/// Placement frame `i` reads plane index `lead + i`. Indices before the
-/// planes or after their end are silence, so a trim, a negative offset, and
-/// a tail past the source share one copy of the source PCM (EXT-01).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ClipWindow {
-    pub lead: i64,
-    pub frames: usize,
-}
-
-/// One placement's samples at the device rate, ready for the control thread to store.
+/// One placement's samples at the device rate, ready for the control thread
+/// to store. Its planes were checked when they were made (NFA-04).
 #[derive(Clone, Debug)]
 pub struct LoadedClip {
     pub track: u128,
     pub start_sample: i64,
-    pub samples: Arc<[f32]>,
-    /// The right plane of a stereo placement. `samples` is its left plane.
-    /// `None` describes mono. Both stereo planes must have the same length.
-    pub right: Option<Arc<[f32]>>,
-    /// The part of the planes this placement plays. `None` plays every
-    /// frame from index 0, so the placement is as long as its planes.
-    pub window: Option<ClipWindow>,
+    /// Unscaled planes, which other placements may share, and the frames of
+    /// them this placement plays.
+    pub audio: PlacedPlanes,
     /// Linear placement gain, applied before mono promotion and edge fades.
-    /// The sample planes are unscaled and may be shared by other placements.
+    /// `Prepared::new` refuses one that the played peak would overflow.
     pub gain: f32,
     pub fade_in: u32,
     pub fade_out: u32,
 }
 
 impl LoadedClip {
+    /// A placement of `audio` at `start_sample`, at unity gain and without fades.
+    pub fn new(track: u128, start_sample: i64, audio: PlacedPlanes) -> Self {
+        Self {
+            track,
+            start_sample,
+            audio,
+            gain: 1.0,
+            fade_in: 0,
+            fade_out: 0,
+        }
+    }
+
     /// The window this placement plays, with `None` resolved to the planes.
     pub fn played(&self) -> ClipWindow {
-        self.window.unwrap_or(ClipWindow {
-            lead: 0,
-            frames: self.samples.len(),
-        })
+        self.audio.played()
     }
 
     /// The unscaled left (or mono) sample at placement frame `index`.
     pub fn left_at(&self, index: usize) -> f32 {
-        window_sample(&self.samples, self.played(), index)
+        self.audio.sample(self.audio.planes().left(), index)
     }
 
     /// The unscaled right sample at placement frame `index`; mono repeats left.
     pub fn right_at(&self, index: usize) -> f32 {
-        window_sample(
-            self.right.as_deref().unwrap_or(&self.samples),
-            self.played(),
-            index,
-        )
+        let planes = self.audio.planes();
+        self.audio
+            .sample(planes.right().unwrap_or(planes.left()), index)
     }
-}
-
-fn window_sample(plane: &[f32], window: ClipWindow, index: usize) -> f32 {
-    if index >= window.frames {
-        return 0.0;
-    }
-    i64::try_from(index)
-        .ok()
-        .and_then(|index| window.lead.checked_add(index))
-        .and_then(|at| usize::try_from(at).ok())
-        .and_then(|at| plane.get(at).copied())
-        .unwrap_or(0.0)
 }
 
 /// A ready device-output plane, before the track fader. The provider owns
@@ -289,8 +272,8 @@ pub struct CachedTrack {
     pub track: u128,
     pub sample_rate: u32,
     pub start_sample: i64,
-    pub samples: Arc<[f32]>,
-    pub right: Option<Arc<[f32]>>,
+    /// Checked when they were made, so a cache never holds a NaN (NFA-04).
+    pub planes: FinitePlanes,
 }
 
 struct PreparedSources<'a> {
@@ -397,15 +380,18 @@ impl Prepared {
             .iter()
             .map(|track| track.id.raw())
             .collect();
-        if loaded.iter().any(|clip| {
-            !echode_model::clip_gain_allowed(clip.gain)
-                || clip
-                    .right
-                    .as_ref()
-                    .is_some_and(|right| right.len() != clip.samples.len())
-                || !present.contains(&clip.track)
-        }) {
-            return Err(PlaybackError::Media);
+        for clip in loaded {
+            if !echode_model::clip_gain_allowed(clip.gain) || !present.contains(&clip.track) {
+                return Err(PlaybackError::Media);
+            }
+            // The planes are finite by their type; only the gain can make an
+            // infinity, and the played peak judges it without a scan (NFA-04).
+            if !clip.audio.allows_gain(clip.gain) {
+                return Err(PlaybackError::ClipGainOverflow {
+                    track: clip.track,
+                    start_sample: clip.start_sample,
+                });
+            }
         }
         // Unchanged tracks keep their plan, cursor lookups and demand (FCA-04).
         let crate::plan::Built { plan, derived } =
@@ -425,10 +411,11 @@ impl Prepared {
         // Group the clips once, in loaded order, rather than filtering per track.
         let mut placed = HashMap::<u128, Vec<StoredClip>>::new();
         for clip in loaded {
+            let planes = clip.audio.planes();
             placed.entry(clip.track).or_default().push(StoredClip {
                 start_sample: clip.start_sample,
-                samples: Arc::clone(&clip.samples),
-                right: clip.right.clone(),
+                samples: Arc::clone(planes.left()),
+                right: planes.right().cloned(),
                 lead: clip.played().lead,
                 frames: clip.played().frames,
                 gain: clip.gain,
@@ -993,7 +980,7 @@ impl Track {
         if let Some(cache) = cache {
             read_cached_track(cache, spans, plane, right, range)?;
             fade_stopped_source(plane, right, range.source_fade, rate);
-            *stereo = cache.right.is_some();
+            *stereo = cache.planes.right().is_some();
             return Ok(());
         }
         add_stored_clips(
@@ -1458,14 +1445,14 @@ fn read_cached_track(
         }];
         crate::voice::render_track(
             crate::voice::TrackSource::Cache {
-                samples: &cache.samples,
+                samples: cache.planes.left(),
                 origin: cache.start_sample,
             },
             &[],
             &played,
             left,
         )?;
-        if let Some(samples) = &cache.right {
+        if let Some(samples) = cache.planes.right() {
             crate::voice::render_track(
                 crate::voice::TrackSource::Cache {
                     samples,
@@ -2227,11 +2214,7 @@ impl PlaybackControl {
         let mut next = BTreeMap::new();
         for cache in caches {
             if cache.sample_rate != self.rate
-                || cache
-                    .right
-                    .as_ref()
-                    .is_some_and(|right| right.len() != cache.samples.len())
-                || i64::try_from(cache.samples.len())
+                || i64::try_from(cache.planes.frames())
                     .ok()
                     .and_then(|len| cache.start_sample.checked_add(len))
                     .is_none()

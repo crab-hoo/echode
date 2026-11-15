@@ -57,16 +57,13 @@ fn start_clock_and_plugins_combine_and_the_last_start_choice_wins() {
 }
 
 fn placed(track: u128, start: i64, value: f32, frames: usize) -> LoadedClip {
-    LoadedClip {
+    LoadedClip::new(
         track,
-        start_sample: start,
-        samples: Arc::from(vec![value; frames]),
-        right: None,
-        window: None,
-        gain: 1.0,
-        fade_in: 0,
-        fade_out: 0,
-    }
+        start,
+        crate::FinitePlanes::new(Arc::from(vec![value; frames]), None)
+            .unwrap()
+            .into(),
+    )
 }
 
 #[test]
@@ -76,7 +73,12 @@ fn prepared_audio_shares_unscaled_mono_planes_on_a_stereo_track() {
     let mut mono = placed(track.raw(), 0, 0.35, 257);
     mono.gain = 0.37;
     let mut stereo = placed(track.raw(), 257, 0.25, 257);
-    stereo.right = Some(Arc::from(vec![-0.5; 257]));
+    stereo.audio = crate::FinitePlanes::new(
+        Arc::clone(stereo.audio.planes().left()),
+        Some(Arc::from(vec![-0.5; 257])),
+    )
+    .unwrap()
+    .into();
     let clips = [mono, stereo];
     let mut ids = PlaybackIds::default();
     let mut meters = BTreeMap::new();
@@ -99,7 +101,7 @@ fn prepared_audio_shares_unscaled_mono_planes_on_a_stereo_track() {
         stored.right.is_none(),
         "mono promotion allocated a stereo plane"
     );
-    assert!(Arc::ptr_eq(&stored.samples, &clips[0].samples));
+    assert!(Arc::ptr_eq(&stored.samples, clips[0].audio.planes().left()));
     assert_eq!(stored.samples[0], 0.35);
     assert_eq!(stored.gain, 0.37);
 }
@@ -140,7 +142,12 @@ fn stereo_clips_loop_and_fader_replacements_run_under_rtsan() {
         playback(&project, 48_000, block, PlaybackOptions::default()).unwrap();
     control.set_clip_loader(Arc::new(move |_, _| {
         let mut clip = placed(track.raw(), 0, 0.25, 2048);
-        clip.right = Some(Arc::from(vec![-0.25; 2048]));
+        clip.audio = crate::FinitePlanes::new(
+            Arc::clone(clip.audio.planes().left()),
+            Some(Arc::from(vec![-0.25; 2048])),
+        )
+        .unwrap()
+        .into();
         Ok(vec![clip])
     }));
     control

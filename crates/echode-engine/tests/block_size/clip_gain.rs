@@ -66,13 +66,14 @@ fn unscaled_clip_gain_and_mono_promotion_match_baked_pcm_under_rtsan() {
                         let samples: Arc<[f32]> = (0..frames)
                             .map(|i| ((i as f32 * 0.031) + 0.7).sin() * 0.35)
                             .collect();
+                        let right = (stereo && index == 1)
+                            .then(|| samples.iter().map(|sample| -sample * 0.53).collect());
                         LoadedClip {
                             track: track.raw(),
                             start_sample: start,
-                            right: (stereo && index == 1)
-                                .then(|| samples.iter().map(|sample| -sample * 0.53).collect()),
-                            samples,
-                            window: None,
+                            audio: echode_engine::FinitePlanes::new(samples, right)
+                                .unwrap()
+                                .into(),
                             gain,
                             fade_in: 127,
                             fade_out: 109,
@@ -84,24 +85,27 @@ fn unscaled_clip_gain_and_mono_promotion_match_baked_pcm_under_rtsan() {
                 let baked: Vec<_> = clips
                     .iter()
                     .map(|clip| {
-                        let promotion = if stereo && clip.right.is_none() {
+                        let promotion = if stereo && clip.audio.planes().right().is_none() {
                             std::f32::consts::FRAC_1_SQRT_2
                         } else {
                             1.0
                         };
-                        let left: Arc<[f32]> = clip
-                            .samples
+                        let planes = clip.audio.planes();
+                        let left: Arc<[f32]> = planes
+                            .left()
                             .iter()
                             .map(|sample| sample * gain * promotion)
                             .collect();
-                        let right = clip
-                            .right
-                            .as_ref()
+                        let right = planes
+                            .right()
                             .map(|plane| plane.iter().map(|sample| sample * gain).collect());
                         LoadedClip {
-                            samples: Arc::clone(&left),
-                            right: right.or_else(|| stereo.then(|| Arc::clone(&left))),
-                            window: None,
+                            audio: echode_engine::FinitePlanes::new(
+                                Arc::clone(&left),
+                                right.or_else(|| stereo.then(|| Arc::clone(&left))),
+                            )
+                            .unwrap()
+                            .into(),
                             gain: 1.0,
                             ..clip.clone()
                         }

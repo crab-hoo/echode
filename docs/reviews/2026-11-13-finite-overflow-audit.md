@@ -42,7 +42,7 @@
 | NFA-01 | 堅牢性 | フェーダーの積が f32 を超えると 0 になり、書出しは無音で成功し、機器ではメーターも自動ミュートも空のまま | 欠陥 1 | 修正済み（2026-11-15、[ADR 0359](../decisions/0359-finite-overflow-is-a-fault.md)） |
 | NFA-02 | 堅牢性 | マスターの和が f32 を超えると、ガードの前で 0 になる。書出しは無音で成功し、マスターの自動ミュートは起きない | 欠陥 1 | 修正済み（2026-11-15、[ADR 0359](../decisions/0359-finite-overflow-is-a-fault.md)） |
 | NFA-03 | 堅牢性 | フォルダバスの子の和を親のフェーダーの前で f32 に狭める。親のフェーダーで範囲に戻る値も 0 になる | なし | 修正済み（2026-11-15、[ADR 0359](../decisions/0359-finite-overflow-is-a-fault.md)。範囲へ戻す案は採らず、親の障害にした） |
-| NFA-04 | 保守性 | 素材の有限性とゲインの検査が `echode-audio-io` だけにあり、エンジンは無限大を作るクリップと NaN のキャッシュを受け取る | 欠陥 3 | 再現済み・未修正 |
+| NFA-04 | 保守性 | 素材の有限性とゲインの検査が `echode-audio-io` だけにあり、エンジンは無限大を作るクリップと NaN のキャッシュを受け取る | 欠陥 3 | 修正済み（2026-11-15、[ADR 0369](../decisions/0369-checked-sample-planes-at-the-engine-entrance.md)） |
 | NFA-05 | 堅牢性 | 配置音声を音源の出力へ足した後に非有限値を探すので、ホストの和のあふれが音源の障害として記録される | 欠陥 2 | 修正済み（2026-11-14、[ADR 0345](../decisions/0345-track-mix-fault-attribution.md)） |
 | NFA-06 | 堅牢性 | サンプルの試聴の出力にガードがなく、2 つの声の和が無限大のまま機器のバッファへ書かれる | なし | 修正済み（2026-11-14、[ADR 0344](../decisions/0344-sample-audition-output-guard.md)） |
 | NFA-07 | 堅牢性 | 音源の遅延線が検査の前にあり、線に残った NaN が解除の直後にトラックをもう一度自動ミュートする | なし | 修正済み（2026-11-14、[ADR 0340](../decisions/0340-latency-graph.md)。NFA-05 は ADR 0345 で修正） |
@@ -133,6 +133,12 @@ NFA-09 は指摘ではなく、確かめて問題がなかった項目の一覧�
 - **直し方の案**: 検査を 1 か所へ集める（ADR 0276 の「同じ規則を層ごとに別の論理で実装しない」）。
   `LoadedClip` と `CachedTrack` を、有限性とピークを確かめた型（作る時に検査し、ピークを持つ）にして、`echode-audio-io` もその型を作る。
   `Prepared::new` はピークとゲインの積だけを見るので、PCM の走査は増えない。断る理由は `Media` と分けた型にする。
+- **対応（2026-11-15）**: 案のとおり、エンジンの `FinitePlanes`（全標本が有限で左右が同じ長さ、ピークを持つ）と
+  `PlacedPlanes`（読む窓とその範囲のピーク）を `LoadedClip`・`CachedTrack` に持たせ、`echode-audio-io` と試聴もその型を作る。
+  `Prepared::new` は読む範囲のピークとゲインの積で `PlaybackError::ClipGainOverflow { track, start_sample }` を返し、
+  変換後の非有限値は `PlaybackError::Planes` で `Media` と分けた（[ADR 0369](../decisions/0369-checked-sample-planes-at-the-engine-entrance.md)）。
+  再現 3 件の `#[ignore]` を外した。キャッシュの再現は型が NaN を作らせないので、期待を「作れない」へ改め、
+  名前を `audit_nfa04_a_cached_track_cannot_hold_a_nan` にした。CLI の製品経路の回帰を必須契約 `clip-gain-entrance` にした。
 
 ### NFA-05 ホストの和のあふれを音源の障害にする
 
@@ -221,3 +227,4 @@ NFA-09 は指摘ではなく、確かめて問題がなかった項目の一覧�
 - `echode-test-plugin` に `huge` の障害を足した。全ての出力へ有限の 2.0e38 を書く（大きいだけで、NaN でも無限大でもない値の模型）。
 - `make known-bugs` で、13 件がまだ失敗することを確かめられる。
   2026-11-15 の時点で無視のまま残るのは NFA-04 の 3 件である（NFA-01〜03 は ADR 0359、NFA-05・07 は ADR 0345・0340、NFA-06 は ADR 0344 で修正）。
+  同日、NFA-04 も ADR 0369 で修正し、この監査の無視の再現は残っていない。

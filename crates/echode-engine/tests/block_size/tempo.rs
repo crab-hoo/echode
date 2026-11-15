@@ -77,16 +77,13 @@ fn dense_transport_boundaries_leave_source_audio_block_independent_under_rtsan()
             let (mut control, mut audio) =
                 playback(&project, 48_000, block, PlaybackOptions::default()).unwrap();
             control.set_clip_loader(Arc::new(move |_, _| {
-                Ok(vec![LoadedClip {
-                    track: track.raw(),
-                    start_sample: 0,
-                    samples: Arc::from(vec![0.125; 512]),
-                    right: None,
-                    window: None,
-                    gain: 1.0,
-                    fade_in: 0,
-                    fade_out: 0,
-                }])
+                Ok(vec![LoadedClip::new(
+                    track.raw(),
+                    0,
+                    echode_engine::FinitePlanes::new(Arc::from(vec![0.125; 512]), None)
+                        .unwrap()
+                        .into(),
+                )])
             }));
             control
                 .command(PlaybackCommand::SetLoop {

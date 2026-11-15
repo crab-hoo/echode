@@ -52,15 +52,17 @@ pub(super) fn set_value(project: &Project, track: Id, key: ParamKey, value: f32)
 pub(super) fn clips(ids: [Id; 5], frames: usize) -> Vec<LoadedClip> {
     ids.into_iter()
         .zip(LEVELS)
-        .map(|(track, level)| LoadedClip {
-            track: track.raw(),
-            start_sample: 0,
-            samples: vec![level; frames].into(),
-            right: Some(vec![-level / 2.0; frames].into()),
-            window: None,
-            gain: 1.0,
-            fade_in: 0,
-            fade_out: 0,
+        .map(|(track, level)| {
+            LoadedClip::new(
+                track.raw(),
+                0,
+                echode_engine::FinitePlanes::new(
+                    vec![level; frames].into(),
+                    Some(vec![-level / 2.0; frames].into()),
+                )
+                .unwrap()
+                .into(),
+            )
         })
         .collect()
 }
@@ -311,8 +313,11 @@ fn cached_audio_and_gain_previews_keep_ancestor_gates_under_rtsan() {
                 track: leaf.raw(),
                 sample_rate: 48_000,
                 start_sample: 0,
-                samples: vec![0.25; SECTION].into(),
-                right: Some(vec![-0.125; SECTION].into()),
+                planes: echode_engine::FinitePlanes::new(
+                    vec![0.25; SECTION].into(),
+                    Some(vec![-0.125; SECTION].into()),
+                )
+                .unwrap(),
             }])
             .unwrap();
         control.replace(&case).unwrap();

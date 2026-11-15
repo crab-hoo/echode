@@ -1,8 +1,6 @@
-//! Open items from docs/reviews/2026-11-13-finite-overflow-audit.md. Each
-//! ignored test fails until its item is fixed; `make known-bugs` runs them.
-//! Remove the `#[ignore]` with the fix. The tests that are not ignored hold
-//! what the audit confirmed already works and the items fixed since
-//! (NFA-01 to NFA-03 in ADR 0359, NFA-06 in ADR 0344).
+//! Items from docs/reviews/2026-11-13-finite-overflow-audit.md. The tests
+//! hold what the audit confirmed already works and the items fixed since
+//! (NFA-01 to NFA-03 in ADR 0359, NFA-04 in ADR 0369, NFA-06 in ADR 0344).
 //!
 //! Every clip here is finite. The levels are near `f32::MAX` (3.4e38) because
 //! that is where a finite product or sum stops being an `f32`; they bound
@@ -11,9 +9,9 @@
 use std::sync::Arc;
 
 use echode_engine::{
-    AutoMute, CachedTrack, LoadedClip, MASTER_GUARD_DBFS, OfflineError, PlaybackAudio,
-    PlaybackCommand, PlaybackControl, PlaybackOptions, RenderFailure, playback,
-    render_offline_blocks_with_clips,
+    AutoMute, CachedTrack, FinitePlanes, LoadedClip, MASTER_GUARD_DBFS, OfflineError, PlaneFault,
+    PlaybackAudio, PlaybackCommand, PlaybackControl, PlaybackError, PlaybackOptions, RenderFailure,
+    playback, render_offline_blocks_with_clips,
 };
 use echode_model::{DeviceKind, Id, ParamKey, Project};
 
@@ -24,16 +22,13 @@ const BLOCK: usize = 64;
 const FRAMES: usize = 256;
 
 fn stereo(track: Id, samples: Vec<f32>) -> LoadedClip {
-    LoadedClip {
-        track: track.raw(),
-        start_sample: 0,
-        samples: samples.clone().into(),
-        right: Some(samples.into()),
-        window: None,
-        gain: 1.0,
-        fade_in: 0,
-        fade_out: 0,
-    }
+    LoadedClip::new(
+        track.raw(),
+        0,
+        FinitePlanes::new(samples.clone().into(), Some(samples.into()))
+            .unwrap()
+            .into(),
+    )
 }
 
 fn constant(track: Id, level: f32) -> LoadedClip {
@@ -315,41 +310,86 @@ fn a_device_auto_mutes_a_folder_whose_bus_overflows_and_plays_the_rest() {
 
 /// NFA-04: 3.0e38 at a clip gain of 2 is an infinity in the clip plane, and
 /// the fade-in's first frame multiplies it by 0 into a NaN. `echode-audio-io`
-/// refuses this clip before it gets here; the engine takes it. It played
-/// silence; since NFA-02 the master's NaN refuses the render instead, which
-/// is still not the refusal of the clip at the engine's entrance.
+/// refused this clip and the engine took it; since NFA-02 the master's NaN
+/// refused the render instead. The engine's entrance now refuses the clip by
+/// the peak of the frames it plays, naming the placement, before any block
+/// is rendered, and the device path keeps the plan it had (ADR 0369).
 #[test]
-#[ignore = "NFA-04: the engine accepts a clip whose gain overflows its samples"]
 fn audit_nfa04_the_engine_refuses_a_clip_whose_gain_overflows_its_samples() {
     let (project, track) = Project::new().add_track("clip");
     let mut clip = constant(track, 3.0e38);
+    clip.start_sample = 17;
     clip.gain = 2.0;
     clip.fade_in = 8;
-    let result = exported(&project, &[clip]);
-    assert!(
-        matches!(result, Err(OfflineError::Playback(_))),
-        "the engine accepted the clip: {:?}",
-        result.map(|output| output[0])
+    let overflowed = |result: Result<(), PlaybackError>| {
+        assert!(
+            matches!(
+                result,
+                Err(PlaybackError::ClipGainOverflow { track: refused, start_sample: 17 })
+                    if refused == track.raw()
+            ),
+            "the engine accepted the clip: {result:?}"
+        );
+    };
+    let mut blocks = 0;
+    let result = render_offline_blocks_with_clips(
+        &project,
+        RATE,
+        FRAMES as u32,
+        BLOCK as u32,
+        std::slice::from_ref(&clip),
+        |_| {
+            blocks += 1;
+            Ok::<_, ()>(())
+        },
     );
+    overflowed(match result {
+        Err(OfflineError::Playback(error)) => Err(error),
+        other => panic!("refused for another reason: {other:?}"),
+    });
+    assert_eq!(blocks, 0, "a block was rendered before the refusal");
+
+    let (mut control, _audio) = playback(
+        &project,
+        RATE,
+        BLOCK,
+        PlaybackOptions::default().guard_output(),
+    )
+    .unwrap();
+    let loaded = clip.clone();
+    control.set_clip_loader(Arc::new(move |_, _| Ok(vec![loaded.clone()])));
+    overflowed(control.replace(&project));
+    assert!(!control.status().failed);
+
+    // At the largest gain its peak allows, the same clip plays.
+    clip.gain = 1.0;
+    let output = exported(&project, &[clip]).unwrap();
+    // The fade-in reaches full level on its eighth frame, frame 24.
+    assert_eq!(output[2 * (17 + 7)], 3.0e38);
 }
 
-/// NFA-04: a cache plane with a NaN is staged and plays as silence.
+/// NFA-04: a cache plane with a NaN was staged and played as silence. A
+/// cached track now holds [`FinitePlanes`], which refuse the NaN when they
+/// are made, so no cache the engine is given holds one (ADR 0369).
 #[test]
-#[ignore = "NFA-04: the engine accepts a cached track that holds a NaN"]
-fn audit_nfa04_the_engine_refuses_a_cached_track_with_a_nan() {
+fn audit_nfa04_a_cached_track_cannot_hold_a_nan() {
     let (project, track) = Project::new().add_track("cached");
-    let (mut control, _audio) =
-        playback(&project, RATE, BLOCK, PlaybackOptions::default()).unwrap();
     let mut samples = vec![0.25; FRAMES];
     samples[10] = f32::NAN;
-    let staged = control.set_cached_tracks(&[CachedTrack {
-        track: track.raw(),
-        sample_rate: RATE,
-        start_sample: 0,
-        samples: samples.into(),
-        right: None,
-    }]);
-    assert!(staged.is_err(), "a cache with a NaN was staged");
+    assert_eq!(
+        FinitePlanes::new(samples.into(), None).unwrap_err(),
+        PlaneFault::NonFinite { frame: 10 }
+    );
+    let (mut control, _audio) =
+        playback(&project, RATE, BLOCK, PlaybackOptions::default()).unwrap();
+    control
+        .set_cached_tracks(&[CachedTrack {
+            track: track.raw(),
+            sample_rate: RATE,
+            start_sample: 0,
+            planes: FinitePlanes::new(vec![0.25; FRAMES].into(), None).unwrap(),
+        }])
+        .unwrap();
 }
 
 /// NFA-06: the sample audition is a second device output with no guard. A

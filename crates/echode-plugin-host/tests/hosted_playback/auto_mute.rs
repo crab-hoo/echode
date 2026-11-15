@@ -39,16 +39,13 @@ fn a_plugin_nan_auto_mutes_its_track_until_playback_starts() {
         playback_with_plugins(&project, rate, frames, &host_bin(), &routes).unwrap();
     let dry_audio: Arc<[f32]> = vec![0.03125; rate as usize].into();
     control.set_clip_loader(Arc::new(move |_, _| {
-        Ok(vec![LoadedClip {
-            track: dry.raw(),
-            start_sample: 0,
-            samples: Arc::clone(&dry_audio),
-            right: None,
-            window: None,
-            gain: 1.0,
-            fade_in: 0,
-            fade_out: 0,
-        }])
+        Ok(vec![LoadedClip::new(
+            dry.raw(),
+            0,
+            echode_engine::FinitePlanes::new(Arc::clone(&dry_audio), None)
+                .unwrap()
+                .into(),
+        )])
     }));
     control.replace(&project).unwrap();
     control.command(PlaybackCommand::Play).unwrap();

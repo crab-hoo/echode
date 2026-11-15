@@ -1049,6 +1049,67 @@ fn audit_nfa02_an_export_of_an_imported_file_does_not_replace_its_overflow_with_
     let _ = std::fs::remove_dir_all(&directory);
 }
 
+/// NFA-04, through the product path: a float file whose samples are finite
+/// and a clip gain the model allows are each accepted, but their product is
+/// past the `f32` range. The export is refused at the engine's entrance with
+/// the placement named, not as an unreadable file, and the output is kept
+/// (ADR 0369). The same file at unity gain exports.
+#[test]
+fn an_export_refuses_a_clip_gain_its_loudest_sample_overflows() {
+    // A tenth of a second bounds this regression only.
+    let frames = 4_800usize;
+    let package = |gain: f32| {
+        let directory = scratch();
+        std::fs::create_dir_all(&directory).unwrap();
+        let source = directory.join("loud.wav");
+        write_wav(&source, 48_000, &vec![3.0e38f32; frames * 2]).unwrap();
+        let stored = echode_history::import_audio(&directory, &source).unwrap();
+        let audio = echode_model::AudioRef::try_new(
+            stored.hash,
+            stored.sample_rate,
+            stored.channels,
+            stored.frames,
+        )
+        .unwrap();
+        let (project, track) = Project::new().add_track("loud clip");
+        let placement = Id::generate();
+        let project = project
+            .place_audio(track, placement, Id::generate(), Tick::new(0), audio)
+            .unwrap()
+            .set_clip_gain(placement, gain)
+            .unwrap();
+        project.check_invariants().unwrap();
+        write_package(&directory, &project).unwrap();
+        (directory, track)
+    };
+    let (directory, track) = package(2.0);
+    let wav = output_path("overflowed-clip-gain.wav");
+    let original = b"keep the existing output";
+    std::fs::write(&wav, original).unwrap();
+    let error = render_to_wav(&directory, &wav, 48_000, Some(frames as u32)).unwrap_err();
+    assert!(
+        matches!(
+            error,
+            echode_cli::CliError::Playback(echode_engine::PlaybackError::ClipGainOverflow {
+                track: id,
+                start_sample: 0
+            }) if id == track.raw()
+        ),
+        "unexpected export failure: {error}"
+    );
+    assert!(
+        error.to_string().contains("too loud for its gain"),
+        "{error}"
+    );
+    assert_eq!(std::fs::read(&wav).unwrap(), original);
+    let _ = std::fs::remove_dir_all(&directory);
+
+    let (directory, _) = package(1.0);
+    render_to_wav(&directory, &wav, 48_000, Some(frames as u32)).unwrap();
+    assert_ne!(std::fs::read(&wav).unwrap(), original);
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
 #[test]
 fn audit_pro07_a_failed_plugin_does_not_leave_a_finished_wav() {
     let _lock = PLUGIN_ENV.lock().unwrap();

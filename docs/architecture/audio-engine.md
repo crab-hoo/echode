@@ -90,6 +90,9 @@ Phase 2 のクリップ FX も経路に含め、バイパス・オフライン�
   配置ゲインとモノのステレオ昇格は、ブロックを読む時の係数とし、PCM を複製しない。
   ゲイン変更時の桁あふれは、準備時に保持した窓のピークから判定する
   （[ADR 0241](../decisions/0241-unscaled-placement-pcm.md)）。
+  エンジンが受け取る配置とキャッシュの面は `FinitePlanes`（全標本が有限、左右が同じ長さ、ピークを持つ）で、作る時に 1 回だけ走査する。
+  配置は `PlacedPlanes` で読む窓とその範囲のピークを持ち、`Prepared::new` はピークとゲインの積が有限でなければ
+  `ClipGainOverflow` で断る。素材の読込み失敗の `Media` とは分ける（[ADR 0369](../decisions/0369-checked-sample-planes-at-the-engine-entrance.md)）。
   素材の異なる窓の和が素材以上なら、素材の面を 1 つだけ持ち、各配置は `ClipWindow` の範囲を読む（面の外は無音）。
   和が素材未満なら窓だけを複写し、最後の配置で素材の全体を手放す（[ADR 0273](../decisions/0273-shared-source-clip-windows.md)）。
 - **サンプルレート変換**: 既定は `rubato`（比率一定は FFT、可変は sinc）。

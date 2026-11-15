@@ -105,16 +105,13 @@ fn loudest(project: &Project, child: Id) -> f32 {
         playback(project, RATE, FRAMES, PlaybackOptions::default()).unwrap();
     let track = child.raw();
     control.set_clip_loader(Arc::new(move |_project, _rate| {
-        Ok(vec![LoadedClip {
+        Ok(vec![LoadedClip::new(
             track,
-            start_sample: 0,
-            samples: Arc::from(vec![0.5f32; RATE as usize]),
-            right: None,
-            window: None,
-            gain: 1.0,
-            fade_in: 0,
-            fade_out: 0,
-        }])
+            0,
+            echode_engine::FinitePlanes::new(Arc::from(vec![0.5f32; RATE as usize]), None)
+                .unwrap()
+                .into(),
+        )])
     }));
     control.replace(project).unwrap();
     control.command(PlaybackCommand::Play).unwrap();

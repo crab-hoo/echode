@@ -152,16 +152,13 @@ pub(super) fn stereo_clip(track: u128) -> echode_engine::ClipLoader {
     let left: Arc<[f32]> = vec![0.25; 48_000].into();
     let right: Arc<[f32]> = vec![-0.25; 48_000].into();
     Arc::new(move |_, _| {
-        Ok(vec![LoadedClip {
+        Ok(vec![LoadedClip::new(
             track,
-            start_sample: 0,
-            samples: Arc::clone(&left),
-            right: Some(Arc::clone(&right)),
-            window: None,
-            gain: 1.0,
-            fade_in: 0,
-            fade_out: 0,
-        }])
+            0,
+            echode_engine::FinitePlanes::new(Arc::clone(&left), Some(Arc::clone(&right)))
+                .unwrap()
+                .into(),
+        )])
     })
 }
 
@@ -428,16 +425,13 @@ fn recorded_parameter_state_is_independent_of_block_size_under_rtsan() {
         .unwrap();
         let (left, right) = (Arc::clone(&input), Arc::clone(&other));
         control.set_clip_loader(Arc::new(move |_, _| {
-            Ok(vec![LoadedClip {
-                track: track.raw(),
-                start_sample: 0,
-                samples: Arc::clone(&left),
-                right: Some(Arc::clone(&right)),
-                window: None,
-                gain: 1.0,
-                fade_in: 0,
-                fade_out: 0,
-            }])
+            Ok(vec![LoadedClip::new(
+                track.raw(),
+                0,
+                echode_engine::FinitePlanes::new(Arc::clone(&left), Some(Arc::clone(&right)))
+                    .unwrap()
+                    .into(),
+            )])
         }));
         control.replace(&project).unwrap();
         control.command(PlaybackCommand::Play).unwrap();

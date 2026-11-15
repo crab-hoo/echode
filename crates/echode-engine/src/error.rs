@@ -22,6 +22,16 @@ pub enum PlaybackError {
     /// example because its output closed. Started helpers were stopped (ADR 0334).
     Cancelled,
     Media,
+    /// Sample planes were refused when they were made: a sample that is not
+    /// finite, or a stereo pair of two lengths (NFA-04).
+    Planes(crate::PlaneFault),
+    /// A placement's gain times the loudest sample it plays is past the
+    /// `f32` range, so the clip would play an infinity. The gain and the
+    /// samples are each allowed; only their product is not (NFA-04).
+    ClipGainOverflow {
+        track: u128,
+        start_sample: i64,
+    },
     /// An audio placement's content is neither mono nor stereo.
     ClipChannels,
     /// The device's main ports are not a mono/stereo layout this host can run.
@@ -90,6 +100,17 @@ impl fmt::Display for PlaybackError {
             Self::Plugin => "plugin helper did not start",
             Self::Cancelled => "plugin preparation was cancelled",
             Self::Media => "audio file could not be read",
+            Self::Planes(fault) => return fault.fmt(formatter),
+            Self::ClipGainOverflow {
+                track,
+                start_sample,
+            } => {
+                return write!(
+                    formatter,
+                    "track {track}: the clip at sample {start_sample} is too loud for its gain; \
+                     its loudest sample times the gain is past the 32-bit float range"
+                );
+            }
             Self::ClipChannels => "audio placement requires a mono or stereo layout",
             Self::BusMapping { device, clap_id } => {
                 return write!(
@@ -138,6 +159,7 @@ impl std::error::Error for PlaybackError {
             Self::Workgroup(error) => Some(error),
             Self::Thread(error) => Some(error.as_ref()),
             Self::Render(error) => Some(error),
+            Self::Planes(fault) => Some(fault),
             _ => None,
         }
     }

@@ -206,8 +206,7 @@ fn a_cache_given_for_a_parent_is_not_read_under_rtsan() {
             track: root.raw(),
             sample_rate: 48_000,
             start_sample: 0,
-            samples: vec![0.75; SECTION].into(),
-            right: None,
+            planes: echode_engine::FinitePlanes::new(vec![0.75; SECTION].into(), None).unwrap(),
         }])
         .unwrap();
     control.replace(&project).unwrap();

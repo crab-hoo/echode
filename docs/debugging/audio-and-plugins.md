@@ -66,14 +66,18 @@ AudioToolbox の失敗は `MediaError` の操作別の変種で、`Property` は
 ### クリップゲインの変更で素材の準備に失敗する
 
 保存済み PCM 自体の有限性と、窓のピークにゲインを掛けた結果の桁あふれを区別する。
-`clips.rs` の `Window::peak` は配置が読むフレームの未スケールの左右の最大絶対値で、ゲイン変更時には PCM 全体を走査し直さない。
-`cached_window_peaks_reject_gain_overflow_without_rereading_pcm` は、極大値を含む窓の拒否、失敗後の準備の保持、極大値がトリム外の場合の受入を確認する。
+エラーの型が原因を分ける。`Media` は保存済み PCM が読めない・壊れている、`Planes(PlaneFault)` は変換後の面が有限でないか左右の長さが違う、
+`ClipGainOverflow { track, start_sample }` は素材もゲインも許されるが積が f32 を超える配置である（[ADR 0369](../decisions/0369-checked-sample-planes-at-the-engine-entrance.md)）。
+ピークはエンジンの `PlacedPlanes::peak`（配置が読むフレームの未スケールの左右の最大絶対値）で、`echode-audio-io` が窓ごとに保持し、ゲイン変更時には PCM 全体を走査し直さない。
+判定は `Prepared::new` の入口だけにあり、ローダーは断らない。
+`cached_window_peaks_reject_gain_overflow_without_rereading_pcm` は、素材を消した後の入口での拒否、ゲインを戻した後の受入、極大値がトリム外の場合の受入を確認する。
+製品の経路は必須契約 `clip-gain-entrance`（CLI の書出し）で確かめる。
 ゲインとモノの昇格を二重に掛けた疑いは `tests/block_size/clip_gain.rs` の焼込みとの比較で調べる（[ADR 0241](../decisions/0241-unscaled-placement-pcm.md)）。
 
 ### 同じ素材の長いトリムを並べるとメモリが素材の何倍にも増える
 
 素材ごとの常駐は、素材と異なる窓の和の小さい方までである（[ADR 0273](../decisions/0273-shared-source-clip-windows.md)）。
-`LoadedClip::window` が `Some` の配置は共有の面を読み、`None` の配置は複写した窓か面の全体を読む。
+`LoadedClip::audio.window()` が `Some` の配置は共有の面を読み、`None` の配置は複写した窓か面の全体を読む。
 窓の和が素材以上なのに `None` の複写が並ぶなら、`shared_sources` の判定か、前回の窓の種類の照合を調べる。
 `clips::tests::audit_ext01_*` は面の `Arc` を 1 回ずつ数えて、素材 1 つ分を超えないことを確かめる。
 準備中は素材の全体を復号・変換するので、その一時的な増加は別であり、逐次読込みは未実装である。

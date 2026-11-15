@@ -36,6 +36,7 @@ mod mix;
 mod output_guard;
 mod outputs;
 mod plan;
+mod planes;
 mod playback;
 mod plugin_declick;
 mod plugin_state;
@@ -75,6 +76,7 @@ pub use echode_sandbox::{
 pub use meter::{AutoMute, TrackMeter};
 pub use outputs::{DeviceFormat, OutputChoice, OutputRoute, RouteUpdate};
 pub use plan::PlaybackIds;
+pub use planes::{FinitePlanes, PlacedPlanes, PlaneFault};
 pub use playback::{
     CachedTrack, ClipLoader, ClipWindow, ClockSource, InternalClock, LoadedClip, MASTER_GUARD_DBFS,
     MasterAutoMute, MediaInputs, PlaybackAudio, PlaybackCommand, PlaybackControl, PlaybackOptions,

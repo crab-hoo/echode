@@ -64,26 +64,23 @@ fn check_deadline_fade(rate: u32, frames: usize) {
     let dry_right: Arc<[f32]> = vec![0.0625; rate as usize].into();
     control.set_clip_loader(Arc::new(move |_, _| {
         Ok(vec![
-            LoadedClip {
-                track: wet.raw(),
-                start_sample: 0,
-                samples: Arc::clone(&source),
-                right: Some(Arc::clone(&other)),
-                window: None,
-                gain: 1.0,
-                fade_in: 0,
-                fade_out: 0,
-            },
-            LoadedClip {
-                track: dry.raw(),
-                start_sample: 0,
-                samples: Arc::clone(&dry_left),
-                right: Some(Arc::clone(&dry_right)),
-                window: None,
-                gain: 1.0,
-                fade_in: 0,
-                fade_out: 0,
-            },
+            LoadedClip::new(
+                wet.raw(),
+                0,
+                echode_engine::FinitePlanes::new(Arc::clone(&source), Some(Arc::clone(&other)))
+                    .unwrap()
+                    .into(),
+            ),
+            LoadedClip::new(
+                dry.raw(),
+                0,
+                echode_engine::FinitePlanes::new(
+                    Arc::clone(&dry_left),
+                    Some(Arc::clone(&dry_right)),
+                )
+                .unwrap()
+                .into(),
+            ),
         ])
     }));
     control.replace(&project).unwrap();

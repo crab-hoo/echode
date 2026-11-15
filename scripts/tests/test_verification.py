@@ -2650,6 +2650,7 @@ class PolicyTests(unittest.TestCase):
                 "fader-overflow",
                 "folder-bus-overflow",
                 "master-overflow-export",
+                "clip-gain-entrance",
                 "export-presets-ui",
                 "export-defaults-ui",
                 "export-input-ui",
