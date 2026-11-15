@@ -300,7 +300,7 @@ tick の精度・捕捉したトラックと、移動後の選択・複製側の
 
 ### Rust に追加したアクションを Swift が `unknown variant` として拒否する
 
-Swift のテストは Rust の製品 ABI をリンクするため、先に `make check-shell` で ABI と生成ヘッダを更新して再リンクする。
+Swift のテストは Rust の製品 ABI をリンクするため、先に `make check-swift` で ABI と生成ヘッダを更新して再リンクする。
 Swift の単体実行だけでは古いアクション登録簿が残り得る。更新後も失敗する場合は、送信した `type` と登録簿を照合する。
 `echode_model_constants` の未解決シンボルや単位の不一致も、同じ製品 ABI・生成ヘッダ・再リンクから調べる。
 `ModelLimitsTests` と `ModelUnitsTests` の独立した期待値で、橋渡しと UI 消費側のどちらが違うかを区別する。

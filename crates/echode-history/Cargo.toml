@@ -32,14 +32,14 @@ gix = { workspace = true }
 # `streaming-input` for `Bundle::write_to_directory`. Keep this the exact
 # version gix resolves, so both share one gix-pack (ADR 0046, ADR 0270).
 gix-pack = { version = "=0.77.0", optional = true }
-libc = "=0.2.190"
+libc.workspace = true
 log.workspace = true
 memmap2 = { workspace = true }
 objc2-audio-toolbox = { version = "=0.3.2", default-features = false, features = ["std", "AudioFile", "ExtendedAudioFile", "objc2-core-audio-types", "objc2-core-foundation"] }
 objc2-core-audio-types = { version = "=0.3.2", default-features = false, features = ["std", "CoreAudioBaseTypes"] }
 objc2-core-foundation = { version = "=0.3.2", default-features = false, features = ["std", "CFURL"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 gix = { workspace = true }

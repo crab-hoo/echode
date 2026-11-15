@@ -3,7 +3,7 @@
 SHELL := /bin/bash -euo pipefail
 .PHONY: spike-verification-failures
 
-.PHONY: bundled-plugins app dist xcode sign-setup spike-app spike-playhead spike-arrange-frame spike-piano-frame spike-main-thread spike-audio spike-audition spike-plugin-tracks spike-scale check check-format check-lint check-base check-product-contracts check-real-hal verify verify-plan wait-verify check-verification doctor agent-context debug-report fmt setup setup-lint setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-engine-smoke spike-bridge spike-render check-bridge check-bridge-features check-spikes check-bridge-asan check-bridge-tsan check-tsan-runtime check-bridge-miri check-shell check-swift check-contract-controls contract-prerequisites verify-full rtsan setup-fuzz fuzz check-fuzz setup-coverage coverage
+.PHONY: bundled-plugins app dist xcode sign-setup spike-app spike-playhead spike-arrange-frame spike-piano-frame spike-main-thread spike-audio spike-audition spike-plugin-tracks spike-scale check check-format check-lint check-base check-product-contracts check-real-hal verify verify-plan wait-verify check-verification doctor agent-context debug-report fmt setup setup-lint setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-engine-smoke spike-bridge spike-render check-bridge check-bridge-features check-spikes check-bridge-asan check-bridge-tsan check-tsan-runtime check-bridge-miri check-swift check-contract-controls contract-prerequisites verify-full rtsan setup-fuzz fuzz check-fuzz setup-coverage coverage
 
 bundled-plugins:
 	bash scripts/build-bundled-plugins.sh
@@ -25,13 +25,18 @@ spike-app:
 	bash scripts/build-app.sh
 	swift run --package-path swift/EchodeApp --scratch-path target/echode-app EchodeAppProbe "$(CURDIR)/target/spike-app.json"
 
+define sync_echode_header
+set -eu; header="$$(find target/debug/build -path '*echode-ffi-*/out/echode.h' -print0 | xargs -0 ls -t | head -1)"; \
+	test -n "$$header"; \
+	mkdir -p swift/EchodeBridge/CEchodeFfi/include; \
+	cmp -s "$$header" swift/EchodeBridge/CEchodeFfi/include/echode.h || cp "$$header" swift/EchodeBridge/CEchodeFfi/include/echode.h
+endef
+
 # Real-window checks run under AppKit; the normal suite never invokes them.
 spike-playhead:
 	cargo build -q --locked --offline
-	set -eu; header="$$(find target/debug/build -path '*echode-ffi-*/out/echode.h' -print0 | xargs -0 ls -t | head -1)"; \
-	test -n "$$header"; \
-	mkdir -p swift/EchodeBridge/CEchodeFfi/include "$(CURDIR)/target"; \
-	cmp -s "$$header" swift/EchodeBridge/CEchodeFfi/include/echode.h || cp "$$header" swift/EchodeBridge/CEchodeFfi/include/echode.h; \
+	mkdir -p "$(CURDIR)/target"
+	$(sync_echode_header)
 	frameworks="$$(xcrun --show-sdk-platform-path)/Developer/Library/Frameworks"; \
 	test -d "$$frameworks/Testing.framework"; \
 	swift build -q --package-path swift/EchodeApp --scratch-path target/echode-app-tests \
@@ -84,10 +89,10 @@ check-lint:
 check-base:
 	$(MAKE) bundled-plugins
 	python3 -B scripts/check_build_host.py
-	cargo build -q
-	cargo clippy -q --all-targets -- -D warnings
+	cargo build -q --locked
+	cargo clippy -q --locked --all-targets -- -D warnings
 	$(MAKE) check-swift-actions
-	cargo test -q
+	cargo test -q --locked
 	scripts/check-ffi.sh
 	python3 -B scripts/check_audio_lints.py
 	python3 -B scripts/check_typed_errors.py
@@ -101,7 +106,7 @@ check-swift:
 	$(MAKE) bundled-plugins
 	python3 -B scripts/check_build_host.py
 	cargo build -q --locked --offline
-	$(MAKE) check-shell
+	bash scripts/check-swift.sh
 
 # The configurations the app does not ship: the history and engine `spike` features and the
 # bridge spike. A -p call builds its own copy of the crates (ADR 0328), so these run in the
@@ -132,18 +137,12 @@ check-contract-controls:
 contract-prerequisites:
 	$(MAKE) bundled-plugins
 	cargo build -q --locked --offline
-	set -eu; header="$$(find target/debug/build -path '*echode-ffi-*/out/echode.h' -print0 | xargs -0 ls -t | head -1)"; \
-	test -n "$$header"; \
-	mkdir -p swift/EchodeBridge/CEchodeFfi/include; \
-	cmp -s "$$header" swift/EchodeBridge/CEchodeFfi/include/echode.h || cp "$$header" swift/EchodeBridge/CEchodeFfi/include/echode.h
+	$(sync_echode_header)
 
 # Names the EchodeApp test that reaches the real HAL. Opens no device: the test bundle has no HAL (ADR 0209).
 check-real-hal:
 	cargo build -q --locked --offline
-	set -eu; header="$$(find target/debug/build -path '*echode-ffi-*/out/echode.h' -print0 | xargs -0 ls -t | head -1)"; \
-	test -n "$$header"; \
-	mkdir -p swift/EchodeBridge/CEchodeFfi/include; \
-	cmp -s "$$header" swift/EchodeBridge/CEchodeFfi/include/echode.h || cp "$$header" swift/EchodeBridge/CEchodeFfi/include/echode.h
+	$(sync_echode_header)
 	python3 -B scripts/check_real_hal.py
 
 # Runs every EchodeApp test one at a time and names each that reaches the real HAL (ADR 0271).
@@ -307,10 +306,6 @@ spike-render:
 # check-bridge has no timing assertions. spike-bridge also prints measurements.
 check-bridge:
 	bash scripts/spike-bridge.sh
-
-# Product Swift wrapper tests through the generated C ABI. No timing assertions.
-check-shell:
-	bash scripts/check-shell.sh
 
 spike-bridge:
 	bash scripts/spike-bridge.sh --bench

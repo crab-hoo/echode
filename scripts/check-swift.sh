@@ -11,7 +11,7 @@ unset SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH
 cargo build -q --locked --offline
 header="$(find target/debug/build -path '*echode-ffi-*/out/echode.h' -print0 | xargs -0 ls -t | head -1)"
 if [[ -z "$header" ]]; then
-    echo "check-shell: cbindgen did not write echode.h" >&2
+    echo "check-swift: cbindgen did not write echode.h" >&2
     exit 1
 fi
 include=swift/EchodeBridge/CEchodeFfi/include
@@ -49,7 +49,7 @@ reject_real_hal() {
     local log="target/echode-app-tests/swift-test.log"
     if grep -q 'Real HAL reached:' "$log"; then
         grep 'Real HAL reached:' "$log" >&2
-        echo "check-shell: a test reached the real HAL; name it with: make check-real-hal-names" >&2
+        echo "check-swift: a test reached the real HAL; name it with: make check-real-hal-names" >&2
         return 1
     fi
 }

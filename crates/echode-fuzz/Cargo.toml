@@ -21,7 +21,7 @@ echode-history = { path = "../echode-history" }
 echode-model = { path = "../echode-model" }
 echode-realtime = { path = "../echode-realtime" }
 echode-sandbox = { path = "../echode-sandbox" }
-libc = "=0.2.190"
+libc.workspace = true
 libfuzzer-sys = { version = "=0.4.13", optional = true }
 
 [[bin]]

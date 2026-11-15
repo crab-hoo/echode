@@ -12,7 +12,7 @@ echode-time = { path = "../echode-time" }
 blake3 = "=1.8.7"
 fractional_index = "2.0.2"
 schemars = "=1.2.2"
-serde = { version = "1", features = ["derive"] }
+serde.workspace = true
 uuid = { version = "1", features = ["v7"] }
 
 [lints]

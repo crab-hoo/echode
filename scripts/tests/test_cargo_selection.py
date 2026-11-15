@@ -137,7 +137,7 @@ class CargoSelectionTests(unittest.TestCase):
             recipe = (ROOT / "Makefile").read_text().split(f"\n{target}:\n", 1)[1].split("\n\n", 1)[0]
             with self.subTest(target=target):
                 self.assertIn("\tcargo build -q --locked --offline\n", recipe + "\n")
-        shell = (ROOT / "scripts/check-shell.sh").read_text()
+        shell = (ROOT / "scripts/check-swift.sh").read_text()
         self.assertIn("\ncargo build -q --locked --offline\n", shell)
 
     def test_only_spikes_stay_out_of_the_default_members(self):

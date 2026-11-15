@@ -66,19 +66,25 @@ flowchart LR
 | crate | 役割 |
 |---|---|
 | `echode-model` | ドキュメントモデル、時間の表現、テンポマップ、スキーマとマイグレーション |
+| `echode-time` | 共有の整数時間変換と不変のテンポ索引 |
 | `echode-actions` | アクションの定義と登録簿、トランザクション、Undo、ジャーナル、マクロ |
 | `echode-history` | Git との連携（`gix`）、自動コミット、セマンティック差分とマージ、メディアの保管庫 |
+| `echode-realtime` | オーディオスレッドがドキュメントモデルなしで読む再生計画 |
 | `echode-engine` | グラフの組み立てと差し替え、スケジューラ、トランスポート、PDC、変調の評価、クリップの再生 |
-| `echode-dsp` | 同梱 Sine Pad と確保の検出（実装済み）。EQ、ダイナミクス、変調、SRC・ストレッチのラッパーは将来の範囲 |
-| `echode-media` | デコード、ストリーミング、ピークの生成、解析（テンポ、キー、トランジェント） |
-| `echode-gpu` | Metal Compute のカーネル（`objc2-metal`） |
+| `echode-dsp` | ホスト非依存の DSP と確保の検出（実装済み）。EQ、ダイナミクス、変調、SRC・ストレッチのラッパーは将来の範囲 |
+| `echode-sine-pad` | 同梱 Sine Pad CLAP インストゥルメント |
+| `echode-draw` | アレンジ画面・ピアノロールの表示投影 |
 | `echode-audio-io` | CoreAudio（HAL）と CoreMIDI |
-| `echode-plugin` | プラグインの共通の抽象と CLAP / VST3 / AU のアダプタ |
 | `echode-sandbox` | ヘルパープロセスの起動と監視、IPC、共有メモリ |
-| `echode-api` | JSON-RPC のサーバーと MCP |
+| `echode-api` | JSON-RPC のサーバーとローカルセッション API |
 | `echode-document` | 開いた文書の手番の調停（編集・再生・デバイス要求・プラグイン保存の取込み・音声の取込みの段階） |
+| `echode-log` | 製品ログ（NDJSON ファイルと非オーディオスレッドの統合ログ） |
 | `echode-ffi` | Swift 向けの橋渡し |
-| `echode-cli`、`echode-plugin-host` | 実行ファイル |
+| `echode-cli`、`echode-plugin-host` | 実行ファイル（CLI・別プロセス CLAP ホスト） |
+| `echode-test-plugin`、`echode-fuzz` | テスト用 CLAP プラグインと境界入力の fuzz 対象 |
+| `echode-media`（未実装） | デコード、ストリーミング、ピークの生成、解析（テンポ、キー、トランジェント） |
+| `echode-gpu`（未実装） | Metal Compute のカーネル（将来の共用計算向け。画面描画はアプリ側の Metal で実装済み） |
+| `echode-plugin`（未実装） | プラグインの共通の抽象と VST3 / AU のアダプタ（現在は `echode-plugin-host` が CLAP をホスト） |
 
 ### 3.2 Swift
 

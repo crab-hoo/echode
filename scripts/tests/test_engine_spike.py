@@ -73,8 +73,9 @@ class EngineSpikeTests(unittest.TestCase):
     def test_default_and_spike_checks_remain_separate(self):
         makefile = (ROOT / "Makefile").read_text()
         base = makefile.split("check-base:\n", 1)[1].split("\n\n", 1)[0]
-        self.assertIn("cargo test -q\n", base)
-        self.assertIn("cargo clippy -q --all-targets -- -D warnings\n", base)
+        self.assertIn("cargo build -q --locked\n", base)
+        self.assertIn("cargo test -q --locked\n", base)
+        self.assertIn("cargo clippy -q --locked --all-targets -- -D warnings\n", base)
         # ADR 0361: the spike feature is a configuration the app does not ship, so the full tier builds it.
         self.assertNotIn("--features", base)
         spikes = makefile.split("check-spikes:\n", 1)[1].split("\n\n", 1)[0]

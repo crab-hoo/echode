@@ -59,7 +59,7 @@ P2 は再発や手戻りが見込まれるもの。P3 は整理すれば楽に�
 | XCA-17 | P2 | テスト | fuzz とカバレッジの測定がない | 対応済み（ADR 0290） |
 | XCA-18 | P2 | 静的検査 | Swift・Python・シェルに整形と lint がない | 対応済み（ADR 0323） |
 | XCA-19 | P2 | 診断 | ログの仕組みがなく、現場の不具合を追えない | 対応済み（ADR 0322、DEV-8 と同じ） |
-| XCA-20 | P3 | 整備 | 空振りする入口、古い入口、紛らわしい名前、重複の整理 | 一部対応（`make known-bugs`） |
+| XCA-20 | P3 | 整備 | 空振りする入口、古い入口、紛らわしい名前、重複の整理 | 対応済み（`make known-bugs`、2026-11-16 に `justfile`・`check-swift.sh`・`check-base --locked`・生成ヘッダ複製統合・`[workspace.dependencies]` を整理） |
 | XCA-21 | P3 | 製品 | release の最適化設定と、段の間の非有限値の扱いが未決 | 非有限値は対応済み（ADR 0282）。release の設定は未着手 |
 | XCA-22 | P3 | 履歴 | Git の著者メールが未設定で、ホスト名から作られている | 対応済み（全履歴を書き換え） |
 
@@ -387,6 +387,7 @@ P2 は再発や手戻りが見込まれるもの。P3 は整理すれば楽に�
 - `check-base` の `cargo build`・`cargo test` は `--locked` がなく、ほかのレシピと揃っていない。
 - 生成ヘッダの選択と複製が Makefile に 3 回ある。
 - `libc = "=0.2.190"` を 7 crate、`serde`・`serde_json` を 8 crate が個別に宣言する。`[workspace.dependencies]` へ集める。
+- 対応状況（2026-11-16）: 上記すべてに対応済み（`justfile` を `Makefile` 全入口へ追従・一致検査を追加、`check-shell` を `scripts/check-swift.sh` / `make check-swift` へ統合、`check-base` へ `--locked` 追加、生成ヘッダ複製を `define sync_echode_header` に統合、`Cargo.toml` の `[workspace.dependencies]` へ `libc`・`serde`・`serde_json` を集約）。
 
 ### XCA-21: 製品の設定
 

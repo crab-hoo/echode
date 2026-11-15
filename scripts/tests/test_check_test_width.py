@@ -99,7 +99,7 @@ class WidthTests(unittest.TestCase):
         # ADR 0332: check-swift judges at the sanitizer runs' width and checks it held.
         width = (ROOT / "scripts/swift-test-width.env").read_text()
         self.assertRegex(width, r"(?m)^ECHODE_SWIFT_TEST_WIDTH=16$")
-        shell = (ROOT / "scripts/check-shell.sh").read_text()
+        shell = (ROOT / "scripts/check-swift.sh").read_text()
         bridge = (ROOT / "scripts/check-product-bridge.sh").read_text()
         for script in (shell, bridge):
             self.assertIn("\nsource scripts/swift-test-width.env\n", script)

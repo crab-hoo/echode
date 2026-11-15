@@ -249,7 +249,7 @@ class VerificationScopeTests(unittest.TestCase):
             self.assertEqual(verify.package_test_excludes({folder}, root=root), [])
 
     def test_generated_header_copy_is_content_stable_and_still_updates_changes(self):
-        for relative in ("scripts/check-shell.sh", "scripts/check-product-bridge.sh", "Makefile"):
+        for relative in ("scripts/check-swift.sh", "scripts/check-product-bridge.sh", "Makefile"):
             text = (ROOT / relative).read_text().replace("\\\n", " ").replace("$$", "$")
             commands = re.findall(r"cmp -s [^;\n]+? \|\|\s*cp [^;\n]+", text)
             self.assertTrue(commands, relative)

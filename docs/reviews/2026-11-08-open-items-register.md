@@ -96,7 +96,7 @@
 | M4 | ログの仕組み | DEV-8・XCA-19 | 対応済み（ADR 0322）。`log` の窓口と `echode-log` のロガーでファイルと統合ログへ書く。コールバックの取りこぼしはリングで渡し、ノード名付きで書く |
 | M5 | Swift・Python・シェルの整形と lint | XCA-18 | 対応済み（ADR 0323）。`check-lint` が swift-format・ruff・shfmt・shellcheck を全ファイルにかける。版は固定し、swift-format は Xcode に従う |
 | M6 | Codex のフック | XCA-06・ENV-04 | 対応済み（ADR 0324）。ユーザーの方針で全てのホストのフックを外し、`check-verification` が再導入を止める |
-| M7 | 入口と依存の整備 | XCA-20・DEV-9 | 下の注を参照 |
+| M7 | 入口と依存の整備 | XCA-20・DEV-9 | 対応済み（2026-11-16） |
 | M8 | Swift のテストの期限 | XCA-09 の残り | 対応済み（ADR 0325）。全ての `swift test` と契約の実行をイベント列の監視に通し、記録が 120 秒途絶えたら走っているテストを名指しして止める |
 | M9 | 手書きの外部宣言と SDK の照合 | ENG-15 の残り | 対応済み（ADR 0326）。Mach・bootstrap は mach2 にし、残る 6 シンボルを `os_workgroup.rs` に集めた。`check-ffi` が型・構造体の配置・非推奨・配置対象を SDK のヘッダと照合する |
 | M10 | 全体の段階の `covered` が検査の識別値を見ない | ENV-02 | 理由付きで残置（ADR 0232） |
@@ -210,9 +210,9 @@
   作業中に、ヘルパーが bootstrap の受信権を `mach_port_deallocate` で解放できず、名前の登録がヘルパーの寿命まで残る不具合を見つけて直した。
   保守性の行は、触る時に行う M7 と理由付きで残す M10 を除いて終わった。次は ADR 0278 の 4 の Phase 2 である。
 - M1 は保存の不確定だけを型にした（[ADR 0234](../decisions/0234-typed-journal-durability.md)）。11/2 の後に作った `echode-document` にも 16 か所ある。（統合時の記録。2026-11-11 の ADR 0320 で対応済み）
-- M7: `justfile` に `verify-full`・`agent-context` がない。`check-shell` は Swift のラッパーの検査の名前のまま。
-  `check-base` の `cargo build` に `--locked` がない。`libc` を 7 crate、`serde_json` を 8 crate が個別に宣言する。
-  DEV-9 の 10/13 の壊れたリンクは解消し、資料の整理は XCA-10（ADR 0235）が引き継いだ。
+- M7（対応済み 2026-11-16）: `justfile` を `Makefile` 全入口に揃えて検査を追加、`check-shell` を `scripts/check-swift.sh` / `make check-swift` へ一本化、
+  `check-base` へ `--locked` と `define sync_echode_header` を適用し、`libc`・`serde`・`serde_json` を `[workspace.dependencies]` へ集約、
+  さらに [ARCHITECTURE §3.1](../ARCHITECTURE.md#31-rustcargo-workspace) と [検証とビルド](../debugging/verification-and-build.md) を現在の crate 構成・入口へ更新した（DEV-9・XCA-20 解消）。
 
 ## 3. 効率
 

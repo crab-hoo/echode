@@ -61,6 +61,9 @@ memmap2 = "0.9"
 gix = "0.90"
 # The log facade, with structured fields, for every crate that logs (ADR 0322).
 log = { version = "=0.4.34", features = ["std", "kv"] }
+libc = "=0.2.190"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

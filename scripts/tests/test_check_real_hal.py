@@ -113,7 +113,7 @@ class SelectionTests(unittest.TestCase):
     def test_check_swift_scans_its_own_run_for_the_guard_marker(self):
         # ADR 0271: the parallel check-swift run is the gate; naming the test is opt-in.
         guard = (ROOT / "swift/EchodeApp/Tests/EchodeAppTests/RealHALGuard.swift").read_text()
-        shell = (ROOT / "scripts/check-shell.sh").read_text()
+        shell = (ROOT / "scripts/check-swift.sh").read_text()
         marker = re.search(r'private let marker = "([^"]+)"', guard)[1]
         self.assertEqual(check.MARKER.strip(), marker)
         self.assertIn(f"grep -q '{marker}' \"$log\"", shell)
@@ -124,7 +124,7 @@ class SelectionTests(unittest.TestCase):
         )
         policy = verify.load_policy(ROOT)
         swift = next(item for item in policy["checks"] if item["id"] == "check-swift")
-        self.assertIn("scripts/check-shell.sh", swift["inputs"])
+        self.assertIn("scripts/check-swift.sh", swift["inputs"])
 
     def test_the_makefile_runs_the_check(self):
         self.assertRegex(

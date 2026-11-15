@@ -15,7 +15,7 @@ dasp_ring_buffer = "=0.11.0"
 echode-model = { path = "../echode-model" }
 echode-realtime = { path = "../echode-realtime" }
 echode-sandbox = { path = "../echode-sandbox" }
-libc = "=0.2.190"
+libc.workspace = true
 log.workspace = true
 mach2 = "=0.7.0"
 objc2-core-audio = { version = "=0.3.2", default-features = false, features = ["std", "AudioHardware", "HostTime", "objc2-core-audio-types"] }
@@ -27,7 +27,7 @@ rtsan-standalone = { version = "=0.3.0", optional = true }
 
 [dev-dependencies]
 echode-log = { path = "../echode-log" }
-serde_json = "1"
+serde_json.workspace = true
 
 [features]
 spike = []

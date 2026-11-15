@@ -3,7 +3,7 @@
 
 RealHALGuard.swift replaces CoreAudio's HAL functions inside the test bundle, so
 no device opens and any run that reaches one fails. By default this checks the
-binding and that the guard stops its control by name; check-shell.sh fails
+binding and that the guard stops its control by name; check-swift.sh fails
 check-swift when its own run of the tests reaches the HAL (ADR 0271).
 A worker thread cannot tell which test it serves, so `--name-tests` runs one test
 at a time and takes the name from the event stream.

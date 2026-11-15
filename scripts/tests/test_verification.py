@@ -3878,5 +3878,62 @@ class WaitForVerifyTests(unittest.TestCase):
         self.assertEqual(free.returncode, 0, free.stderr)
 
 
+class BuildEntryAndWorkspaceDependencyTests(unittest.TestCase):
+    """Keep Makefile/justfile entries, check-swift naming, header sync, and workspace deps aligned."""
+
+    def test_justfile_exposes_every_makefile_target_via_make(self):
+        makefile_targets = set(re.findall(r"(?m)^([a-zA-Z0-9_-]+):", (ROOT / "Makefile").read_text()))
+        justfile_text = (ROOT / "justfile").read_text()
+        just_recipes = {}
+        current = None
+        for line in justfile_text.splitlines():
+            match = re.match(r"^([a-zA-Z0-9_-]+)(?:\s+[^:]*)?:", line)
+            if match:
+                current = match[1]
+                just_recipes[current] = []
+            elif current is not None and line.startswith(("    ", "\t")):
+                just_recipes[current].append(line.strip())
+            elif not line.strip() or line.startswith("#"):
+                continue
+            else:
+                current = None
+        self.assertEqual(set(), makefile_targets - set(just_recipes))
+        for required in ("verify-full", "agent-context", "wait-verify", "check-swift"):
+            self.assertIn(required, just_recipes)
+        for target, body in just_recipes.items():
+            with self.subTest(recipe=target):
+                self.assertEqual(len(body), 1)
+                self.assertTrue(body[0].startswith(f"make {target}"), body)
+
+    def test_check_base_is_locked_and_header_sync_is_shared_without_check_shell(self):
+        makefile = (ROOT / "Makefile").read_text()
+        self.assertNotIn("check-shell", makefile)
+        self.assertFalse((ROOT / "scripts/check-shell.sh").exists())
+        self.assertTrue((ROOT / "scripts/check-swift.sh").exists())
+        base = makefile.split("\ncheck-base:\n", 1)[1].split("\n\n", 1)[0]
+        self.assertIn("\tcargo build -q --locked\n", base)
+        self.assertIn("\tcargo clippy -q --locked --all-targets -- -D warnings\n", base)
+        self.assertIn("\tcargo test -q --locked\n", base)
+        self.assertEqual(makefile.count("$(sync_echode_header)"), 3)
+        for target in ("spike-playhead", "contract-prerequisites", "check-real-hal"):
+            recipe = makefile.split(f"\n{target}:\n", 1)[1].split("\n\n", 1)[0]
+            with self.subTest(target=target):
+                self.assertIn("\t$(sync_echode_header)", recipe)
+
+    def test_shared_dependencies_live_in_workspace_dependencies(self):
+        workspace = tomllib.loads((ROOT / "Cargo.toml").read_text())["workspace"]["dependencies"]
+        for dep in ("libc", "serde", "serde_json"):
+            self.assertIn(dep, workspace)
+        for manifest_path in sorted((ROOT / "crates").glob("*/Cargo.toml")):
+            manifest = tomllib.loads(manifest_path.read_text())
+            for section in ("dependencies", "dev-dependencies"):
+                deps = manifest.get(section, {})
+                for dep in ("libc", "serde", "serde_json"):
+                    if dep in deps:
+                        with self.subTest(manifest=manifest_path.relative_to(ROOT).as_posix(), dep=dep):
+                            self.assertIsInstance(deps[dep], dict)
+                            self.assertTrue(deps[dep].get("workspace"))
+
+
 if __name__ == "__main__":
     unittest.main()
