@@ -397,9 +397,11 @@ CLAP の余韻の通知・再有効化後の読直しは `threads.rs`、親の�
 CLAP の音声ポートの対応フラグは `echode-plugin-host/src/audio_ports.rs`、初回の寸法と ID は `threads.rs::PortShape` に置く。
 再有効化前の一致の検証は `Bridge::reactivate` に集約し、無効化後・有効化前だけに記述を読む。
 名前・寸法を変えないメタデータの通知と、寸法・ID の不正変更や記述の失敗は `tests/isolation/audio_ports.rs` を使う（[ADR 0374](decisions/0374-dimension-preserving-audio-port-rescans.md)）。
-CLAP のノート形式の対応の公開は `echode-plugin-host/src/note_ports.rs`、全発音停止の再生成は `threads.rs::activate` に置く。
+CLAP のノート形式の対応の公開とポートごとの規則（`NoteInputs`）は `echode-plugin-host/src/note_ports.rs`、有効化前の読直しは `threads.rs::activate` に置く。
 一覧は `Processor<P>` が処理器とともに渡し、`render_plugin` が通常のイベントの前へ参照でつなぐ。
 名前の通知・無効化中のポートの増減・0 への変更・終了処理の順序は `tests/isolation/note_ports.rs` を使う（[ADR 0356](decisions/0356-clap-note-port-capabilities-and-lifecycle.md)）。
+MIDI だけのポートへの MIDI 1.0 の変換は `events.rs::write_input`、写像の単体回帰は `events_tests.rs` に置く。
+実ヘルパーの両形式と入替えは `tests/isolation/midi_notes.rs`、エンジン経路の native との一致は `tests/hosted_playback/midi_notes.rs` を使う（[ADR 0375](decisions/0375-midi-1-notes-for-midi-only-clap-ports.md)）。
 共有領域の時刻 0 のトランスポートを `clap_process.transport` に渡す処理は `threads.rs::render_plugin` に置く。
 `events.rs` の翻訳済みイベントを借り、別の保持状態や変換を作らない。
 実ヘルパーの先頭状態・途中の更新・通知なし・リセット・ブロック長の回帰は `tests/isolation/transport.rs`、診断用の出力は `echode-test-plugin/src/transport.rs` を使う。

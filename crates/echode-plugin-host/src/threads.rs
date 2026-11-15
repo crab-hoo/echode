@@ -9,13 +9,14 @@ use crate::extension::table;
 use crate::gui::GuiRequests;
 use crate::main_requests::{MainReply, MainRequest, MainRequests};
 use crate::main_signal::MainSignal;
+use crate::note_ports::NoteInputs;
 use crate::plugin_log::PluginLog;
 use crate::relay::{RelayOutput, RelayRing};
 use crate::{HostError, LoadError, gui, host_info, load_entry};
 use clack_host::events::io::{EventBuffer, InputEvents};
 use clack_host::events::{
     Pckn,
-    event_types::{MidiEvent, NoteChokeEvent, ParamValueEvent, TransportEvent},
+    event_types::{NoteChokeEvent, ParamValueEvent, TransportEvent},
 };
 use clack_host::extensions::prelude::{
     Extension, ExtensionImplementation, HostExtensionSide, HostWrapper, RawExtension,
@@ -27,10 +28,7 @@ use clap_sys::ext::audio_ports::{
     CLAP_EXT_AUDIO_PORTS, clap_audio_port_info, clap_plugin_audio_ports,
 };
 use clap_sys::ext::gui::{CLAP_EXT_GUI, clap_host_gui};
-use clap_sys::ext::note_ports::{
-    CLAP_EXT_NOTE_PORTS, CLAP_NOTE_DIALECT_MIDI, CLAP_NOTE_DIALECT_MIDI_MPE, clap_note_port_info,
-    clap_plugin_note_ports,
-};
+use clap_sys::ext::note_ports::{CLAP_EXT_NOTE_PORTS, clap_note_port_info, clap_plugin_note_ports};
 use clap_sys::ext::params::{
     CLAP_EXT_PARAMS, CLAP_PARAM_IS_READONLY, CLAP_PARAM_RESCAN_ALL, CLAP_PARAM_RESCAN_INFO,
     clap_host_params, clap_param_clear_flags, clap_param_info, clap_param_rescan_flags,
@@ -94,11 +92,11 @@ impl Drop for AudioFlag {
     }
 }
 
-/// Lifecycle events travel with the processor through the existing ownership
-/// handoff. Main replaces their storage only while the plugin is inactive.
+/// Note-port state travels with the processor through the existing ownership
+/// handoff. Main replaces its storage only while the plugin is inactive.
 struct Processor<P> {
     inner: P,
-    reset_midi: Vec<MidiEvent>,
+    notes: NoteInputs,
 }
 
 type StoppedProcessor = Processor<StoppedPluginAudioProcessor<EchodeHost>>;
@@ -108,7 +106,7 @@ impl StartedProcessor {
     fn stop_processing(self) -> StoppedProcessor {
         Processor {
             inner: self.inner.stop_processing(),
-            reset_midi: self.reset_midi,
+            notes: self.notes,
         }
     }
 }
@@ -118,11 +116,11 @@ impl StoppedProcessor {
         match self.inner.start_processing() {
             Ok(inner) => Ok(Processor {
                 inner,
-                reset_midi: self.reset_midi,
+                notes: self.notes,
             }),
             Err(error) => Err(Processor {
                 inner: error.into_stopped_processor(),
-                reset_midi: self.reset_midi,
+                notes: self.notes,
             }),
         }
     }
@@ -1249,7 +1247,7 @@ fn activate(
 ) -> Result<StoppedProcessor, HostError> {
     // Descriptors may change during deactivate. Read only after it returns,
     // before activation, and move this snapshot with the stopped processor.
-    let reset_midi = query_midi_resets(instance.raw_instance())?;
+    let notes = query_note_inputs(instance.raw_instance())?;
     let inner = instance
         .activate(
             |_, _| (),
@@ -1260,7 +1258,7 @@ fn activate(
             },
         )
         .map_err(HostError::Instance)?;
-    Ok(Processor { inner, reset_midi })
+    Ok(Processor { inner, notes })
 }
 
 fn audio_thread(bridge: &Bridge, workgroup: Option<&(String, u32)>) -> Result<(), HostError> {
@@ -2006,9 +2004,15 @@ fn render_plugin(
     // into mapping-sized storage. Port-count changes cannot grow an RT buffer.
     let choke = NoteChokeEvent::new(0, Pckn::match_all());
     let lifecycle = (region.block_command(generation) == CMD_RESET_PROCESS)
-        .then_some((&choke, &started.reset_midi));
+        .then_some((&choke, &started.notes.resets));
     region.copy_input_events(generation, &mut buffers.decoded);
-    write_input(&buffers.decoded, &mut buffers.events);
+    // Notes for a MIDI-only port become one MIDI message each, never more,
+    // so the native-sized event storage still holds them.
+    write_input(
+        &buffers.decoded,
+        &started.notes.midi_ports,
+        &mut buffers.events,
+    );
     // CLAP reads the state at sample zero from process.transport as well as
     // timestamped changes from in_events. Borrow the same converted event so
     // the two views cannot drift, and never retain it for a later block.
@@ -2832,8 +2836,8 @@ fn query_audio_ports(instance: &PluginInstance<EchodeHost>) -> Result<PortShape,
     })
 }
 
-fn query_midi_resets(plugin: &clap_plugin) -> Result<Vec<MidiEvent>, PluginFailure> {
-    let mut result = Vec::new();
+fn query_note_inputs(plugin: &clap_plugin) -> Result<NoteInputs, PluginFailure> {
+    let mut result = NoteInputs::none();
     // SAFETY: `clap_plugin_note_ports` is the table for `CLAP_EXT_NOTE_PORTS`.
     let Some(ports) = (unsafe { table::<clap_plugin_note_ports>(plugin, CLAP_EXT_NOTE_PORTS) })
     else {
@@ -2852,14 +2856,9 @@ fn query_midi_resets(plugin: &clap_plugin) -> Result<Vec<MidiEvent>, PluginFailu
         // SAFETY: `info` started zeroed, a valid `clap_note_port_info`, and the plugin only wrote
         // that type's plain fields.
         let info = unsafe { info.assume_init() };
-        if info.supported_dialects & (CLAP_NOTE_DIALECT_MIDI | CLAP_NOTE_DIALECT_MIDI_MPE) == 0 {
-            continue;
-        }
-        let port = u16::try_from(index).map_err(|_| PluginFailure::NotePortIndex)?;
-        // MIDI 1.0 defines sixteen channels per port. Port count is dynamic.
-        for channel in 0..16 {
-            result.push(MidiEvent::new(0, port, [0xB0 | channel, 120, 0]));
-        }
+        result
+            .add_port(index, info.supported_dialects)
+            .map_err(|()| PluginFailure::NotePortIndex)?;
     }
     Ok(result)
 }

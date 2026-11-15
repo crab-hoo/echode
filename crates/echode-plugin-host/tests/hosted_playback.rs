@@ -29,6 +29,8 @@ mod event_capacity;
 mod event_loss;
 #[path = "hosted_playback/latency.rs"]
 mod latency;
+#[path = "hosted_playback/midi_notes.rs"]
+mod midi_notes;
 #[path = "hosted_playback/note_edges.rs"]
 mod note_edges;
 #[path = "hosted_playback/overflow.rs"]
@@ -2869,11 +2871,13 @@ fn contract_live_discontinuity_cleanup_never_waits_for_a_reset() {
     assert!(!control.status().pending_plan);
 }
 
-fn compare_note_onsets(path: &Path, clap_id: &str, fault: Option<&str>) {
+/// Returns the stereo output heard at each rate, the same for every block size.
+fn compare_note_onsets(path: &Path, clap_id: &str, fault: Option<&str>) -> Vec<[Vec<f32>; 2]> {
     use echode_engine::OutputDeclick;
     use echode_model::TICKS_PER_QUARTER;
     use echode_realtime::Event;
 
+    let mut heard_by_rate = Vec::new();
     for rate in [48_000, 96_000] {
         let mut partition_reference = None;
         for frames in [7, 64, 512] {
@@ -3037,7 +3041,9 @@ fn compare_note_onsets(path: &Path, clap_id: &str, fault: Option<&str>) {
                 "{clap_id}: {rate} Hz / {frames} frames, stereo sample error=0, peak={peak}, first 5 ms max delta={onset_delta}"
             );
         }
+        heard_by_rate.extend(partition_reference);
     }
+    heard_by_rate
 }
 
 #[test]

@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn note_port_rescans_refresh_lifecycle_events_without_claiming_midi_under_rtsan() {
+fn note_port_rescans_refresh_lifecycle_events_under_rtsan() {
     let mut host = spawn_plugin(Some("note-ports"), SessionLayout::stereo());
     let wait = |host: &mut PluginHost, stages, activations, ports| {
         let deadline = Instant::now() + Duration::from_secs(5);

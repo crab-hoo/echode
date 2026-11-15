@@ -28,7 +28,7 @@ pub(crate) fn probe(host: HostSharedHandle<'_>, stage: u8) {
             STAGES.fetch_or(FAILED, Ordering::Relaxed);
             return;
         };
-        let passed = dialects(host) == CLAP_NOTE_DIALECT_CLAP;
+        let passed = dialects(host) == CLAP_NOTE_DIALECT_CLAP | CLAP_NOTE_DIALECT_MIDI;
         STAGES.fetch_or(if passed { stage } else { FAILED }, Ordering::Relaxed);
         rescan(host, CLAP_NOTE_PORTS_RESCAN_NAMES);
         if !ACTIVE.load(Ordering::Relaxed) {
@@ -78,7 +78,7 @@ pub(crate) fn name() -> [std::ffi::c_char; clap_sys::string_sizes::CLAP_NAME_SIZ
 }
 
 pub(crate) fn port_dialects(index: u32) -> u32 {
-    // MIDI is used only for lifecycle resets, never ordinary project notes.
+    // These ports also take CLAP, so MIDI carries only lifecycle resets here.
     CLAP_NOTE_DIALECT_CLAP
         | if index.is_multiple_of(2) {
             CLAP_NOTE_DIALECT_MIDI

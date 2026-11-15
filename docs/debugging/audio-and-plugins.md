@@ -313,8 +313,11 @@ cargo test -q -p echode-engine musical_time
 
 ### CLAP のノート形式が選ばれない・ポート変更後に発音が残る
 
-ホストの `clap.note-ports.supported_dialects` は native CLAP だけを返す。
-MIDI の全発音停止を送ることと、曲の MIDI / MPE / MIDI 2.0 の入力に対応することは別である。
+ホストの `clap.note-ports.supported_dialects` は CLAP と MIDI 1.0 を返し、MPE と MIDI 2.0 は返さない。
+CLAP を宣言せず MIDI 1.0 を宣言するポートだけが MIDI で曲のノートを受ける（[ADR 0375](../decisions/0375-midi-1-notes-for-midi-only-clap-ports.md)）。
+MIDI だけの音源が鳴らなければ、ポートの `supported_dialects` に MIDI（ビット 1）があり CLAP（ビット 0）がないかを記録する。
+MPE・MIDI 2.0 だけのポートは未対応で鳴らない。同じ音高を重ねたノートが途中で止まるのは MIDI 1.0 の意味による。
+`isolation/midi_notes.rs` の記録（種類・ポート・時刻・バイト列）と比べ、変換の欠落と形式の読み違いを分ける。
 名前の通知は再起動しない。構成を変えるプラグインは `request_restart` の後、無効化中に `RESCAN_ALL` を通知する。
 終了処理の一覧は `threads.rs::activate` が無効化中に再生成し、処理器と一緒に音声側へ渡す。
 古い一覧のまま増減を受理していないか、`isolation/note_ports.rs` の増加・減少・0 ポートの回帰と比べる。
@@ -322,7 +325,8 @@ MIDI の全発音停止を送ることと、曲の MIDI / MPE / MIDI 2.0 の入�
 ポート数・対応形式・通知時の有効化状態と stderr を残す（[ADR 0356](../decisions/0356-clap-note-port-capabilities-and-lifecycle.md)）。
 
 ```sh
-cargo test -q -p echode-plugin-host --test isolation note_ports::
+cargo test -q -p echode-plugin-host --test isolation -- note_ports:: midi_notes::
+cargo test -q -p echode-plugin-host --test hosted_playback midi_notes::
 ```
 
 ### CLAP が鳴らない・走査失敗

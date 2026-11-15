@@ -47,6 +47,7 @@ mod delay;
 mod gui;
 mod host_log;
 mod latency;
+mod midi_notes;
 mod note_ports;
 mod param_rescan;
 mod params;
@@ -151,6 +152,7 @@ impl Plugin for TestGain {
                     | Fault::TailChanged
                     | Fault::AudioPorts
                     | Fault::NotePorts
+                    | Fault::MidiNotes
             )
         {
             builder.register::<PluginStateExt>();
@@ -162,7 +164,10 @@ impl Plugin for TestGain {
         if current_role() == Role::Order || fault_now() == Fault::TailLegacy {
             builder.register::<PluginNotePorts>();
         }
-        if fault_now() == Fault::NotePorts {
+        if matches!(
+            fault_now(),
+            Fault::NotePorts | Fault::MidiNotes | Fault::OnsetMidi
+        ) {
             builder.register::<PluginNotePorts>();
         }
         if matches!(fault_now(), Fault::Latency | Fault::Delay | Fault::Claim) {
@@ -214,6 +219,9 @@ impl DefaultPluginFactory for TestGain {
         if fault_now() == Fault::NotePorts {
             note_ports::probe(host.shared(), 1);
             host.shared().request_callback();
+        }
+        if fault_now() == Fault::MidiNotes {
+            midi_notes::probe(host.shared());
         }
         let timer_probe = (fault_now() == Fault::TimerSupport)
             .then(|| timer_support::Probe::new(host))
@@ -347,6 +355,10 @@ enum Fault {
     Transport,
     /// Adds sample-accurate musical time to the input for engine transport regressions.
     Timeline,
+    /// Records the input events of two note ports whose dialects a state load switches.
+    MidiNotes,
+    /// [`Fault::Onset`] behind a MIDI-only note port. Native notes poison the output.
+    OnsetMidi,
 }
 
 /// For [`Fault::RestartNested`]: activations so far, and whether the first
@@ -385,6 +397,8 @@ fn fault_code(text: &str) -> u8 {
         "params-rescan" => 29,
         "transport" => 30,
         "timeline" => 31,
+        "midi-notes" => 32,
+        "onset-midi" => 33,
         _ if text.starts_with("restart-nested:") => 22,
         _ if text.starts_with("delay:") => 19,
         // The event counter, with the second process call held as `process-wait`.
@@ -429,6 +443,8 @@ fn fault_from_code(code: u8) -> Fault {
         29 => Fault::ParamRescan,
         30 => Fault::Transport,
         31 => Fault::Timeline,
+        32 => Fault::MidiNotes,
+        33 => Fault::OnsetMidi,
         _ => Fault::None,
     }
 }
@@ -473,20 +489,28 @@ fn note_fault(plugin_id: &CStr) {
 struct Onset {
     held: bool,
     age: u64,
+    /// A MIDI-only port received a native note: the host ignored its dialect.
+    poisoned: bool,
 }
 
 impl Onset {
+    /// With `midi`, notes come from MIDI 1.0 note messages. Wildcard lifecycle
+    /// chokes and all-sounds-off both stop the voice, as a native choke does.
     fn render(
         &mut self,
         output: &mut [f32],
         events: &clack_plugin::events::io::InputEvents<'_>,
         scale: f32,
+        midi: bool,
     ) {
         let mut next = 0usize;
         for (frame, sample) in output.iter_mut().enumerate() {
             while next < events.len() as usize && events[next].header().time() as usize <= frame {
                 use clack_plugin::events::spaces::CoreEventSpace;
                 match events[next].as_core_event() {
+                    Some(CoreEventSpace::NoteOn(_) | CoreEventSpace::NoteOff(_)) if midi => {
+                        self.poisoned = true;
+                    }
                     Some(CoreEventSpace::NoteOn(_)) => {
                         self.held = true;
                         self.age = 0;
@@ -494,11 +518,24 @@ impl Onset {
                     Some(CoreEventSpace::NoteOff(_) | CoreEventSpace::NoteChoke(_)) => {
                         self.held = false;
                     }
+                    Some(CoreEventSpace::Midi(message)) if midi => {
+                        let [status, data, value] = message.data();
+                        match (status & 0xF0, data, value) {
+                            (0x90, _, 1..) => {
+                                self.held = true;
+                                self.age = 0;
+                            }
+                            (0x80 | 0x90, _, _) | (0xB0, 120, _) => self.held = false,
+                            _ => {}
+                        }
+                    }
                     _ => {}
                 }
                 next += 1;
             }
-            *sample = if self.held {
+            *sample = if self.poisoned {
+                1.0
+            } else if self.held {
                 let ramp = self.age.min(32) as f32 / 32.0;
                 let triangle = 1.0 - ((self.age % 64) as f32 / 16.0 - 2.0).abs();
                 self.age += 1;
@@ -554,6 +591,9 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
         }
         if fault_now() == Fault::NotePorts {
             note_ports::activate();
+        }
+        if fault_now() == Fault::MidiNotes {
+            midi_notes::activate();
         }
         if fault_now() == Fault::Latency {
             latency::activated(&main_thread.host);
@@ -641,6 +681,9 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
         }
         if self.fault == Fault::NotePorts {
             note_ports::deactivate(main_thread.host.shared());
+        }
+        if self.fault == Fault::MidiNotes {
+            midi_notes::deactivate();
         }
     }
 
@@ -751,7 +794,12 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
                 fill_outputs(&mut audio, note_ports::render(events.input));
                 return Ok(ProcessStatus::Continue);
             }
-            Fault::Onset => {
+            Fault::MidiNotes => {
+                midi_notes::record(events.input);
+                fill_outputs(&mut audio, 0.0);
+                return Ok(ProcessStatus::Continue);
+            }
+            Fault::Onset | Fault::OnsetMidi => {
                 let initial = self.onset;
                 let mut channel = 0usize;
                 for mut port in &mut audio {
@@ -770,6 +818,7 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
                             output,
                             events.input,
                             if channel == 0 { 0.25 } else { -0.125 },
+                            self.fault == Fault::OnsetMidi,
                         );
                         self.onset = state;
                         channel += 1;
@@ -1402,6 +1451,16 @@ unsafe extern "C" fn state_save(plugin: *const clap_plugin, stream: *const clap_
             })
         };
     }
+    if fault_now() == Fault::MidiNotes {
+        let bytes = midi_notes::snapshot();
+        // SAFETY: the host's live stream receives this readable local buffer.
+        return unsafe {
+            (*stream).write.is_some_and(|write| {
+                write(stream, bytes.as_ptr().cast::<c_void>(), bytes.len() as u64)
+                    == bytes.len() as i64
+            })
+        };
+    }
     let byte = if fault_now() == Fault::ThreadCheck {
         thread_check::snapshot()
     } else if fault_now() == Fault::TimerSupport {
@@ -1545,6 +1604,9 @@ unsafe extern "C" fn state_load(plugin: *const clap_plugin, stream: *const clap_
             if fault_now() == Fault::NotePorts {
                 note_ports::change(wrapper.main_thread().host.shared(), byte);
             }
+            if fault_now() == Fault::MidiNotes {
+                midi_notes::change(wrapper.main_thread().host.shared(), byte);
+            }
             Ok(())
         });
     }
@@ -1578,6 +1640,9 @@ unsafe extern "C" fn note_port_count(_plugin: *const clap_plugin, is_input: bool
     if fault_now() == Fault::NotePorts {
         return note_ports::count(is_input);
     }
+    if fault_now() == Fault::MidiNotes {
+        return if is_input { midi_notes::PORTS } else { 0 };
+    }
     // Three ports only exercise this fixture's declaration and final port.
     if fault_now() == Fault::TailLegacy {
         if is_input { 3 } else { 0 }
@@ -1604,6 +1669,10 @@ unsafe extern "C" fn note_port_get(
             id: index,
             supported_dialects: if fault_now() == Fault::NotePorts {
                 note_ports::port_dialects(index)
+            } else if fault_now() == Fault::MidiNotes {
+                midi_notes::dialects(index)
+            } else if fault_now() == Fault::OnsetMidi {
+                CLAP_NOTE_DIALECT_MIDI
             } else {
                 CLAP_NOTE_DIALECT_CLAP
                     | if fault_now() == Fault::TailLegacy {
@@ -1612,7 +1681,13 @@ unsafe extern "C" fn note_port_get(
                         0
                     }
             },
-            preferred_dialect: CLAP_NOTE_DIALECT_CLAP,
+            preferred_dialect: if fault_now() == Fault::MidiNotes {
+                midi_notes::dialects(index)
+            } else if fault_now() == Fault::OnsetMidi {
+                CLAP_NOTE_DIALECT_MIDI
+            } else {
+                CLAP_NOTE_DIALECT_CLAP
+            },
             name: if fault_now() == Fault::NotePorts {
                 note_ports::name()
             } else {

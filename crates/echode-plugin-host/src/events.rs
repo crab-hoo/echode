@@ -2,10 +2,15 @@
 //!
 //! `None` in a destination becomes CLAP's -1. The buffer belongs to the caller
 //! so a reused buffer does not allocate on later blocks.
+//!
+//! A note input port that accepts MIDI 1.0 but not CLAP notes receives each
+//! note event as at most one MIDI message. MIDI carries no note ids and has no
+//! per-note tuning or brightness on one channel (that would need MPE), so those
+//! are dropped, as are events with a wildcard channel or key.
 
 use clack_host::events::event_types::TransportFlags;
 use clack_host::events::event_types::{
-    NoteChokeEvent, NoteExpressionEvent, NoteExpressionType, NoteOffEvent, NoteOnEvent,
+    MidiEvent, NoteChokeEvent, NoteExpressionEvent, NoteExpressionType, NoteOffEvent, NoteOnEvent,
     ParamModEvent, ParamValueEvent, TransportEvent,
 };
 use clack_host::events::io::EventBuffer;
@@ -14,8 +19,18 @@ use clack_host::utils::{BeatTime, ClapId, SecondsTime};
 use echode_realtime::{Event, ExpressionKind, Target, Transport};
 
 /// Appends `events` to `buffer` in order. The caller clears `buffer` first.
-pub fn write_input(events: &[Event], buffer: &mut EventBuffer) {
+///
+/// `midi_ports[port]` is true for an input note port that takes MIDI 1.0
+/// instead of CLAP notes. Missing entries are native ports.
+pub fn write_input(events: &[Event], midi_ports: &[bool], buffer: &mut EventBuffer) {
     for event in events {
+        if let Some(port) = midi_port(event, midi_ports) {
+            // A MIDI message is smaller than the native event it replaces.
+            if let Some(data) = midi_message(event) {
+                buffer.push(&MidiEvent::new(event.time(), port, data));
+            }
+            continue;
+        }
         match event {
             Event::NoteOn(note) => {
                 buffer.push(&NoteOnEvent::new(
@@ -73,6 +88,50 @@ pub fn write_input(events: &[Event], buffer: &mut EventBuffer) {
     }
 }
 
+/// The port of a note event bound for a MIDI-only port. A wildcard port stays
+/// native: one MIDI message cannot address several ports.
+fn midi_port(event: &Event, midi_ports: &[bool]) -> Option<u16> {
+    let target = match event {
+        Event::NoteOn(note) | Event::NoteOff(note) => note.target,
+        Event::NoteChoke(note) => note.target,
+        Event::Expression(note) => note.target,
+        Event::Transport(_) | Event::ParamValue(_) | Event::ParamMod(_) => return None,
+    };
+    let port = target.port?;
+    midi_ports
+        .get(usize::from(port))
+        .copied()
+        .unwrap_or(false)
+        .then_some(port)
+}
+
+/// The MIDI 1.0 channel message for one note event, if it has one.
+fn midi_message(event: &Event) -> Option<[u8; 3]> {
+    let (status, target, value) = match event {
+        // Velocity 0 would be a note-off, so the quietest note-on is 1.
+        Event::NoteOn(note) => (0x90, note.target, seven_bits(note.velocity).max(1)),
+        Event::NoteOff(note) => (0x80, note.target, seven_bits(note.velocity)),
+        // MIDI 1.0 has no choke. Ending the note is the nearest message.
+        Event::NoteChoke(note) => (0x80, note.target, 0),
+        Event::Expression(note) if note.kind == ExpressionKind::Pressure => {
+            (0xA0, note.target, seven_bits(note.value))
+        }
+        _ => return None,
+    };
+    let channel = target
+        .channel
+        .and_then(|channel| u8::try_from(channel).ok());
+    let channel = channel.filter(|channel| *channel < 16)?;
+    let key = target.key.filter(|key| *key < 128)?;
+    Some([status | channel, key, value])
+}
+
+/// CLAP's 0..=1 to MIDI's 0..=127 at the nearest step. Values outside clamp.
+fn seven_bits(value: f64) -> u8 {
+    // NaN survives `clamp`; the saturating cast turns it into 0.
+    (value.clamp(0.0, 1.0) * 127.0).round() as u8
+}
+
 fn pckn(target: Target) -> Pckn {
     Pckn::from_raw(
         target
@@ -124,57 +183,5 @@ fn transport(event: &Transport) -> TransportEvent {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::write_input;
-    use clack_host::events::Event as ClapEvent;
-    use clack_host::events::io::{EventBuffer, InputEvents};
-    use clack_host::events::spaces::CoreEventSpace;
-    use echode_realtime::{Event, ParamEvent, Target};
-
-    #[test]
-    fn the_host_receives_the_same_note_and_an_unspecified_note_id() {
-        let events = [
-            Event::note_on(3, 1, 7, 60, 1.0),
-            Event::ParamValue(ParamEvent {
-                time: 3,
-                track: 1,
-                param_id: 2,
-                target: Target::any(),
-                value: 0.25,
-            }),
-        ];
-        let mut buffer = EventBuffer::new();
-        write_input(&events, &mut buffer);
-        let input = InputEvents::from_buffer(&buffer);
-        assert_eq!(input.len(), 2);
-        let Some(CoreEventSpace::NoteOn(note)) = input[0].as_core_event() else {
-            panic!("note on");
-        };
-        assert_eq!(ClapEvent::time(note), 3);
-        assert_eq!(note.velocity(), 1.0);
-        assert_eq!(note.key(), clack_host::events::Match::Specific(60));
-        assert_eq!(note.note_id(), clack_host::events::Match::Specific(7));
-        let Some(CoreEventSpace::ParamValue(param)) = input[1].as_core_event() else {
-            panic!("param");
-        };
-        assert_eq!(param.note_id(), clack_host::events::Match::All);
-        assert_eq!(param.param_id(), clack_host::utils::ClapId::new(2));
-    }
-
-    #[test]
-    fn the_invalid_clap_parameter_id_is_skipped() {
-        let invalid = ParamEvent {
-            time: 0,
-            track: 1,
-            param_id: u32::MAX,
-            target: Target::any(),
-            value: 0.5,
-        };
-        let mut buffer = EventBuffer::new();
-        write_input(
-            &[Event::ParamValue(invalid), Event::ParamMod(invalid)],
-            &mut buffer,
-        );
-        assert_eq!(InputEvents::from_buffer(&buffer).len(), 0);
-    }
-}
+#[path = "events_tests.rs"]
+mod tests;
