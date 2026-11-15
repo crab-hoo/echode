@@ -35,8 +35,9 @@ use clap_sys::ext::audio_ports::{
     clap_audio_port_info, clap_plugin_audio_ports,
 };
 use clap_sys::ext::note_ports::{
-    CLAP_EXT_NOTE_PORTS, CLAP_NOTE_DIALECT_CLAP, CLAP_NOTE_DIALECT_MIDI, CLAP_NOTE_DIALECT_MIDI2,
-    clap_note_port_info, clap_plugin_note_ports,
+    CLAP_EXT_NOTE_PORTS, CLAP_NOTE_DIALECT_CLAP, CLAP_NOTE_DIALECT_MIDI,
+    CLAP_NOTE_DIALECT_MIDI_MPE, CLAP_NOTE_DIALECT_MIDI2, clap_note_port_info,
+    clap_plugin_note_ports,
 };
 use clap_sys::ext::state::{CLAP_EXT_STATE, clap_host_state, clap_plugin_state};
 use clap_sys::plugin::clap_plugin;
@@ -166,7 +167,11 @@ impl Plugin for TestGain {
         }
         if matches!(
             fault_now(),
-            Fault::NotePorts | Fault::MidiNotes | Fault::OnsetMidi | Fault::OnsetMidi2
+            Fault::NotePorts
+                | Fault::MidiNotes
+                | Fault::OnsetMidi
+                | Fault::OnsetMidi2
+                | Fault::OnsetMpe
         ) {
             builder.register::<PluginNotePorts>();
         }
@@ -361,6 +366,9 @@ enum Fault {
     OnsetMidi,
     /// [`Fault::Onset`] behind a MIDI 2.0-only port. Other note dialects poison it.
     OnsetMidi2,
+    /// [`Fault::Onset`] behind an MPE-only port. A note before the fifteen-channel
+    /// Lower Zone configuration, on the manager channel, or in another dialect poisons it.
+    OnsetMpe,
 }
 
 /// For [`Fault::RestartNested`]: activations so far, and whether the first
@@ -402,6 +410,7 @@ fn fault_code(text: &str) -> u8 {
         "midi-notes" => 32,
         "onset-midi" => 33,
         "onset-midi2" => 34,
+        "onset-mpe" => 35,
         _ if text.starts_with("restart-nested:") => 22,
         _ if text.starts_with("delay:") => 19,
         // The event counter, with the second process call held as `process-wait`.
@@ -449,6 +458,7 @@ fn fault_from_code(code: u8) -> Fault {
         32 => Fault::MidiNotes,
         33 => Fault::OnsetMidi,
         34 => Fault::OnsetMidi2,
+        35 => Fault::OnsetMpe,
         _ => Fault::None,
     }
 }
@@ -495,6 +505,10 @@ struct Onset {
     age: u64,
     /// A MIDI-only port received a native note: the host ignored its dialect.
     poisoned: bool,
+    /// MPE only: RPN 6 is selected on the manager channel (LSB, then MSB seen).
+    zone_rpn: u8,
+    /// MPE only: a fifteen-member Lower Zone was configured in this activation.
+    zoned: bool,
 }
 
 impl Onset {
@@ -535,6 +549,9 @@ impl Onset {
                             _ => {}
                         }
                     }
+                    Some(CoreEventSpace::Midi(message)) if dialect == Fault::OnsetMpe => {
+                        self.mpe(message.data());
+                    }
                     Some(CoreEventSpace::Midi2(message)) if dialect == Fault::OnsetMidi2 => {
                         let [word, _, _, _] = message.data();
                         match (word >> 20) & 0xF {
@@ -566,6 +583,25 @@ impl Onset {
             } else {
                 0.0
             };
+        }
+    }
+
+    /// One MIDI 1.0 message for an MPE-only port. The host must first set a
+    /// fifteen-member Lower Zone with RPN 6 on the manager channel, then play
+    /// every note on a member channel (MPE v1.1, CLAP's MIDI_MPE dialect).
+    fn mpe(&mut self, [status, data, value]: [u8; 3]) {
+        let channel = status & 0x0F;
+        match (status & 0xF0, data, value) {
+            (0xB0, 100, 6) if channel == 0 => self.zone_rpn |= 1,
+            (0xB0, 101, 0) if channel == 0 => self.zone_rpn |= 2,
+            (0xB0, 6, 15) if channel == 0 && self.zone_rpn == 3 => self.zoned = true,
+            (0xB0, 120, _) => self.held = false,
+            (0x90, _, 1..) if self.zoned && channel != 0 => {
+                self.held = true;
+                self.age = 0;
+            }
+            (0x80 | 0x90, _, _) if channel != 0 => self.held = false,
+            _ => self.poisoned = true,
         }
     }
 }
@@ -721,7 +757,12 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
         if self.fault == Fault::ThreadCheck {
             let _ = thread_check::check(self.host, thread_check::RESET);
         }
-        self.onset = Onset::default();
+        // A reset ends voices. Like a real MPE receiver, the zone stays configured.
+        self.onset = Onset {
+            zone_rpn: self.onset.zone_rpn,
+            zoned: self.onset.zoned,
+            ..Onset::default()
+        };
         if let Some(line) = &mut self.delay {
             line.reset();
         }
@@ -822,7 +863,7 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
                 fill_outputs(&mut audio, 0.0);
                 return Ok(ProcessStatus::Continue);
             }
-            Fault::Onset | Fault::OnsetMidi | Fault::OnsetMidi2 => {
+            Fault::Onset | Fault::OnsetMidi | Fault::OnsetMidi2 | Fault::OnsetMpe => {
                 let initial = self.onset;
                 let mut channel = 0usize;
                 for mut port in &mut audio {
@@ -1698,6 +1739,8 @@ unsafe extern "C" fn note_port_get(
                 CLAP_NOTE_DIALECT_MIDI
             } else if fault_now() == Fault::OnsetMidi2 {
                 CLAP_NOTE_DIALECT_MIDI2
+            } else if fault_now() == Fault::OnsetMpe {
+                CLAP_NOTE_DIALECT_MIDI_MPE
             } else {
                 CLAP_NOTE_DIALECT_CLAP
                     | if fault_now() == Fault::TailLegacy {
@@ -1712,6 +1755,8 @@ unsafe extern "C" fn note_port_get(
                 CLAP_NOTE_DIALECT_MIDI
             } else if fault_now() == Fault::OnsetMidi2 {
                 CLAP_NOTE_DIALECT_MIDI2
+            } else if fault_now() == Fault::OnsetMpe {
+                CLAP_NOTE_DIALECT_MIDI_MPE
             } else {
                 CLAP_NOTE_DIALECT_CLAP
             },

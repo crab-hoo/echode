@@ -85,9 +85,9 @@ fn midi_only_note_ports_receive_midi_1_notes_and_follow_inactive_changes_under_r
         ..SessionLayout::stereo()
     };
     let mut host = spawn_plugin(Some("midi-notes"), layout);
-    // The host claims CLAP, MIDI 1.0 and MIDI 2.0, not MPE.
+    // The host claims CLAP, MIDI 1.0, MPE and MIDI 2.0.
     // Port 1 starts MIDI 1.0-only and port 0 CLAP-only.
-    wait_for(&host, [0b1011, 1, 0b10]);
+    wait_for(&host, [0b1111, 1, 0b10]);
     let events = [
         note(true, 2, 0, 0, 60, 1.0),
         note(true, 3, 1, 2, 61, 100.0 / 127.0),
@@ -125,7 +125,7 @@ fn midi_only_note_ports_receive_midi_1_notes_and_follow_inactive_changes_under_r
     host.control_handle()
         .restore_state(&[0b01])
         .expect("swap the port dialects");
-    wait_for(&host, [0b1011, 2, 0b01]);
+    wait_for(&host, [0b1111, 2, 0b01]);
     check(
         &mut host,
         &[
@@ -140,11 +140,11 @@ fn midi_only_note_ports_receive_midi_1_notes_and_follow_inactive_changes_under_r
 #[test]
 fn midi2_ports_refresh_notes_and_all_sounds_off_on_every_activation_under_rtsan() {
     let mut host = spawn_plugin(Some("midi-notes"), SessionLayout::stereo());
-    wait_for(&host, [0b1011, 1, 0b10]);
+    wait_for(&host, [0b1111, 1, 0b10]);
     // Change MIDI 1.0 -> MIDI 2.0, swap native/UMP ports, remove UMP, restore.
     for (step, layout) in [0x82, 0x81, 0, 0x82].into_iter().enumerate() {
         host.control_handle().restore_state(&[layout]).unwrap();
-        wait_for(&host, [0b1011, step as u8 + 2, layout]);
+        wait_for(&host, [0b1111, step as u8 + 2, layout]);
         for frames in [8, 256] {
             for reset in [false, true] {
                 let port = if layout == 0x81 { 0 } else { 1 };
@@ -192,6 +192,105 @@ fn midi2_ports_refresh_notes_and_all_sounds_off_on_every_activation_under_rtsan(
                     expected,
                     "MIDI2 note/reset stream: layout={layout}, frames={frames}, reset={reset}"
                 );
+            }
+        }
+    }
+}
+
+fn numbered(on: bool, time: u32, port: u16, key: u8, note_id: u32) -> Event {
+    let note = NoteEvent {
+        time,
+        track: 1,
+        target: Target {
+            port: Some(port),
+            channel: Some(0),
+            key: Some(key),
+            note_id: Some(note_id),
+        },
+        velocity: if on { 1.0 } else { 0.0 },
+    };
+    if on {
+        Event::NoteOn(note)
+    } else {
+        Event::NoteOff(note)
+    }
+}
+
+#[test]
+fn mpe_ports_configure_a_zone_per_run_and_keep_each_note_on_its_member_channel_under_rtsan() {
+    let layout = SessionLayout {
+        input_events: 16,
+        ..SessionLayout::stereo()
+    };
+    let mut host = spawn_plugin(Some("midi-notes"), layout);
+    wait_for(&host, [0b1111, 1, 0b10]);
+    // MPE on port 1, then on port 0, then plain MIDI 1.0 on port 1: each
+    // activation reads the routes again, and only MPE gets a zone.
+    for (step, layout) in [0x42u8, 0x41, 0x02].into_iter().enumerate() {
+        host.control_handle().restore_state(&[layout]).unwrap();
+        wait_for(&host, [0b1111, step as u8 + 2, layout]);
+        let mpe = layout & 0x40 != 0;
+        let port = u16::from(layout & 1 == 0);
+        // Two overlapping notes share key 61 under different ids.
+        let events = [
+            numbered(true, 1, port, 61, 5),
+            numbered(true, 2, port, 61, 6),
+            numbered(true, 2, 1 - port, 60, 7),
+            numbered(false, 3, port, 61, 5),
+            numbered(true, 4, port, 62, 8),
+            numbered(false, 5, port, 61, 6),
+            numbered(false, 6, port, 62, 8),
+            numbered(false, 7, 1 - port, 60, 7),
+        ];
+        // The fixture's member of the first note, and whether the next block
+        // starts a run or follows a reset.
+        let (mut first, mut configure) = (0u8, true);
+        for frames in [8, 256] {
+            for reset in [false, true] {
+                if reset {
+                    host.request_reset();
+                    (first, configure) = (0, true);
+                }
+                let input = stereo(frames, 0.0);
+                let mut output = stereo(frames, 0.0);
+                host.process_block(
+                    frames,
+                    &[&input[0], &input[1]],
+                    &mut outs(&mut output),
+                    &events,
+                    &mut [],
+                    Duration::from_secs(2),
+                )
+                .unwrap();
+                let mut expected = Vec::new();
+                if reset {
+                    expected.push((3, u16::MAX, 0, [0xFF, 0, 0, 0]));
+                    for channel in 0..16 {
+                        expected.push((MIDI, port, 0, midi(0xB0 | channel, 120, 0)));
+                    }
+                }
+                let member = |offset: u8| if mpe { (first + offset) % 15 + 1 } else { 0 };
+                if mpe && configure {
+                    expected.push((MIDI, port, 0, midi(0xB0, 100, 6)));
+                    expected.push((MIDI, port, 0, midi(0xB0, 101, 0)));
+                    expected.push((MIDI, port, 0, midi(0xB0, 6, 15)));
+                }
+                expected.extend([
+                    (MIDI, port, 1, midi(0x90 | member(0), 61, 127)),
+                    (MIDI, port, 2, midi(0x90 | member(1), 61, 127)),
+                    (NATIVE_ON, 1 - port, 2, [60, 0, 0, 0]),
+                    (MIDI, port, 3, midi(0x80 | member(0), 61, 0)),
+                    (MIDI, port, 4, midi(0x90 | member(2), 62, 127)),
+                    (MIDI, port, 5, midi(0x80 | member(1), 61, 0)),
+                    (MIDI, port, 6, midi(0x80 | member(2), 62, 0)),
+                    (NATIVE_OFF, 1 - port, 7, [60, 0, 0, 0]),
+                ]);
+                assert_eq!(
+                    snapshot(&host).1,
+                    expected,
+                    "MPE note/zone stream: layout={layout:#x}, frames={frames}, reset={reset}"
+                );
+                (first, configure) = ((first + 3) % 15, false);
             }
         }
     }

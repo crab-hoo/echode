@@ -16,11 +16,22 @@ fn every_dialect_combination_preserves_existing_routes_and_resets() {
             NoteDialect::Midi
         } else if flags & MIDI2 != 0 {
             NoteDialect::Midi2
+        } else if flags & MPE != 0 {
+            NoteDialect::Mpe
         } else {
             NoteDialect::Clap
         };
         assert_eq!(inputs.dialects[flags as usize], expected, "flags={flags}");
     }
+    // Only the MPE-only port gets a zone (`mpe_tests.rs` checks its configuration).
+    assert_eq!(
+        inputs
+            .zones
+            .iter()
+            .map(|zone| zone.port())
+            .collect::<Vec<_>>(),
+        [MPE as u16]
+    );
     let midi: Vec<_> = (0..16u16)
         .filter(|flags| u32::from(*flags) & (MIDI | MPE) != 0)
         .flat_map(|port| (0..16).map(move |channel| (port, [0xB0 | channel, 120, 0])))
@@ -76,4 +87,20 @@ fn unaddressable_midi_ports_are_refused_including_midi2_only_ports() {
             .iter()
             .all(|event| event.port_index() == u16::MAX)
     );
+}
+
+#[test]
+fn a_reset_or_new_run_forgets_members_and_configures_once_per_block() {
+    let mut inputs = NoteInputs::none();
+    inputs.add_port(0, MPE).unwrap();
+    // A fresh activation configures its first block, then not again.
+    assert!(inputs.take_configure());
+    assert!(!inputs.take_configure());
+    assert_eq!(inputs.zones[0].start(1, 60), 1);
+    assert_eq!(inputs.zones[0].start(2, 60), 2);
+    let _guard = crate::realtime::ForbidAlloc::enter();
+    inputs.start_over();
+    assert!(inputs.take_configure());
+    assert_eq!(inputs.zones[0].end(1, 60), None);
+    assert_eq!(inputs.zones[0].start(3, 60), 1);
 }

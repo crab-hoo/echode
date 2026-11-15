@@ -411,6 +411,8 @@ CLAP のノート形式の対応の公開とポートごとの規則（`NoteInpu
 名前の通知・無効化中のポートの増減・0 への変更・終了処理の順序は `tests/isolation/note_ports.rs` を使う（[ADR 0356](decisions/0356-clap-note-port-capabilities-and-lifecycle.md)）。
 MIDI だけのポートへの変換は `events.rs::write_input` と `NoteDialect`、写像の単体回帰は `events_tests.rs` に置く。
 MIDI 2.0 はグループ 0 の UMP と 16 bit のベロシティを使い、終了処理は `NoteInputs::midi2_resets` に置く（[ADR 0379](decisions/0379-midi2-notes-for-clap-ports.md)）。
+MPE のメンバーの割当とゾーンの設定は `mpe.rs::MpeZone`、性質の回帰は `mpe_tests.rs` に置く。
+開始とリセットでの消去は `NoteInputs::start_over`、1 ブロック 1 回の変換は `threads.rs::translate_events` が行う（[ADR 0380](decisions/0380-mpe-member-channels-for-clap-ports.md)）。
 実ヘルパーの各形式・入替え・終了処理は `tests/isolation/midi_notes.rs`、エンジン経路の native との一致は `tests/hosted_playback/midi_notes.rs` を使う。
 共有領域の時刻 0 のトランスポートを `clap_process.transport` に渡す処理は `threads.rs::render_plugin` に置く。
 `events.rs` の翻訳済みイベントを借り、別の保持状態や変換を作らない。

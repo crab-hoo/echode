@@ -6,7 +6,10 @@
 //! Non-native note ports receive at most one MIDI 1.0 message or MIDI 2.0 UMP
 //! per event. Both lose note ids and wildcard channel/key addressing. Pitch and
 //! brightness need additional configuration/mapping and are not translated.
+//! MPE ports get each note on a member channel chosen by its zone. Expressions
+//! would need exclusive channels and initial values per note: not sent there.
 
+use crate::mpe::MpeZone;
 use crate::note_ports::NoteDialect;
 use clack_host::events::event_types::TransportFlags;
 use clack_host::events::event_types::{
@@ -21,7 +24,14 @@ use echode_realtime::{Event, ExpressionKind, Target, Transport};
 /// Appends `events` to `buffer` in order. The caller clears `buffer` first.
 ///
 /// `dialects[port]` selects the note wire format. Missing entries stay native.
-pub fn write_input(events: &[Event], dialects: &[NoteDialect], buffer: &mut EventBuffer) {
+/// `zones` holds, in port order, the member channels of every MPE port.
+/// A note for an MPE port without a zone is not sent.
+pub fn write_input(
+    events: &[Event],
+    dialects: &[NoteDialect],
+    zones: &mut [MpeZone],
+    buffer: &mut EventBuffer,
+) {
     for event in events {
         if let Some((port, dialect)) = midi_port(event, dialects) {
             // Both MIDI events fit the native-sized storage they replace.
@@ -34,6 +44,15 @@ pub fn write_input(events: &[Event], dialects: &[NoteDialect], buffer: &mut Even
                 NoteDialect::Midi2 => {
                     if let Some(data) = midi2_message(event) {
                         buffer.push(&Midi2Event::new(event.time(), port, data));
+                    }
+                }
+                NoteDialect::Mpe => {
+                    let zone = zones
+                        .binary_search_by_key(&port, MpeZone::port)
+                        .ok()
+                        .and_then(|index| zones.get_mut(index));
+                    if let Some(data) = zone.and_then(|zone| mpe_message(event, zone)) {
+                        buffer.push(&MidiEvent::new(event.time(), port, data));
                     }
                 }
                 NoteDialect::Clap => {}
@@ -130,6 +149,25 @@ fn midi_message(event: &Event) -> Option<[u8; 3]> {
     let channel = channel.filter(|channel| *channel < 16)?;
     let key = target.key.filter(|key| *key < 128)?;
     Some([status | channel, key, value])
+}
+
+/// A note on its zone's member channel. The note id finds the channel of the
+/// note-on; the event's own channel is not used. Expressions are not sent.
+fn mpe_message(event: &Event, zone: &mut MpeZone) -> Option<[u8; 3]> {
+    let (on, target, value) = match event {
+        Event::NoteOn(note) => (true, note.target, seven_bits(note.velocity).max(1)),
+        Event::NoteOff(note) => (false, note.target, seven_bits(note.velocity)),
+        Event::NoteChoke(note) => (false, note.target, 0),
+        _ => return None,
+    };
+    // Check the address before the zone counts a note.
+    let key = target.key.filter(|key| *key < 128)?;
+    let note_id = target.note_id?;
+    if on {
+        Some([0x90 | zone.start(note_id, key), key, value])
+    } else {
+        Some([0x80 | zone.end(note_id, key)?, key, value])
+    }
 }
 
 /// MIDI 2.0 channel voice UMP, group zero, no note attributes (M2-104 §7.4).

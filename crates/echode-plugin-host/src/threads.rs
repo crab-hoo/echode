@@ -9,6 +9,7 @@ use crate::extension::table;
 use crate::gui::GuiRequests;
 use crate::main_requests::{MainReply, MainRequest, MainRequests};
 use crate::main_signal::MainSignal;
+use crate::mpe::ZoneConfigs;
 use crate::note_ports::NoteInputs;
 use crate::plugin_log::PluginLog;
 use crate::relay::{RelayOutput, RelayRing};
@@ -112,12 +113,16 @@ impl StartedProcessor {
 }
 
 impl StoppedProcessor {
-    fn start_processing(self) -> Result<StartedProcessor, Self> {
+    fn start_processing(mut self) -> Result<StartedProcessor, Self> {
         match self.inner.start_processing() {
-            Ok(inner) => Ok(Processor {
-                inner,
-                notes: self.notes,
-            }),
+            Ok(inner) => {
+                // A run starts without voices; its first block configures MPE zones.
+                self.notes.start_over();
+                Ok(Processor {
+                    inner,
+                    notes: self.notes,
+                })
+            }
             Err(error) => Err(Processor {
                 inner: error.into_stopped_processor(),
                 notes: self.notes,
@@ -1468,13 +1473,26 @@ fn service_block(
             if let Some(active) = started.as_mut() {
                 if command == CMD_RESET_PROCESS {
                     active.inner.reset();
+                    active.notes.start_over();
                 }
+                let configure = active.notes.take_configure();
+                // Once per block: MPE member assignment counts each note once,
+                // even when a chain runs this instance for several stages.
+                translate_events(region, generation, active, buffers);
                 for stage in 0..stages {
                     if stage > 0 {
                         region.feed_output_to_input(generation)?;
                     }
-                    if render_plugin(region, generation, active, frames, buffers, &bridge.relay)
-                        .is_err()
+                    if render_plugin(
+                        region,
+                        generation,
+                        active,
+                        frames,
+                        buffers,
+                        &bridge.relay,
+                        configure,
+                    )
+                    .is_err()
                     {
                         region.mark_process_refused();
                         return Err(RtFail::Process);
@@ -1962,6 +1980,27 @@ fn wait_control(bridge: &Bridge, seen: u64) -> u64 {
         .unwrap_or(seen.wrapping_add(1))
 }
 
+/// The block's events in each port's dialect, for every stage of the block.
+fn translate_events(
+    region: &MappedRegion,
+    generation: u64,
+    started: &mut StartedProcessor,
+    buffers: &mut PluginBuffers,
+) {
+    buffers.events.clear();
+    region.copy_input_events(generation, &mut buffers.decoded);
+    // Notes for a MIDI-only port become one MIDI message each, never more,
+    // so the native-sized event storage still holds them.
+    write_input(
+        &buffers.decoded,
+        &started.notes.dialects,
+        &mut started.notes.zones,
+        &mut buffers.events,
+    );
+}
+
+/// `configure` puts each MPE port's zone configuration after the resets and
+/// before the block's notes.
 fn render_plugin(
     region: &MappedRegion,
     generation: u64,
@@ -1969,6 +2008,7 @@ fn render_plugin(
     frames: usize,
     buffers: &mut PluginBuffers,
     relay: &RelayRing,
+    configure: bool,
 ) -> Result<(), ()> {
     for (channel, plane) in buffers.input.iter_mut().enumerate() {
         // SAFETY: `prepare_block` bounded `frames` by the plane size of the shared region, `fits`
@@ -1999,21 +2039,14 @@ fn render_plugin(
         .map(move |(&count, &start)| port_outputs(output_ptr, start, count as usize, frames));
     let input_audio = buffers.input_ports.with_input_buffers(input_ports);
     let mut output_audio = buffers.output_ports.with_output_buffers(output_ports);
-    buffers.events.clear();
     // Lifecycle events precede same-time project notes without copying them
     // into mapping-sized storage. Port-count changes cannot grow an RT buffer.
     let choke = NoteChokeEvent::new(0, Pckn::match_all());
     let midi_resets = (&started.notes.resets, &started.notes.midi2_resets);
-    let lifecycle =
+    let reset =
         (region.block_command(generation) == CMD_RESET_PROCESS).then_some((&choke, &midi_resets));
-    region.copy_input_events(generation, &mut buffers.decoded);
-    // Notes for a MIDI-only port become one MIDI message each, never more,
-    // so the native-sized event storage still holds them.
-    write_input(
-        &buffers.decoded,
-        &started.notes.dialects,
-        &mut buffers.events,
-    );
+    let zones = configure.then_some(ZoneConfigs(&started.notes.zones));
+    let lifecycle = (&reset, &zones);
     // CLAP reads the state at sample zero from process.transport as well as
     // timestamped changes from in_events. Borrow the same converted event so
     // the two views cannot drift, and never retain it for a later block.

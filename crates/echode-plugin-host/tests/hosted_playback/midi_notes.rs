@@ -34,3 +34,20 @@ fn midi2_only_note_ports_match_native_note_onsets_under_rtsan() {
         "MIDI2-only notes differ from native CLAP notes"
     );
 }
+
+/// MPE-only instruments must be configured as a Lower Zone and hear each
+/// project note on a member channel, not native CLAP notes on the manager.
+#[test]
+fn mpe_only_note_ports_match_native_note_onsets_under_rtsan() {
+    let native = compare_note_onsets(&plugin_dylib(), "dev.echode.test-instrument", Some("onset"));
+    let mpe = compare_note_onsets(
+        &plugin_dylib(),
+        "dev.echode.test-instrument",
+        Some("onset-mpe"),
+    );
+    assert_eq!(native.len(), 2);
+    assert!(
+        mpe == native,
+        "MPE-only notes differ from native CLAP notes"
+    );
+}

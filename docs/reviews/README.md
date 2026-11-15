@@ -70,7 +70,7 @@
   `thread-check`・`log`・`timer-support` は [ADR 0347](../decisions/0347-clap-thread-check.md)・[ADR 0349](../decisions/0349-clap-log-relay.md)・[ADR 0351](../decisions/0351-clap-main-thread-timers.md)。
   `tail` の変更と書出しの確定前の読直しは [ADR 0352](../decisions/0352-live-clap-tails-and-export-fence.md)。
   ノート形式と終了処理は [ADR 0356](../decisions/0356-clap-note-port-capabilities-and-lifecycle.md)、MIDI 1.0 だけのノート入力は [ADR 0375](../decisions/0375-midi-1-notes-for-midi-only-clap-ports.md)。
-  音声ポートの寸法を変えない通知は [ADR 0374](../decisions/0374-dimension-preserving-audio-port-rescans.md)、MIDI 2.0 のノート入力と終了処理は [ADR 0379](../decisions/0379-midi2-notes-for-clap-ports.md)。動的な寸法変更と MPE の入力は残る。
+  音声ポートの寸法を変えない通知は [ADR 0374](../decisions/0374-dimension-preserving-audio-port-rescans.md)、MIDI 2.0 のノート入力と終了処理は [ADR 0379](../decisions/0379-midi2-notes-for-clap-ports.md)、MPE は [ADR 0380](../decisions/0380-mpe-member-channels-for-clap-ports.md)。動的な寸法変更と表情は残る。
   ジャーナルの末尾確認（FCA-14）は [ADR 0252](../decisions/0252-bounded-journal-tail-repair.md) で全件読込みをなくした。まとめ書きは行わず、編集ごとの同期を保つ（[ADR 0276](../decisions/0276-priority-order-and-delegated-decisions.md)）。
   未使用の計画受渡しと音声側へ届かない命令（FCA-11）は [ADR 0253](../decisions/0253-product-only-playback-commands.md) で削除した。
   手書き FFI（FCA-12）は [ADR 0265](../decisions/0265-symbol-scoped-foreign-declarations.md) で既存バインディングへ移し、許可をシンボル単位にした。

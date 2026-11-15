@@ -316,12 +316,15 @@ cargo test -q -p echode-engine musical_time
 
 ### CLAP のノート形式が選ばれない・ポート変更後に発音が残る
 
-ホストの `clap.note-ports.supported_dialects` は CLAP・MIDI 1.0・MIDI 2.0 を返し、MPE は返さない。
-入力形式はこの順で選ぶ。鳴らない時はポートごとの `supported_dialects`（ビット 0・1・3）を記録する。
-MIDI 2.0 はグループ 0 の UMP だけであり、MPE だけのポートは未対応で鳴らない（[ADR 0379](../decisions/0379-midi2-notes-for-clap-ports.md)）。
-ノート ID は両 MIDI 形式とも落ちる。同じ音高の重なり・音程と明るさの表情は native と同じ意味にはならない。
+ホストの `clap.note-ports.supported_dialects` は CLAP・MIDI 1.0・MIDI 2.0・MPE を返す。
+入力形式はこの順で選ぶ。鳴らない時はポートごとの `supported_dialects`（ビット 0〜3）を記録する。
+MIDI 2.0 はグループ 0 の UMP だけである（[ADR 0379](../decisions/0379-midi2-notes-for-clap-ports.md)）。
+ノート ID は MIDI 1.0・2.0 とも落ちる。同じ音高の重なり・音程と明るさの表情は native と同じ意味にはならない。
+MPE は処理の開始とリセットごとに `B0 64 06`・`B0 65 00`・`B0 06 0F` を送り、ノートを MIDI 2〜16 で送る（[ADR 0380](../decisions/0380-mpe-member-channels-for-clap-ports.md)）。
+MPE の音が途中で切れる時は、同時の発音が 15 を超えて共有になったか、音源がゾーンの設定を受けたかを記録で分ける。
+ノートオフが送られない時は、そのノートオンが同じ処理の開始・リセットの後に届いたかを確かめる。
 `isolation/midi_notes.rs` の記録（種類・ポート・時刻・全 UMP word）と比べ、変換の欠落と形式の読み違いを分ける。
-リセットでは native チョーク・MIDI 1.0 CC120・MIDI 2.0 CC120 が時刻 0 で通常ノートに先行する。
+リセットでは native チョーク・MIDI 1.0 CC120・MIDI 2.0 CC120・MPE のゾーンの設定が時刻 0 で通常ノートに先行する。
 名前の通知は再起動しない。構成を変えるプラグインは `request_restart` の後、無効化中に `RESCAN_ALL` を通知する。
 終了処理の一覧は `threads.rs::activate` が無効化中に再生成し、処理器と一緒に音声側へ渡す。
 古い一覧のまま増減を受理していないか、`isolation/note_ports.rs` の増加・減少・0 ポートの回帰と比べる。

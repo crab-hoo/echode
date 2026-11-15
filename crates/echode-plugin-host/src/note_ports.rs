@@ -1,4 +1,5 @@
 //! Advertise the note dialects the helper can translate before each activation.
+use crate::mpe::MpeZone;
 use crate::threads::EchodeHost;
 use clack_host::events::event_types::{Midi2Event, MidiEvent};
 use clack_host::extensions::prelude::*;
@@ -32,8 +33,11 @@ unsafe impl ExtensionImplementation<EchodeHost> for HostNotePorts {
 }
 
 unsafe extern "C" fn supported_dialects(_host: *const clap_host) -> u32 {
-    // MPE requires channel allocation and configuration, not just MIDI messages.
-    CLAP_NOTE_DIALECT_CLAP | CLAP_NOTE_DIALECT_MIDI | CLAP_NOTE_DIALECT_MIDI2
+    // MPE-only ports get a configured Lower Zone and member channels (`mpe.rs`).
+    CLAP_NOTE_DIALECT_CLAP
+        | CLAP_NOTE_DIALECT_MIDI
+        | CLAP_NOTE_DIALECT_MIDI_MPE
+        | CLAP_NOTE_DIALECT_MIDI2
 }
 
 unsafe extern "C" fn rescan(_host: *const clap_host, _flags: u32) {
@@ -49,16 +53,24 @@ pub enum NoteDialect {
     Clap,
     Midi,
     Midi2,
+    /// MIDI 1.0 on member channels of a fifteen-channel Lower Zone.
+    Mpe,
 }
 
 /// What the input note ports need, read while the plugin is inactive and
-/// moved with its processor. Main builds and drops it; audio only reads it.
+/// moved with its processor. Main builds and drops it. Audio reads it and only
+/// counts or clears the MPE zones' fixed storage; it never grows or frees it.
 pub(crate) struct NoteInputs {
     /// MIDI all-sounds-off for every channel of every MIDI-capable port.
     pub(crate) resets: Vec<MidiEvent>,
     /// MIDI 2.0 all-sounds-off, group zero (the group used for project notes).
     pub(crate) midi2_resets: Vec<Midi2Event>,
     pub(crate) dialects: Vec<NoteDialect>,
+    /// Member-channel assignment of every MPE port, in port order.
+    pub(crate) zones: Vec<MpeZone>,
+    /// The next block starts a processing run or follows a reset, so it
+    /// configures the zones before any note.
+    configure: bool,
 }
 
 impl NoteInputs {
@@ -67,7 +79,22 @@ impl NoteInputs {
             resets: Vec::new(),
             midi2_resets: Vec::new(),
             dialects: Vec::new(),
+            zones: Vec::new(),
+            configure: true,
         }
+    }
+
+    /// No voice sounds: a processing run starts or the plugin was reset.
+    /// Forget member assignments and configure the zones again first.
+    pub(crate) fn start_over(&mut self) {
+        self.zones.iter_mut().for_each(MpeZone::clear);
+        self.configure = true;
+    }
+
+    /// Whether this block must send each zone's configuration, after the
+    /// resets. Asked once per block.
+    pub(crate) fn take_configure(&mut self) -> bool {
+        std::mem::take(&mut self.configure)
     }
 
     /// Adds the next input port with the dialects its descriptor declares.
@@ -85,18 +112,23 @@ impl NoteInputs {
             usize::from(port),
             "ports in index order"
         );
-        // Keep existing native and MIDI 1.0 routes unchanged. Only fall back to
-        // MIDI 2.0 when neither of those dialects is declared.
-        self.dialects
-            .push(if supported_dialects & CLAP_NOTE_DIALECT_CLAP != 0 {
-                NoteDialect::Clap
-            } else if supported_dialects & CLAP_NOTE_DIALECT_MIDI != 0 {
-                NoteDialect::Midi
-            } else if midi2 {
-                NoteDialect::Midi2
-            } else {
-                NoteDialect::Clap
-            });
+        // Keep existing native, MIDI 1.0 and MIDI 2.0 routes unchanged. Only
+        // use MPE when it is the one dialect the port takes.
+        let dialect = if supported_dialects & CLAP_NOTE_DIALECT_CLAP != 0 {
+            NoteDialect::Clap
+        } else if supported_dialects & CLAP_NOTE_DIALECT_MIDI != 0 {
+            NoteDialect::Midi
+        } else if midi2 {
+            NoteDialect::Midi2
+        } else if midi {
+            NoteDialect::Mpe
+        } else {
+            NoteDialect::Clap
+        };
+        self.dialects.push(dialect);
+        if dialect == NoteDialect::Mpe {
+            self.zones.push(MpeZone::new(port));
+        }
         // MIDI defines sixteen channels per group/port. Port count is dynamic.
         for channel in 0..16 {
             // All-sounds-off is a valid MIDI 1.0 message under MPE as well.

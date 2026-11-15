@@ -221,7 +221,8 @@ CLAP の遅延の取得とデバイス列の表示は [ADR 0246](decisions/0246-
 `clap.audio-ports` の対応範囲と固定する寸法は [プラグイン設計書 §9.1](architecture/plugins-and-devices.md#91-共通の抽象) にまとめる（[ADR 0374](decisions/0374-dimension-preserving-audio-port-rescans.md)）。
 `clap.note-ports` は名前の通知で再起動せず、無効化中の全走査に合わせて終了処理を読み直す（[ADR 0356](decisions/0356-clap-note-port-capabilities-and-lifecycle.md)）。
 CLAP・MIDI 1.0 を受けず MIDI 2.0 を受けるポートへは、グループ 0 の UMP で曲のノートを送る（[ADR 0379](decisions/0379-midi2-notes-for-clap-ports.md)）。
-MIDI 1.0 と native の既存経路は保ち、MPE の曲の入力と、音声ポートのリスト・チャンネル数の動的変更は残る。
+MPE だけを受けるポートへは、下位ゾーンを設定してからメンバーチャンネルで曲のノートを送る（[ADR 0380](decisions/0380-mpe-member-channels-for-clap-ports.md)）。
+既存の 3 形式の経路は保ち、表情の生成と送信、音声ポートのリスト・チャンネル数の動的変更は残る。
 曲のテンポ・拍位置・秒・拍子・小節・ループの生成と全段への配布、CLAP の `process.transport` へ接続した。
 ブロック内のテンポ境界・折返しと停止の状態も渡す（[ADR 0358](decisions/0358-product-musical-transport.md)）。
 各段の曲時刻は入力音声の PDC へ補正する（[ADR 0378](decisions/0378-pdc-stage-transport.md)）。

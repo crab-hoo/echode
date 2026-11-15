@@ -8,8 +8,9 @@
 - **CLAP の互換性**: 第三者のテンポ同期・聴感は UC-85、ほかの互換性は UC-80〜83。
   遅延のある前段と後段・フォルダ FX のテンポ同期の聴感は UC-91（[ADR 0378](../decisions/0378-pdc-stage-transport.md)）。
   音声ポートのリスト・チャンネル数の動的変更は未対応。再有効化前の変更検出時はヘルパーを停止する（[ADR 0374](../decisions/0374-dimension-preserving-audio-port-rescans.md)）。
-  両 MIDI 形式のノート ID・一部の表情は未対応で、同じ音高の重なりを別 ID で扱えない。MPE だけを受けるポートは鳴らない。
-  第三者の聴感は MIDI 1.0 が UC-90、MIDI 2.0（グループ 0）が UC-92（[ADR 0379](../decisions/0379-midi2-notes-for-clap-ports.md)）。
+  MIDI 1.0・2.0 ではノート ID・一部の表情は未対応で、同じ音高の重なりを別 ID で扱えない。
+  MPE だけを受けるポートは 16 音目から共有のチャンネルになり、表情は送らない（[ADR 0380](../decisions/0380-mpe-member-channels-for-clap-ports.md)）。
+  第三者の聴感は MIDI 1.0 が UC-90、MIDI 2.0（グループ 0）が UC-92、MPE が UC-93（[ADR 0379](../decisions/0379-midi2-notes-for-clap-ports.md)）。
 - **遅いプラグインの走査**: 5 秒で答えないバンドルは後で 120 秒待ち、なお答えなければ次の起動まで出ない（UC-65、[ADR 0285](../decisions/0285-scan-timeouts-are-not-verdicts.md)）。
 - **オフライン書出し（CLI-A1）**: ステレオ・u32 フレームまで、ヘルパーは 1 ブロック 60 秒待つ。出力先は元パッケージの外へ固定する（[ADR 0260](../decisions/0260-pinned-gui-export-destination.md)）。
   取消は処理の区切りを待つ。画面・VO は UC-53〜61、聴感は UC-52・57（[ADR 0258](../decisions/0258-peak-export-normalization.md)）。

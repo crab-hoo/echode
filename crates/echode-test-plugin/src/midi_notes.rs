@@ -3,15 +3,16 @@ use clack_plugin::events::io::InputEvents;
 use clack_plugin::events::spaces::CoreEventSpace;
 use clack_plugin::extensions::prelude::*;
 use clap_sys::ext::note_ports::{
-    CLAP_EXT_NOTE_PORTS, CLAP_NOTE_DIALECT_CLAP, CLAP_NOTE_DIALECT_MIDI, CLAP_NOTE_DIALECT_MIDI2,
-    clap_host_note_ports,
+    CLAP_EXT_NOTE_PORTS, CLAP_NOTE_DIALECT_CLAP, CLAP_NOTE_DIALECT_MIDI,
+    CLAP_NOTE_DIALECT_MIDI_MPE, CLAP_NOTE_DIALECT_MIDI2, clap_host_note_ports,
 };
 use std::ffi::CStr;
 use std::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
 
 /// Two input ports show native and MIDI dialects at once.
 pub(crate) const PORTS: u32 = 2;
-/// Bit n selects MIDI for port n; bit 7 selects MIDI 2.0 instead of MIDI 1.0.
+/// Bit n selects MIDI for port n; bit 7 selects MIDI 2.0 and bit 6 MPE instead
+/// of MIDI 1.0.
 static LAYOUT: AtomicU8 = AtomicU8::new(0b10);
 /// The layout a state load asked for, applied while inactive.
 static WANTED: AtomicU8 = AtomicU8::new(0b10);
@@ -66,6 +67,8 @@ pub(crate) fn dialects(index: u32) -> u32 {
         CLAP_NOTE_DIALECT_CLAP
     } else if layout & 0x80 != 0 {
         CLAP_NOTE_DIALECT_MIDI2
+    } else if layout & 0x40 != 0 {
+        CLAP_NOTE_DIALECT_MIDI_MPE
     } else {
         CLAP_NOTE_DIALECT_MIDI
     }

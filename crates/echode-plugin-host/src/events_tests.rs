@@ -1,5 +1,6 @@
 use super::write_input;
-use crate::note_ports::NoteDialect::{Clap, Midi, Midi2};
+use crate::mpe::MpeZone;
+use crate::note_ports::NoteDialect::{Clap, Midi, Midi2, Mpe};
 use clack_host::events::Event as ClapEvent;
 use clack_host::events::io::{EventBuffer, InputEvents};
 use clack_host::events::spaces::CoreEventSpace;
@@ -20,7 +21,7 @@ fn the_host_receives_the_same_note_and_an_unspecified_note_id() {
         }),
     ];
     let mut buffer = EventBuffer::new();
-    write_input(&events, &[], &mut buffer);
+    write_input(&events, &[], &mut [], &mut buffer);
     let input = InputEvents::from_buffer(&buffer);
     assert_eq!(input.len(), 2);
     let Some(CoreEventSpace::NoteOn(note)) = input[0].as_core_event() else {
@@ -50,6 +51,7 @@ fn the_invalid_clap_parameter_id_is_skipped() {
     write_input(
         &[Event::ParamValue(invalid), Event::ParamMod(invalid)],
         &[],
+        &mut [],
         &mut buffer,
     );
     assert_eq!(InputEvents::from_buffer(&buffer).len(), 0);
@@ -173,7 +175,7 @@ fn midi_only_ports_receive_midi_1_channel_messages_in_order() {
     let mut buffer = EventBuffer::with_capacity(events.len());
     {
         let _guard = crate::realtime::ForbidAlloc::enter();
-        write_input(&events, &[Clap, Midi], &mut buffer);
+        write_input(&events, &[Clap, Midi], &mut [], &mut buffer);
     }
     assert_eq!(
         delivered(&buffer),
@@ -202,6 +204,7 @@ fn every_stored_midi_velocity_survives_the_round_trip() {
         write_input(
             &[on(0, target, velocity), off(1, target, velocity)],
             &port,
+            &mut [],
             &mut buffer,
         );
         assert_eq!(
@@ -224,6 +227,7 @@ fn out_of_range_and_nan_velocities_stay_valid_midi() {
             off(1, target, f64::NAN),
         ],
         &[Midi],
+        &mut [],
         &mut buffer,
     );
     assert_eq!(
@@ -285,7 +289,7 @@ fn midi2_notes_use_group_zero_and_full_resolution_without_allocating() {
     let mut buffer = EventBuffer::with_capacity(events.len());
     {
         let _guard = crate::realtime::ForbidAlloc::enter();
-        write_input(&events, &[Clap, Midi, Midi2], &mut buffer);
+        write_input(&events, &[Clap, Midi, Midi2], &mut [], &mut buffer);
     }
     assert_eq!(InputEvents::from_buffer(&buffer).len(), 10);
     assert_eq!(
@@ -321,6 +325,7 @@ fn every_model_velocity_survives_midi2_and_zero_is_a_note_on() {
         write_input(
             &[on(0, target, unit), off(1, target, unit)],
             &[Midi2],
+            &mut [],
             &mut buffer,
         );
         assert_eq!(
@@ -353,6 +358,7 @@ fn midi2_velocities_and_pressure_clamp_nonfinite_and_out_of_range_values() {
                 expression(2, target, ExpressionKind::Pressure, value),
             ],
             &[Midi2],
+            &mut [],
             &mut buffer,
         );
         assert_eq!(
@@ -364,4 +370,81 @@ fn midi2_velocities_and_pressure_clamp_nonfinite_and_out_of_range_values() {
             ]
         );
     }
+}
+
+fn mpe_note(port: Option<u16>, channel: Option<u16>, key: Option<u8>, id: Option<u32>) -> Target {
+    Target {
+        port,
+        channel,
+        key,
+        note_id: id,
+    }
+}
+
+#[test]
+fn mpe_ports_play_each_held_note_on_its_own_member_channel_without_allocating() {
+    let note = |key, id| mpe_note(Some(1), Some(0), Some(key), Some(id));
+    let events = [
+        on(0, note(61, 10), 1.0),
+        // The same key under another id is a separate voice on another channel.
+        on(1, note(61, 11), 0.0),
+        on(1, aimed(Some(0), Some(0), Some(60)), 1.0),
+        // A plain MIDI port keeps the event's own channel.
+        on(1, aimed(Some(2), Some(3), Some(62)), 1.0),
+        // Expressions would leak into a shared channel's other notes.
+        expression(2, note(61, 10), ExpressionKind::Pressure, 0.5),
+        expression(2, note(61, 10), ExpressionKind::Pitch, 2.0),
+        off(2, note(61, 10), 0.25),
+        on(3, note(64, 12), 1.0),
+        Event::NoteChoke(ChokeEvent {
+            time: 4,
+            track: 0,
+            target: note(61, 11),
+        }),
+        off(5, note(64, 12), 0.0),
+        // Notes this zone does not hold are not sent.
+        off(5, note(64, 12), 0.0),
+        off(5, note(70, 99), 0.0),
+        // A member channel needs a key and a note id; the channel is the zone's.
+        on(6, mpe_note(Some(1), Some(0), None, Some(13)), 1.0),
+        on(6, mpe_note(Some(1), Some(0), Some(128), Some(13)), 1.0),
+        on(6, mpe_note(Some(1), Some(0), Some(65), None), 1.0),
+        on(6, mpe_note(Some(1), None, Some(65), Some(13)), 1.0),
+        off(7, aimed(None, Some(0), Some(60)), 0.0),
+    ];
+    let mut zones = [MpeZone::new(1)];
+    let mut buffer = EventBuffer::with_capacity(events.len());
+    {
+        let _guard = crate::realtime::ForbidAlloc::enter();
+        write_input(&events, &[Clap, Mpe, Midi], &mut zones, &mut buffer);
+    }
+    assert_eq!(
+        delivered(&buffer),
+        [
+            (0, 1, [0x91, 61, 127]),
+            (1, 1, [0x92, 61, 1]),
+            (1, 0, [0xFF, 60, 0]),
+            (1, 2, [0x93, 62, 127]),
+            (2, 1, [0x81, 61, 32]),
+            (3, 1, [0x93, 64, 127]),
+            (4, 1, [0x82, 61, 0]),
+            (5, 1, [0x83, 64, 0]),
+            (6, 1, [0x94, 65, 127]),
+            (7, u16::MAX, [0xFF, 60, 0]),
+        ]
+    );
+}
+
+#[test]
+fn an_mpe_port_without_a_zone_sends_no_notes() {
+    let target = mpe_note(Some(0), Some(0), Some(60), Some(1));
+    let mut buffer = EventBuffer::new();
+    let mut zones = [MpeZone::new(1)];
+    write_input(
+        &[on(0, target, 1.0), off(1, target, 0.0)],
+        &[Mpe],
+        &mut zones,
+        &mut buffer,
+    );
+    assert!(delivered(&buffer).is_empty());
 }

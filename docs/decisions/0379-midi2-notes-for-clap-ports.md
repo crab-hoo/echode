@@ -1,7 +1,7 @@
 # 0379. MIDI 2.0 だけを受ける CLAP ポートへ曲のノートを UMP で送る
 
 - 日付: 2026-11-15
-- 状態: 現行
+- 状態: 一部置換（[0380](0380-mpe-member-channels-for-clap-ports.md)）
 - 領域: プラグイン・隔離
 - 対象: F2・FCA-07・P2-03 の `clap.note-ports`
 - 一部置換: [ADR 0375](0375-midi-1-notes-for-midi-only-clap-ports.md) の MIDI 2.0 を未対応とする判断

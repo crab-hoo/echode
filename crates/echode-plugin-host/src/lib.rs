@@ -33,6 +33,7 @@ mod launch;
 pub use launch::LoadError;
 mod main_requests;
 mod main_signal;
+mod mpe;
 mod note_ports;
 mod param_flags;
 mod plugin_log;
@@ -266,6 +267,7 @@ pub use catalog::{
 };
 pub use events::write_input;
 pub use live::{CatalogTiming, CatalogWaiter, LiveCatalog};
+pub use mpe::MpeZone;
 pub use note_ports::NoteDialect;
 #[cfg(debug_assertions)]
 pub use realtime::GuardAlloc;

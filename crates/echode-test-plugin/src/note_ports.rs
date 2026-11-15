@@ -1,8 +1,9 @@
 //! Exercises native dialect discovery and inactive-only note-port changes.
 use clack_plugin::extensions::prelude::*;
 use clap_sys::ext::note_ports::{
-    CLAP_EXT_NOTE_PORTS, CLAP_NOTE_DIALECT_CLAP, CLAP_NOTE_DIALECT_MIDI, CLAP_NOTE_DIALECT_MIDI2,
-    CLAP_NOTE_PORTS_RESCAN_ALL, CLAP_NOTE_PORTS_RESCAN_NAMES, clap_host_note_ports,
+    CLAP_EXT_NOTE_PORTS, CLAP_NOTE_DIALECT_CLAP, CLAP_NOTE_DIALECT_MIDI,
+    CLAP_NOTE_DIALECT_MIDI_MPE, CLAP_NOTE_DIALECT_MIDI2, CLAP_NOTE_PORTS_RESCAN_ALL,
+    CLAP_NOTE_PORTS_RESCAN_NAMES, clap_host_note_ports,
 };
 use std::ffi::CStr;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
@@ -29,7 +30,10 @@ pub(crate) fn probe(host: HostSharedHandle<'_>, stage: u8) {
             return;
         };
         let passed = dialects(host)
-            == CLAP_NOTE_DIALECT_CLAP | CLAP_NOTE_DIALECT_MIDI | CLAP_NOTE_DIALECT_MIDI2;
+            == CLAP_NOTE_DIALECT_CLAP
+                | CLAP_NOTE_DIALECT_MIDI
+                | CLAP_NOTE_DIALECT_MIDI_MPE
+                | CLAP_NOTE_DIALECT_MIDI2;
         STAGES.fetch_or(if passed { stage } else { FAILED }, Ordering::Relaxed);
         rescan(host, CLAP_NOTE_PORTS_RESCAN_NAMES);
         if !ACTIVE.load(Ordering::Relaxed) {
