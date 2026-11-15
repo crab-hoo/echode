@@ -1,7 +1,8 @@
 # 0207. 継続の先行再開の前後関係を TSan へ注釈で示す
 
 - 日付: 2026-10-31
-- 状態: 採用
+- 状態: 現行
+- 領域: ビルド・検査・開発基盤
 - 関連: [ADR 0044](0044-swift-bridge.md)、[ADR 0121](0121-startup-recovery-and-errno-validation.md)
 
 ## 背景と原因

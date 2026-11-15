@@ -1,7 +1,8 @@
 # ADR 0192: ヘッダの音量・パンの読み上げ増減を選択全体へ適用する
 
 - 日付: 2026-10-28
-- 状態: 採用。P2-06 の先行分。実画面・VoiceOver・聴感はユーザー確認待ち
+- 状態: 現行。P2-06 の先行分。実画面・VoiceOver・聴感はユーザー確認待ち
+- 領域: UI・描画・入力
 - 関連: [ミックスの操作要件](../interaction-design.md#ミキサーの複数選択)、
   [ADR 0107](0107-mix-controls.md)、[ADR 0189](0189-selected-track-mute-and-solo.md)、
   [ADR 0191](0191-selected-track-numeric-mix.md)

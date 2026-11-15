@@ -1,9 +1,10 @@
 # ADR 0348: 背景の状態取得は変更の印を保ち、間隔を空けて取り直す
 
-日付: 2026-11-14
-状態: 採用
-関連: [ADR 0199](0199-owned-helper-control-requests.md)、[ADR 0319](0319-control-send-deadline.md)、
-[DIA-04](../reviews/2026-11-13-detailed-implementation-audit.md#dia-04-断られた背景の保存が変更の印を消す)
+- 日付: 2026-11-14
+- 状態: 現行
+- 領域: プラグイン・隔離
+- 関連: [ADR 0199](0199-owned-helper-control-requests.md)、[ADR 0319](0319-control-send-deadline.md)、
+  [DIA-04](../reviews/2026-11-13-detailed-implementation-audit.md#dia-04-断られた背景の保存が変更の印を消す)
 
 ## 問題と再現
 

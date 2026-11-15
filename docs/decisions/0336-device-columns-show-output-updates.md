@@ -1,8 +1,9 @@
 # ADR 0336: 開いた出力の更新中は、未取得のデバイス列に「音声出力を更新中」と出す
 
-日付: 2026-11-13
-状態: 採用。実画面と VoiceOver はユーザー確認待ち（UC-71）
-関連: [ADR 0141](0141-device-output-preparation-status.md)、[ADR 0142](0142-background-plugin-graph-preparation.md)、[ADR 0276](0276-priority-order-and-delegated-decisions.md)
+- 日付: 2026-11-13
+- 状態: 現行。実画面と VoiceOver はユーザー確認待ち（UC-71）
+- 領域: UI・描画・入力
+- 関連: [ADR 0141](0141-device-output-preparation-status.md)、[ADR 0142](0142-background-plugin-graph-preparation.md)、[ADR 0276](0276-priority-order-and-delegated-decisions.md)
 
 ## 問題
 

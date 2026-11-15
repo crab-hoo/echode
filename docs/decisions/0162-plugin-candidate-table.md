@@ -1,8 +1,9 @@
 # ADR 0162: FX 候補の一覧を AppKit の表にし、押した時点で選択して行のどこでも追加する
 
 - 日付: 2026-10-25
-- 状態: 採用。[2026-10-25 の操作の報告](../reviews/2026-10-25-user-feedback.md) の FB-05 への対応。
-  実画面の軽さと第三者プラグインが多い時の一覧はユーザー確認待ち
+- 状態: 現行。[2026-10-25 の操作の報告](../reviews/2026-10-25-user-feedback.md) の FB-05 への対応。
+- 領域: UI・描画・入力
+- 補足: 実画面の軽さと第三者プラグインが多い時の一覧はユーザー確認待ち
 - 関連: [ADR 0118](0118-track-fx-chain-editing.md)、[ADR 0124](0124-selected-track-fx-batches.md)、
   [ADR 0143](0143-browser-click-and-audition-timing.md)
 

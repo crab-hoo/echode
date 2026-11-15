@@ -1,8 +1,9 @@
 # ADR 0165: インスペクターの FX 追加ボタンと、アレンジの MIDI クリップの音高表示を要件へ加える
 
 - 日付: 2026-10-25
-- 状態: 採用。FX 追加・音高表示を接続済み。実画面と VoiceOver はユーザー確認待ち。
-  [2026-10-25 の操作の報告](../reviews/2026-10-25-user-feedback.md) の FB-07・FB-08
+- 状態: 現行。FX 追加・音高表示を接続済み。実画面と VoiceOver はユーザー確認待ち。
+- 領域: UI・描画・入力
+- 補足: [2026-10-25 の操作の報告](../reviews/2026-10-25-user-feedback.md) の FB-07・FB-08
 - 関連: [ADR 0118](0118-track-fx-chain-editing.md)、[ADR 0134](0134-plugin-window-lifetime-and-shortcuts.md)、
   [ADR 0139](0139-track-header-fx-names.md)、[ADR 0050](0050-arrange-viewport.md)
 

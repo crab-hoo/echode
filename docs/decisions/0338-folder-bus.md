@@ -1,9 +1,10 @@
 # ADR 0338: 子の音を親トラックのバスへ通す（フォルダバスの接続）
 
-日付: 2026-11-13
-状態: 採用。聴感と Reaper との比較はユーザー確認待ち（UC-73）
-関連: [ADR 0277](0277-reaper-style-folder-bus.md)、[ADR 0244](0244-folder-mute-and-solo-gates.md)、[ADR 0337](0337-mono-instrument-on-stereo-source.md)、
-[ADR 0003](0003-audio-thread-does-not-wait.md)、[FCA-06](../reviews/2026-11-03-full-code-audit.md#fca-06-フォルダのミックス操作が子に効かない)、[P2-03](../phase2.md#p2-03-ルーティングフォルダバスpdc)
+- 日付: 2026-11-13
+- 状態: 現行。聴感と Reaper との比較はユーザー確認待ち（UC-73）
+- 領域: 音声エンジン・書き出し
+- 関連: [ADR 0277](0277-reaper-style-folder-bus.md)、[ADR 0244](0244-folder-mute-and-solo-gates.md)、[ADR 0337](0337-mono-instrument-on-stereo-source.md)、
+  [ADR 0003](0003-audio-thread-does-not-wait.md)、[FCA-06](../reviews/2026-11-03-full-code-audit.md#fca-06-フォルダのミックス操作が子に効かない)、[P2-03](../phase2.md#p2-03-ルーティングフォルダバスpdc)
 
 ## 問題
 

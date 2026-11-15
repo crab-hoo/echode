@@ -1,8 +1,9 @@
 # ADR 0241: 配置の PCM をゲインとモノの昇格から分ける
 
-日付: 2026-11-03
-状態: 採用
-関連: [FCA-10](../reviews/2026-11-03-full-code-audit.md#fca-10-クリップゲインの焼き込み)、[ADR 0113](0113-product-macos-workgroup-and-caches.md)
+- 日付: 2026-11-03
+- 状態: 一部置換（[ADR 0369](0369-checked-sample-planes-at-the-engine-entrance.md)）
+- 領域: 音声エンジン・書き出し
+- 関連: [FCA-10](../reviews/2026-11-03-full-code-audit.md#fca-10-クリップゲインの焼き込み)、[ADR 0113](0113-product-macos-workgroup-and-caches.md)
 
 ## 背景
 

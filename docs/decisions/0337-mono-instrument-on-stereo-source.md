@@ -1,8 +1,9 @@
 # ADR 0337: モノの最初の音源は、ステレオの素材と同じトラックで等電力のステレオにする
 
-日付: 2026-11-13
-状態: 採用
-関連: [ADR 0095](0095-product-audio-buses-and-continuity.md)、[ADR 0277](0277-reaper-style-folder-bus.md)、[ADR 0123](0123-explicit-sine-pad-plugin.md)
+- 日付: 2026-11-13
+- 状態: 現行
+- 領域: 音声エンジン・書き出し
+- 関連: [ADR 0095](0095-product-audio-buses-and-continuity.md)、[ADR 0277](0277-reaper-style-folder-bus.md)、[ADR 0123](0123-explicit-sine-pad-plugin.md)
 
 ## 問題
 

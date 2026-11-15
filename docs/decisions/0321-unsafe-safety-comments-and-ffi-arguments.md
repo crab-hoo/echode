@@ -1,8 +1,9 @@
 # ADR 0321: `unsafe` の全ブロックに根拠を書き、C ABI のポインター引数を一つの規則で検査する
 
-日付: 2026-11-12
-状態: 採用
-関連: M2（XCA-15・FFI-A1）、[ADR 0278](0278-audit-backlog-order.md)、[ADR 0276](0276-priority-order-and-delegated-decisions.md)、[ADR 0284](0284-audio-path-panic-lints.md)
+- 日付: 2026-11-12
+- 状態: 現行
+- 領域: ビルド・検査・開発基盤
+- 関連: M2（XCA-15・FFI-A1）、[ADR 0278](0278-audit-backlog-order.md)、[ADR 0276](0276-priority-order-and-delegated-decisions.md)、[ADR 0284](0284-audio-path-panic-lints.md)
 
 ## 問題と再現
 

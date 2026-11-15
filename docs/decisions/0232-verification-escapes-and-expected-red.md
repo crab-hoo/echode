@@ -1,7 +1,8 @@
 # ADR 0232: 検査の選択と意図した red の照合の取りこぼしを塞ぐ
 
 - 日付: 2026-11-02
-- 状態: 採用
+- 状態: 一部置換（[ADR 0327](0327-instrumented-builds-only-on-github.md)）
+- 領域: ビルド・検査・開発基盤
 - 関連: [ADR 0212](0212-verification-tiers.md)、[外部監査の精査](../reviews/2026-11-02-external-audit-review.md)の ENV-01・02・05・06・07、
   [実行指示](../reviews/2026-11-02-fix-instructions.md)の W4
 - 後続: [ADR 0327](0327-instrumented-builds-only-on-github.md) が、作業の段階でサニタイザを選ぶ処理ごと ENV-01 の修正を消した。

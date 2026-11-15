@@ -1,8 +1,9 @@
 # ADR 0344: サンプル試聴の最終出力を共通のガードで止める
 
-日付: 2026-11-14
-状態: 採用
-関連: [ADR 0282](0282-plugin-nan-and-master-auto-mute.md)、[ADR 0276](0276-priority-order-and-delegated-decisions.md)、[NFA-06](../reviews/2026-11-13-finite-overflow-audit.md#nfa-06-試聴の出力にガードがない)
+- 日付: 2026-11-14
+- 状態: 現行
+- 領域: 音声エンジン・書き出し
+- 関連: [ADR 0282](0282-plugin-nan-and-master-auto-mute.md)、[ADR 0276](0276-priority-order-and-delegated-decisions.md)、[NFA-06](../reviews/2026-11-13-finite-overflow-audit.md#nfa-06-試聴の出力にガードがない)
 
 ## 問題と証拠
 

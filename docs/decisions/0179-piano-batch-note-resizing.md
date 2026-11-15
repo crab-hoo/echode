@@ -1,7 +1,8 @@
 # ADR 0179: 選択したノートの左右端を同じ量だけ伸縮する
 
 - 日付: 2026-10-27
-- 状態: 採用。P2-07 の先行分。実画面・VoiceOver はユーザー確認待ち
+- 状態: 現行。P2-07 の先行分。実画面・VoiceOver はユーザー確認待ち
+- 領域: UI・描画・入力
 - 関連: [操作要件](../interaction-design.md#ノートの選択)、[ADR 0167](0167-piano-note-drag-snapping.md)、
   [ADR 0168](0168-note-edit-clip-growth.md)、[ADR 0172](0172-piano-click-and-input-length.md)、
   [ADR 0178](0178-piano-batch-note-movement.md)

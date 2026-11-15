@@ -1,7 +1,8 @@
 # ADR 0178: 選択したノートを同じ時刻差・音程差で移動する
 
 - 日付: 2026-10-27
-- 状態: 採用。P2-07 の先行分。実画面・VoiceOver はユーザー確認待ち
+- 状態: 現行。P2-07 の先行分。実画面・VoiceOver はユーザー確認待ち
+- 領域: UI・描画・入力
 - 関連: [操作要件](../interaction-design.md#ノートの選択)、[ADR 0167](0167-piano-note-drag-snapping.md)、
   [ADR 0176](0176-piano-note-selection-and-deletion.md)、[ADR 0177](0177-piano-batch-note-velocity.md)
 

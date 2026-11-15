@@ -1,7 +1,8 @@
 # ADR 0177: 選択したノートのベロシティを同じ量だけ調整する
 
 - 日付: 2026-10-27
-- 状態: 採用。P2-07 の先行分。実画面・VoiceOver・聴感はユーザー確認待ち
+- 状態: 現行。P2-07 の先行分。実画面・VoiceOver・聴感はユーザー確認待ち
+- 領域: UI・描画・入力
 - 関連: [操作要件](../interaction-design.md#ベロシティの編集)、[ADR 0173](0173-piano-note-velocity.md)、[ADR 0175](0175-piano-velocity-lane.md)、[ADR 0176](0176-piano-note-selection-and-deletion.md)
 
 ## 背景と再現

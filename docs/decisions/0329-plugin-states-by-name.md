@@ -1,8 +1,9 @@
 # ADR 0329: 記録済みのプラグイン状態を名前で比べ、読み込むヘルパーだけが読む
 
-日付: 2026-11-12
-状態: 採用
-関連: [ADR 0130](0130-clap-parameter-editing.md)、[ADR 0142](0142-background-plugin-graph-preparation.md)、[ADR 0147](0147-output-prewarm-and-background-media.md)、[ADR 0229](0229-plugin-window-live-edits.md)、[ADR 0278](0278-audit-backlog-order.md)、[ADR 0031](0031-content-addressed-store.md)
+- 日付: 2026-11-12
+- 状態: 現行
+- 領域: プラグイン・隔離
+- 関連: [ADR 0130](0130-clap-parameter-editing.md)、[ADR 0142](0142-background-plugin-graph-preparation.md)、[ADR 0147](0147-output-prewarm-and-background-media.md)、[ADR 0229](0229-plugin-window-live-edits.md)、[ADR 0278](0278-audit-backlog-order.md)、[ADR 0031](0031-content-addressed-store.md)
 
 ## 問題と再現
 

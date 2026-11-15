@@ -1,7 +1,8 @@
 # ADR 0293: ヘルパーとの境界のエラーと拒否を列挙型にする
 
 - 日付: 2026-11-09
-- 状態: 採用
+- 状態: 現行
+- 領域: プラグイン・隔離
 - 対象: [統合表](../reviews/2026-11-08-open-items-register.md) の M1（[横断監査](../reviews/2026-11-02-cross-cutting-audit.md#xca-16-文字列のエラーspg-11-の見直し) の XCA-16、SPG-11・DEV-7）のうち `echode-sandbox`。
 - 方針: [ADR 0292](0292-typed-document-errors.md) の「次の境界は `echode-sandbox`。時間切れ・busy・ヘルパーの終了の区別が届く元だから」。
 - 関連: [ADR 0199](0199-owned-helper-control-requests.md)（ヘルパーの時間切れは結果不明、処理中の要求は busy で拒否）、[ADR 0291](0291-typed-audio-io-errors.md)（型の置き方と再導入の検査）。

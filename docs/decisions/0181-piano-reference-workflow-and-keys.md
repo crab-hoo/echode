@@ -1,7 +1,8 @@
 # ADR 0181: ピアノの入力先を分離し、参照ノートとキーボード編集を接続する
 
 - 日付: 2026-10-28
-- 状態: 採用。P2-07 の先行分。実画面・VoiceOver・聴感はユーザー確認待ち
+- 状態: 現行。P2-07 の先行分。実画面・VoiceOver・聴感はユーザー確認待ち
+- 領域: UI・描画・入力
 - 関連: [操作要件](../interaction-design.md)、[ADR 0117](0117-workflow-interactions.md)、
   [ADR 0134](0134-plugin-window-lifetime-and-shortcuts.md)、[ADR 0174](0174-shared-piano-viewport.md)、
   [ADR 0176](0176-piano-note-selection-and-deletion.md)、[ADR 0178](0178-piano-batch-note-movement.md)、

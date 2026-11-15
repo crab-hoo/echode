@@ -1,7 +1,8 @@
 # ADR 0230: 保存の書出しを同期してからジャーナルを短縮し、欠けた再生は同意へ送る
 
 - 日付: 2026-11-02
-- 状態: 採用。実際の電源断は試していない
+- 状態: 現行。実際の電源断は試していない
+- 領域: モデル・履歴・保存・API
 - 関連: [ADR 0033](0033-journal-log.md)、[ADR 0180](0180-journal-replay-invariants.md)、[ADR 0183](0183-recovery-consent.md)、
   [横断監査](../reviews/2026-11-02-cross-cutting-audit.md)の XCA-01〜03、
   [外部監査の精査](../reviews/2026-11-02-external-audit-review.md)の HIS-A1、[実行指示](../reviews/2026-11-02-fix-instructions.md)の W2、

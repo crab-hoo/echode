@@ -1,7 +1,8 @@
 # ADR 0194: クリップの値操作を押下した文書と編集先へ束縛する
 
 - 日付: 2026-10-29
-- 状態: 採用。実画面・VoiceOver の文書切替はユーザー確認待ち
+- 状態: 現行。実画面・VoiceOver の文書切替はユーザー確認待ち
+- 領域: UI・描画・入力
 - 関連: [ADR 0153](0153-value-control-clicks-and-typed-entry.md)、
   [ADR 0193](0193-header-mix-gesture-document-scope.md)
 

@@ -1,7 +1,8 @@
 # ADR 0294: エンジンのエラーを列挙型にし、エラーを文に変える `map_err` を拒否する
 
 - 日付: 2026-11-09
-- 状態: 採用
+- 状態: 現行
+- 領域: 音声エンジン・書き出し
 - 対象: [統合表](../reviews/2026-11-08-open-items-register.md) の M1（[横断監査](../reviews/2026-11-02-cross-cutting-audit.md#xca-16-文字列のエラーspg-11-の見直し) の XCA-16、SPG-11・DEV-7）のうち `echode-engine`。
 - 方針: [ADR 0293](0293-typed-helper-boundary-errors.md) の「次の境界は `echode-engine`。型になった `SessionError` が最初に文字列へ戻る所だから」。
 - 関連: [ADR 0291](0291-typed-audio-io-errors.md)（型の置き方と再導入の検査）、[ADR 0199](0199-owned-helper-control-requests.md)（ヘルパーの時間切れは結果不明）。

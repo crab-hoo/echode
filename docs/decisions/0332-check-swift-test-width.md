@@ -1,8 +1,9 @@
 # ADR 0332: 通常の check-swift も同時実行数 16 で合否を決める
 
-日付: 2026-11-13
-状態: 採用
-関連: [ADR 0210](0210-sanitizer-test-width.md)、[ADR 0185](0185-piano-auto-and-fixed-grid.md)、[ADR 0325](0325-swift-test-stall-watchdog.md)、[ADR 0331](0331-off-worker-audio-import.md)
+- 日付: 2026-11-13
+- 状態: 現行
+- 領域: ビルド・検査・開発基盤
+- 関連: [ADR 0210](0210-sanitizer-test-width.md)、[ADR 0185](0185-piano-auto-and-fixed-grid.md)、[ADR 0325](0325-swift-test-stall-watchdog.md)、[ADR 0331](0331-off-worker-audio-import.md)
 
 ## 問題と再現
 

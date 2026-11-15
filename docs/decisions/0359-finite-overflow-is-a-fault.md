@@ -1,9 +1,10 @@
 # ADR 0359: f32 を超える有限の積と和を 0 にせず障害にする
 
-日付: 2026-11-15
-状態: 採用。実画面と VoiceOver は UC-86 が未確認。
-関連: [ADR 0282](0282-plugin-nan-and-master-auto-mute.md)（「残る範囲」の 3 行目を置き換える）、[ADR 0345](0345-track-mix-fault-attribution.md)、
-[ADR 0247](0247-pcm24-wav-export.md)、[監査の NFA-01〜03・08](../reviews/2026-11-13-finite-overflow-audit.md#指摘の一覧)
+- 日付: 2026-11-15
+- 状態: 現行。実画面と VoiceOver は UC-86 が未確認。
+- 領域: 音声エンジン・書き出し
+- 関連: [ADR 0282](0282-plugin-nan-and-master-auto-mute.md)（「残る範囲」の 3 行目を置き換える）、[ADR 0345](0345-track-mix-fault-attribution.md)、
+  [ADR 0247](0247-pcm24-wav-export.md)、[監査の NFA-01〜03・08](../reviews/2026-11-13-finite-overflow-audit.md#指摘の一覧)
 
 ## 問題と再現
 

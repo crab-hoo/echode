@@ -1,7 +1,8 @@
 # ADR 0164: ノートの終端ちょうどから再生する時、そのノートを追いかけて鳴らさない
 
 - 日付: 2026-10-25
-- 状態: 採用。[2026-10-25 の操作の報告](../reviews/2026-10-25-user-feedback.md) の FB-06 への対応。実機の聴感はユーザー確認待ち
+- 状態: 現行。[2026-10-25 の操作の報告](../reviews/2026-10-25-user-feedback.md) の FB-06 への対応。実機の聴感はユーザー確認待ち
+- 領域: 音声エンジン・書き出し
 - 関連: [ADR 0099](0099-transport-plugin-state.md)、[ADR 0133](0133-stopped-plugin-processing-and-edit-input.md)、
   [ADR 0155](0155-remembered-playback-start.md)
 

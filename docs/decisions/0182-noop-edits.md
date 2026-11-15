@@ -1,7 +1,8 @@
 # ADR 0182: 無変更の編集を成功として受け、履歴を増やさない
 
 - 日付: 2026-10-27
-- 状態: 採用
+- 状態: 現行
+- 領域: モデル・履歴・保存・API
 - 対象: [敵対的監査](../reviews/2026-10-27-adversarial-audit.md) ADV-04、Session・DocumentHost・API / MCP
 
 ## 背景

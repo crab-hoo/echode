@@ -1,7 +1,8 @@
 # ADR 0364: 未使用の共有領域リセット入口を削除する
 
 - 日付: 2026-11-15
-- 状態: 採用
+- 状態: 現行
+- 領域: プラグイン・隔離
 - 関連: [RTA-08](../reviews/2026-11-14-realtime-adversarial-audit.md#rta-08-使われない-reset_for_restart)、[ADR 0042](0042-plugin-ipc.md)
 
 ## 問題と根拠

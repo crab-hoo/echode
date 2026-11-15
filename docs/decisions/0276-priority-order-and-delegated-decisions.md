@@ -1,7 +1,9 @@
 # 0276. 優先順位を定め、判断をエージェントへ委ねる
 
 - 日付: 2026-11-08
-- 状態: 採用。「フォルダの音量・パン（FCA-06）」の行は同日 [ADR 0277](0277-reaper-style-folder-bus.md) で置き換えた
+- 状態: 一部置換（[ADR 0277](0277-reaper-style-folder-bus.md)・[ADR 0281](0281-calm-transparent-failure.md)）
+- 領域: 全体方針・計画
+- 補足: 「フォルダの音量・パン（FCA-06）」の行は同日 [ADR 0277](0277-reaper-style-folder-bus.md) で置き換えた
 - 関連: [PLAN §2](../PLAN.md#2-決定事項)、[AGENTS.md](../../AGENTS.md)、[ADR 0212](0212-verification-tiers.md)、[ADR 0269](0269-github-public-ci-scope.md)、
   [横断監査](../reviews/2026-11-02-cross-cutting-audit.md)、[全体のコード監査](../reviews/2026-11-03-full-code-audit.md)
 - 置き換え: 監査の実行指示（[2026-11-02](../reviews/2026-11-02-fix-instructions.md#実行役が決めないこと)、[2026-11-03](../reviews/2026-11-03-fix-instructions.md#実行役が決めないこと)）の「実行役が決めないこと」のうち、下の予約の外にある項目。

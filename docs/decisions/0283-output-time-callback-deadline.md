@@ -1,7 +1,8 @@
 # ADR 0283: 出力のブロックを HAL の出力時刻と機器の安全余白から終える
 
 - 日付: 2026-11-08
-- 状態: 採用。実機の HAL の書込み時間と聴感は UC-64 が未確認。
+- 状態: 現行。実機の HAL の書込み時間と聴感は UC-64 が未確認。
+- 領域: 音声エンジン・書き出し
 - 対象: [統合表](../reviews/2026-11-08-open-items-register.md) の R3（[FCA-09](../reviews/2026-11-03-full-code-audit.md#fca-09-待ちの期限と試聴の-ioproc)）。
 - 方針: [ADR 0276](0276-priority-order-and-delegated-decisions.md) の「期限は出力時刻と機器の安全余白から求める」。
 - 置き換え: [ADR 0082](0082-callback-deadline.md) と [ADR 0090](0090-reaudit-playback.md) の「入口の時刻に 1 ブロックを足す」期限の起点。

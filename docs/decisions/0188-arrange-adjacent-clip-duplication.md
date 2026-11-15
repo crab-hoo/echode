@@ -1,7 +1,8 @@
 # ADR 0188: アレンジの単一クリップを直後へ複製する
 
 - 日付: 2026-10-28
-- 状態: 採用。P2-07 の先行分。実画面の操作感と VoiceOver はユーザー確認待ち
+- 状態: 現行。P2-07 の先行分。実画面の操作感と VoiceOver はユーザー確認待ち
+- 領域: UI・描画・入力
 - 関連: [操作要件](../interaction-design.md#アレンジの選択と編集)、
   [ADR 0154](0154-clip-move-and-duplicate.md)、[ADR 0170](0170-content-relative-auto-bars.md)
 

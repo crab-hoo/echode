@@ -1,7 +1,8 @@
 # ADR 0302: FFI の目録も C ABI の直前まで原因の型を保つ
 
 - 日付: 2026-11-10
-- 状態: 採用
+- 状態: 現行
+- 領域: ビルド・検査・開発基盤
 - 対象: 統合表 M1、DEV-7・SPG-11・XCA-16
 - 続き: [ADR 0301](0301-typed-history-spike-errors.md)
 - 補足: [ADR 0295](0295-typed-plugin-host-errors.md) の目録の FFI 境界

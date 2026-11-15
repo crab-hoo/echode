@@ -1,10 +1,11 @@
 # ADR 0369: 素材の有限性とゲインの積を、エンジンの入口の型で確かめる
 
-日付: 2026-11-15
-状態: 採用。
-関連: [ADR 0359](0359-finite-overflow-is-a-fault.md)（「残る範囲」の 1 行目を閉じる）、[ADR 0241](0241-unscaled-placement-pcm.md)（桁あふれの判定の所在を移す）、
-[ADR 0273](0273-shared-source-clip-windows.md)、[ADR 0108](0108-phase1-loop-readiness.md)、[ADR 0276](0276-priority-order-and-delegated-decisions.md)、
-[監査の NFA-04](../reviews/2026-11-13-finite-overflow-audit.md#nfa-04-素材の不変条件がエンジンの入口にない)
+- 日付: 2026-11-15
+- 状態: 現行
+- 領域: 音声エンジン・書き出し
+- 関連: [ADR 0359](0359-finite-overflow-is-a-fault.md)（「残る範囲」の 1 行目を閉じる）、[ADR 0241](0241-unscaled-placement-pcm.md)（桁あふれの判定の所在を移す）、
+  [ADR 0273](0273-shared-source-clip-windows.md)、[ADR 0108](0108-phase1-loop-readiness.md)、[ADR 0276](0276-priority-order-and-delegated-decisions.md)、
+  [監査の NFA-04](../reviews/2026-11-13-finite-overflow-audit.md#nfa-04-素材の不変条件がエンジンの入口にない)
 
 ## 問題と再現
 

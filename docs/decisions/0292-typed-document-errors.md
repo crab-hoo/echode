@@ -1,7 +1,8 @@
 # ADR 0292: 文書の手番のエラーを列挙型にする
 
 - 日付: 2026-11-09
-- 状態: 採用
+- 状態: 現行
+- 領域: モデル・履歴・保存・API
 - 対象: [統合表](../reviews/2026-11-08-open-items-register.md) の M1（[横断監査](../reviews/2026-11-02-cross-cutting-audit.md#xca-16-文字列のエラーspg-11-の見直し) の XCA-16、SPG-11・DEV-7）のうち `echode-document`。
 - 方針: [ADR 0291](0291-typed-audio-io-errors.md) の「次の境界は `echode-document` で、ヘルパーの時間切れ（SPG-01）の区別と合わせて行う」。
 - 関連: [ADR 0199](0199-owned-helper-control-requests.md)（ヘルパーの時間切れは結果不明）、[ADR 0276](0276-priority-order-and-delegated-decisions.md)（同じ規則を層ごとに別の論理で実装しない）。

@@ -1,8 +1,9 @@
 # ADR 0163: ブラウザの波形を試聴から分け、選択した素材の全体を表示して残す
 
 - 日付: 2026-10-25
-- 状態: 採用。[2026-10-25 の操作の報告](../reviews/2026-10-25-user-feedback.md) の FB-03 への対応。
-  [ADR 0151](0151-streaming-sample-audition.md) の「波形は試聴した素材だけを対象とし、先行読込みやキャッシュは持たない」を置き換える。
+- 状態: 現行。[2026-10-25 の操作の報告](../reviews/2026-10-25-user-feedback.md) の FB-03 への対応。
+- 領域: UI・描画・入力
+- 補足: [ADR 0151](0151-streaming-sample-audition.md) の「波形は試聴した素材だけを対象とし、先行読込みやキャッシュは持たない」を置き換える。
   実画面の表示の速さはユーザー確認待ち
 - 関連: [ADR 0143](0143-browser-click-and-audition-timing.md)、[ADR 0152](0152-browser-audition-controls.md)
 

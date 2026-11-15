@@ -1,8 +1,9 @@
 # ADR 0331: 外部の音声の取込みを文書ワーカーの外で段階に置き、後の編集は取込みの後に順に当てる
 
-日付: 2026-11-13
-状態: 採用。実機の操作感はユーザー確認待ち（UC-68）
-関連: [ADR 0272](0272-staged-import-media.md)、[ADR 0330](0330-playing-edit-media-and-tempo-retime.md)、[ADR 0204](0204-document-service.md)、[ADR 0145](0145-sample-browser-file-drops.md)、[ADR 0160](0160-ordered-transport-requests.md)、[ADR 0278](0278-audit-backlog-order.md)
+- 日付: 2026-11-13
+- 状態: 現行。実機の操作感はユーザー確認待ち（UC-68）
+- 領域: 音声エンジン・書き出し
+- 関連: [ADR 0272](0272-staged-import-media.md)、[ADR 0330](0330-playing-edit-media-and-tempo-retime.md)、[ADR 0204](0204-document-service.md)、[ADR 0145](0145-sample-browser-file-drops.md)、[ADR 0160](0160-ordered-transport-requests.md)、[ADR 0278](0278-audit-backlog-order.md)
 
 ## 問題と再現
 

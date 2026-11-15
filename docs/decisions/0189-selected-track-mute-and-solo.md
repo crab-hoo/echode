@@ -1,7 +1,8 @@
 # ADR 0189: 選択トラックのミュート・ソロを一括で切り替える
 
 - 日付: 2026-10-28
-- 状態: 採用。P2-06 の先行分。実画面・VoiceOver・聴感はユーザー確認待ち
+- 状態: 現行。P2-06 の先行分。実画面・VoiceOver・聴感はユーザー確認待ち
+- 領域: UI・描画・入力
 - 関連: [ミックスの操作要件](../interaction-design.md#ミキサーの複数選択)、
   [ADR 0107](0107-mix-controls.md)、[ADR 0117](0117-workflow-interactions.md)、
   [ADR 0124](0124-selected-track-fx-batches.md)、[ADR 0182](0182-noop-edits.md)

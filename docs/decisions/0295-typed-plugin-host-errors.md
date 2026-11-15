@@ -1,7 +1,8 @@
 # ADR 0295: ヘルパーのエラーとプラグイン自身の失敗を列挙型にする
 
 - 日付: 2026-11-09
-- 状態: 採用
+- 状態: 現行
+- 領域: プラグイン・隔離
 - 対象: [統合表](../reviews/2026-11-08-open-items-register.md) の M1（[横断監査](../reviews/2026-11-02-cross-cutting-audit.md#xca-16-文字列のエラーspg-11-の見直し) の XCA-16、SPG-11・DEV-7）のうち `echode-plugin-host`。
 - 方針: [ADR 0294](0294-typed-engine-errors.md) の「次の境界は `echode-plugin-host`。プラグイン自身の失敗が文のまま `Refusal::Other` になる所で、ADR 0293 の残りと同じ通信路の型を完成させる」。
 - 関連: [ADR 0293](0293-typed-helper-boundary-errors.md)（拒否の種類と通信の形式）、[ADR 0285](0285-scan-timeouts-are-not-verdicts.md)（走査の判定と時間切れ）、[ADR 0291](0291-typed-audio-io-errors.md)（再導入の検査）。

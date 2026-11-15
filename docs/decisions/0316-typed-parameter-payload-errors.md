@@ -1,8 +1,9 @@
 # ADR 0316: パラメーター・窓・通知の内側の構造の原因を保持する
 
-日付: 2026-11-11
-状態: 採用
-関連: M1（DEV-7・SPG-11・XCA-16）、[ADR 0315](0315-typed-control-metadata-errors.md)、[ADR 0312](0312-typed-control-text-errors.md)
+- 日付: 2026-11-11
+- 状態: 現行
+- 領域: プラグイン・隔離
+- 関連: M1（DEV-7・SPG-11・XCA-16）、[ADR 0315](0315-typed-control-metadata-errors.md)、[ADR 0312](0312-typed-control-text-errors.md)
 
 ## 問題と再現
 

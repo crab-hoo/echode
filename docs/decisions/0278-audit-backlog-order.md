@@ -1,7 +1,8 @@
 # 0278. 監査の残りの順番と、FCA-05 の区切り
 
 - 日付: 2026-11-08
-- 状態: 採用
+- 状態: 現行
+- 領域: 全体方針・計画
 - 関連: [ADR 0276](0276-priority-order-and-delegated-decisions.md)、[監査の未完了項目の統合](../reviews/2026-11-08-open-items-register.md)、
   [FCA-05](../reviews/2026-11-03-full-code-audit.md#fca-05-モデルの線形探索と-2-乗の経路)、[Phase 2 の進め方](../phase2.md)
 - 置き換え: [10/8 初期監査の優先度](../reviews/2026-10-08-audit.md#優先度) の P2「Phase 2 に入るまでに決めるか、直す」の時期。

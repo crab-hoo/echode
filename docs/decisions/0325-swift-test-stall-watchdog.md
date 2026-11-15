@@ -1,7 +1,8 @@
 # 0325. Swift のテストの期限を、イベント列の外側の監視で掛ける
 
 - 日付: 2026-11-12
-- 状態: 採用
+- 状態: 現行
+- 領域: ビルド・検査・開発基盤
 - 関連: [XCA-09](../reviews/2026-11-02-cross-cutting-audit.md#xca-09-避けられる高コストの罠)、[統合表の M8](../reviews/2026-11-08-open-items-register.md#2-保守性)、
   [ADR 0233](0233-verification-deferral-reasons-and-traps.md)（残る範囲）、[ADR 0210](0210-sanitizer-test-width.md)（同時実行の幅）、
   [ADR 0278](0278-audit-backlog-order.md)（順番）、[ADR 0276](0276-priority-order-and-delegated-decisions.md)（優先順位）

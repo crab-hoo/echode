@@ -1,7 +1,8 @@
 # ADR 0284: 音声経路の crate で添字・unwrap・expect・panic を拒否する
 
 - 日付: 2026-11-08
-- 状態: 採用
+- 状態: 現行
+- 領域: ビルド・検査・開発基盤
 - 対象: [統合表](../reviews/2026-11-08-open-items-register.md) の R4（[XCA-14](../reviews/2026-11-02-cross-cutting-audit.md#xca-14-コールバックの-panic) の残り）。
 - 関連: [ADR 0238](0238-audio-callback-panics.md)（コールバックの panic の捕捉）、[ADR 0276](0276-priority-order-and-delegated-decisions.md)、[ADR 0278](0278-audit-backlog-order.md)、[10/8 監査](../reviews/2026-10-08-audit.md) の ENG-1 の lint の方針。
 

@@ -1,7 +1,8 @@
 # ADR 0296: 履歴 crate の保管庫・復号のエラーを先に型にする
 
 - 日付: 2026-11-09
-- 状態: 採用
+- 状態: 現行
+- 領域: モデル・履歴・保存・API
 - 対象: [未完了項目の統合](../reviews/2026-11-08-open-items-register.md) の M1（XCA-16・SPG-11・DEV-7）のうち `echode-history` の素材の境界。
 - 関連: [ADR 0295](0295-typed-plugin-host-errors.md)（次の境界）、[ADR 0234](0234-typed-journal-durability.md)（保存の不確定）、[ADR 0290](0290-fuzz-targets-for-external-input.md)（外部入力）。
 

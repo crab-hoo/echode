@@ -1,7 +1,8 @@
 # ADR 0183: 古い保存版への復旧を通知し、同意まで編集を止める
 
 - 日付: 2026-10-28
-- 状態: 採用
+- 状態: 現行
+- 領域: モデル・履歴・保存・API
 - 対象: [敵対的監査](../reviews/2026-10-27-adversarial-audit.md) ADV-02、DocumentHost・C ABI・Swift
 
 ## 背景

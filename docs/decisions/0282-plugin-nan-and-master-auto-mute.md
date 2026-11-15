@@ -1,7 +1,8 @@
 # ADR 0282: プラグインの NaN でトラックを、暴走した出力でマスターを自動ミュートする
 
 - 日付: 2026-11-08
-- 状態: 採用。実画面・VoiceOver・実機の聴感は UC-63 が未確認。
+- 状態: 一部置換（[ADR 0359](0359-finite-overflow-is-a-fault.md)）。実画面・VoiceOver・実機の聴感は UC-63 が未確認。
+- 領域: 音声エンジン・書き出し
 - 対象: [統合表](../reviews/2026-11-08-open-items-register.md) の R2（[XCA-21](../reviews/2026-11-02-cross-cutting-audit.md#xca-21-製品の設定) の非有限値と出力の扱い）。
 - 方針: [ADR 0281](0281-calm-transparent-failure.md)（静かに安全側へ倒し、起きたことと行ったことを隠さない）。
 

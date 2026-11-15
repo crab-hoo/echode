@@ -1,7 +1,8 @@
 # 0205. 再生の生成を 1 つの入口と `PlaybackOptions` へまとめる
 
 - 日付: 2026-10-31
-- 状態: 採用
+- 状態: 現行
+- 領域: 音声エンジン・書き出し
 - 対象: [構造監査](../reviews/2026-10-30-structure-audit.md) SPG-07
 - 関連: [ADR 0113](0113-product-macos-workgroup-and-caches.md)、[ADR 0147](0147-output-prewarm-and-background-media.md)
 

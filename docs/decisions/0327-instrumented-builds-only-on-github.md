@@ -1,7 +1,8 @@
 # 0327. 計装したビルドと反例は GitHub だけで実行する
 
 - 日付: 2026-11-12
-- 状態: 採用
+- 状態: 一部置換（[ADR 0361](0361-unshipped-configurations-only-on-github.md)）
+- 領域: ビルド・検査・開発基盤
 - 関連: [ADR 0212](0212-verification-tiers.md)、[ADR 0269](0269-github-public-ci-scope.md)、[ADR 0271](0271-task-tier-duplicate-runs.md)、
   [ADR 0276](0276-priority-order-and-delegated-decisions.md)（優先順位）
 - 置き換え: ADR 0212 の「作業の段階でサニタイザを選ぶ条件」「作業の段階で反例を選ぶ条件」「合格済みの変更で選び直さない」、

@@ -1,7 +1,8 @@
 # ADR 0113: 製品の Workgroup 接続、M4 ビルド条件、PCM と描画の再利用
 
 - 日付: 2026-10-17
-- 状態: 採用（Swift の M4 指定の見送りは [ADR 0114](0114-m4-build-baseline.md) で解除）
+- 状態: 一部置換（[ADR 0114](0114-m4-build-baseline.md)）。Swift の M4 指定の見送りは [ADR 0114](0114-m4-build-baseline.md) で解除
+- 領域: ビルド・検査・開発基盤
 - 範囲: 最適化監査 M27-01 / 02 / 03 と M27-04 の可視列・波形の再利用。M4 方針は ADR 0112。実機性能の達成値ではない
 
 ## 製品の Workgroup

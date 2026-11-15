@@ -1,9 +1,10 @@
 # ADR 0304: API・MCP の原因を応答の直前まで型で保つ
 
-日付: 2026-11-10
-状態: 採用
-対象: M1（DEV-7・SPG-11・XCA-16）の `echode-api`
-関連: [ADR 0299](0299-typed-document-journal-and-settings-errors.md)、[ADR 0303](0303-typed-model-invariant-errors.md)
+- 日付: 2026-11-10
+- 状態: 現行
+- 領域: モデル・履歴・保存・API
+- 対象: M1（DEV-7・SPG-11・XCA-16）の `echode-api`
+- 関連: [ADR 0299](0299-typed-document-journal-and-settings-errors.md)、[ADR 0303](0303-typed-model-invariant-errors.md)
 
 ## 問題と再現
 

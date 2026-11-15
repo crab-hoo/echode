@@ -1,13 +1,15 @@
 # ADR 0197: 検査の依存ターゲットと証拠の段階を区別する
 
 - 日付: 2026-10-30
-- 状態: 採用
+- 状態: 一部置換（[ADR 0198](0198-verification-launch-and-cache-cost.md)・[ADR 0212](0212-verification-tiers.md)・[ADR 0324](0324-no-agent-hooks.md)）
+- 領域: ビルド・検査・開発基盤
 - 対象: 契約の入力、通常テストと反例の再利用、橋渡し検査、生成ヘッダ、フック
 - 前提: [ADR 0100](0100-scoped-verification.md)、[ADR 0148](0148-verification-pipeline-speed.md)、[ADR 0195](0195-verification-cost-observability.md)
 
 - 後続: [ADR 0198](0198-verification-launch-and-cache-cost.md) が診断・フックの過大な連鎖と起動コストを改定した。
 - 後続: [ADR 0212](0212-verification-tiers.md) が、リンク先の変更による反例の再検査を節目の全体検査へ移した。
 - 後続: [ADR 0324](0324-no-agent-hooks.md) がエージェントのフックと `hook_timeout` をなくした。
+
 ## 監査の照合
 
 毎タスクで全契約の反例を作り直す設計上の必要はない。

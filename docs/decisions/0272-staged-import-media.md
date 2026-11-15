@@ -1,7 +1,8 @@
 # ADR 0272: 取込みの素材を受理した編集と一緒に公開する
 
 - 日付: 2026-11-06
-- 状態: 採用。公開後の失敗で名前を消す扱いは [ADR 0362](0362-published-media-and-helper-lifetimes.md) が置き換えた。
+- 状態: 一部置換（[ADR 0362](0362-published-media-and-helper-lifetimes.md)）。公開後の失敗で名前を消す扱いは [ADR 0362](0362-published-media-and-helper-lifetimes.md) が置き換えた。
+- 領域: 音声エンジン・書き出し
 - 対象: EXT-02。参照の消えた素材を保管庫から消す掃除（[ADR 0031](0031-content-addressed-store.md)）は対象外。
 
 ## 問題と再現

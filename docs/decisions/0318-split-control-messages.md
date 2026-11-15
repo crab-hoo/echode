@@ -1,8 +1,9 @@
 # ADR 0318: 1 枠を超える制御メッセージを分けて送り、溜まった分を読む
 
-日付: 2026-11-11
-状態: 採用
-関連: 統合表の R8、[ADR 0042](0042-plugin-ipc.md)、[ADR 0288](0288-received-descriptors-are-all-owned.md)、[ADR 0317](0317-typed-control-transport-errors.md)
+- 日付: 2026-11-11
+- 状態: 現行
+- 領域: プラグイン・隔離
+- 関連: 統合表の R8、[ADR 0042](0042-plugin-ipc.md)、[ADR 0288](0288-received-descriptors-are-all-owned.md)、[ADR 0317](0317-typed-control-transport-errors.md)
 
 ## 問題と再現
 

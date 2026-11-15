@@ -1,7 +1,8 @@
 # 0013. サンプルレート変換は窓付き sinc
 
 - 日付: 2026-10-08
-- 状態: 補間の方式は [0014](0014-existing-implementations-as-options.md) で置き換え。自作の実装は選択肢に出さない
+- 状態: 置換済み（[ADR 0014](0014-existing-implementations-as-options.md)）。補間の方式は [0014](0014-existing-implementations-as-options.md) で置き換え。自作の実装は選択肢に出さない
+- 領域: 音声エンジン・書き出し
 
 ## 背景
 

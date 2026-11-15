@@ -1,7 +1,8 @@
 # ADR 0218: 中身の変更セットを項目表から生成する
 
 - 日付: 2026-11-02
-- 状態: 採用
+- 状態: 現行
+- 領域: モデル・履歴・保存・API
 - 対象: SPG-09 の続き。中身の音声参照・テイク ID 列と変更セットの間の変換
 - 関連: [ADR 0021](0021-changeset.md)、[ADR 0022](0022-clip-content-and-placement.md)、[ADR 0217](0217-track-changeset-fields.md)
 - 監査: [SPG-09](../reviews/2026-10-30-structure-audit.md#spg-09-モデルの項目追加の手数)

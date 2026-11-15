@@ -1,9 +1,10 @@
 # ADR 0345: ホストの音声合流の異常をプラグインの障害と分ける
 
-日付: 2026-11-14
-状態: 採用。実画面と VoiceOver は UC-79 が未確認。
-関連: [ADR 0282](0282-plugin-nan-and-master-auto-mute.md)、[ADR 0340](0340-latency-graph.md)、
-[NFA-05](../reviews/2026-11-13-finite-overflow-audit.md#nfa-05-ホストの和のあふれを音源の障害にする)
+- 日付: 2026-11-14
+- 状態: 現行。実画面と VoiceOver は UC-79 が未確認。
+- 領域: 音声エンジン・書き出し
+- 関連: [ADR 0282](0282-plugin-nan-and-master-auto-mute.md)、[ADR 0340](0340-latency-graph.md)、
+  [NFA-05](../reviews/2026-11-13-finite-overflow-audit.md#nfa-05-ホストの和のあふれを音源の障害にする)
 
 ## 問題と再現
 

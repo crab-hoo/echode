@@ -1,7 +1,8 @@
 # ADR 0170: 自動クリップの小節は中身の原点と一緒に動く
 
 - 日付: 2026-10-26
-- 状態: 採用。[ADR 0169](0169-clip-growth-follows-notes-and-stops-at-walls.md) の土台だけを先行実装
+- 状態: 現行。[ADR 0169](0169-clip-growth-follows-notes-and-stops-at-walls.md) の土台だけを先行実装
+- 領域: モデル・履歴・保存・API
 - 範囲: 自動配置の不変条件・合わせ直し、移動・複製での種類の保持、旧ジャーナルの互換
 
 ## 背景と再現

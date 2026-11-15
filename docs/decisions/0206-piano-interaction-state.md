@@ -1,7 +1,8 @@
 # 0206. ピアノロールの操作状態を 1 つの列挙型へまとめる
 
 - 日付: 2026-10-31
-- 状態: 採用
+- 状態: 現行
+- 領域: UI・描画・入力
 - 対象: [構造監査](../reviews/2026-10-30-structure-audit.md) SPG-08
 - 関連: [ADR 0167](0167-piano-note-drag-snapping.md)、[ADR 0176](0176-piano-note-selection-and-deletion.md)、[ADR 0178](0178-piano-batch-note-movement.md)、[ADR 0179](0179-piano-batch-note-resizing.md)
 

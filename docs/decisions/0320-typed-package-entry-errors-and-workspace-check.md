@@ -1,8 +1,9 @@
 # ADR 0320: パッケージの項目の拒否を型にし、文字列のエラーの検査をワークスペース全体へ広げる
 
-日付: 2026-11-11
-状態: 採用
-関連: M1（DEV-7・SPG-11・XCA-16）、[ADR 0317](0317-typed-control-transport-errors.md)、[ADR 0311](0311-typed-shared-memory-errors.md)、[ADR 0291](0291-typed-audio-io-errors.md)
+- 日付: 2026-11-11
+- 状態: 現行
+- 領域: ビルド・検査・開発基盤
+- 関連: M1（DEV-7・SPG-11・XCA-16）、[ADR 0317](0317-typed-control-transport-errors.md)、[ADR 0311](0311-typed-shared-memory-errors.md)、[ADR 0291](0291-typed-audio-io-errors.md)
 
 ## 問題と再現
 

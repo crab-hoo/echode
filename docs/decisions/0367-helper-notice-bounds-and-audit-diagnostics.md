@@ -1,7 +1,8 @@
 # ADR 0367: ヘルパー通知の集約・上限制限と診断・状態同期の補強
 
 - 日付: 2026-11-15
-- 状態: 採用
+- 状態: 現行
+- 領域: プラグイン・隔離
 - 関連: [DIA-10・DIA-12](../reviews/2026-11-13-detailed-implementation-audit.md#dia-10-ヘルパーの通知の取り出し)、[ADR 0318](0318-split-control-messages.md)、[ADR 0348](0348-background-state-capture-retries.md)、[ADR 0115](0115-phase2-mcp.md)
 
 ## 問題と根拠

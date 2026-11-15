@@ -1,7 +1,8 @@
 # ADR 0228: 選択トラックのドラッグと既定値リセットを一括試聴する
 
 - 日付: 2026-11-02
-- 状態: 採用。実画面・VoiceOver・聴感はユーザー確認待ち
+- 状態: 現行。実画面・VoiceOver・聴感はユーザー確認待ち
+- 領域: UI・描画・入力
 - 関連: [ADR 0191](0191-selected-track-numeric-mix.md)、[ADR 0193](0193-header-mix-gesture-document-scope.md)、
   [操作要件](../interaction-design.md#ミキサーの複数選択)
 

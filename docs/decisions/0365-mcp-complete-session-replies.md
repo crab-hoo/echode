@@ -1,7 +1,8 @@
 # ADR 0365: MCP は検証済みセッションの完全な応答を待つ
 
 - 日付: 2026-11-15
-- 状態: 採用
+- 状態: 現行
+- 領域: モデル・履歴・保存・API
 - 関連: [DIA-01](../reviews/2026-11-13-detailed-implementation-audit.md#dia-01-mcp-が確定済みの編集を失敗として返す)、[ADR 0115](0115-phase2-mcp.md)、[ADR 0073](0073-socket-path.md)
 
 ## 問題と根拠

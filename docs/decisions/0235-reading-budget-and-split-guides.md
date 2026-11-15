@@ -1,7 +1,8 @@
 # ADR 0235: 読む量に上限を置き、状態とデバッグの文書を分ける
 
 - 日付: 2026-11-03
-- 状態: 採用
+- 状態: 一部置換（[ADR 0370](0370-domain-status-guides.md)）
+- 領域: ビルド・検査・開発基盤
 - 関連: [ADR 0119](0119-agent-token-efficiency.md)、[ADR 0126](0126-agent-context-and-source-reading.md)、[横断監査](../reviews/2026-11-02-cross-cutting-audit.md)の XCA-10・11
 
 ## 背景

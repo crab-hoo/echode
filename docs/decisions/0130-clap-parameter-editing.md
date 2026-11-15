@@ -1,8 +1,9 @@
 # ADR 0130: CLAP のパラメーター編集をプラグイン状態の記録として接続する
 
 - 日付: 2026-10-20
-- 状態: 採用。P2-02 のパラメーター編集の最初の接続。
-  一覧の生成・検索・ピン留めとデバイス要求の待ち方は [ADR 0131](0131-device-view-and-responsive-parameters.md) で更新した
+- 状態: 一部置換（[ADR 0131](0131-device-view-and-responsive-parameters.md)）。P2-02 のパラメーター編集の最初の接続。
+- 領域: プラグイン・隔離
+- 補足: 一覧の生成・検索・ピン留めとデバイス要求の待ち方は [ADR 0131](0131-device-view-and-responsive-parameters.md) で更新した
 - 範囲: CLAP パラメーターの一覧・値の変更・単一 Undo、停止中のヘルパー起動、Undo 時の状態復元、FX ビューの汎用パラメーター欄
 
 ## 背景

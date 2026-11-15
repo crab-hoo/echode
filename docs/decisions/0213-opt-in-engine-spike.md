@@ -1,7 +1,8 @@
 # 0213. Phase 0 のエンジン計測を非既定の feature へ分離する
 
 - 日付: 2026-11-02
-- 状態: 採用
+- 状態: 現行
+- 領域: ビルド・検査・開発基盤
 - 対象: [構造監査](../reviews/2026-10-30-structure-audit.md) SPG-10 のエンジン側
 - 関連: [ADR 0211](0211-opt-in-history-spike.md)、[S2](../spikes/S2-engine.md)、[エンジン設計](../architecture/audio-engine.md)
 

@@ -1,7 +1,8 @@
 # ADR 0362: 公開済み素材を保持し、失敗したヘルパーの寿命を閉じる
 
 - 日付: 2026-11-15
-- 状態: 採用
+- 状態: 現行
+- 領域: プラグイン・隔離
 - 関連: [詳細監査 DIA-07・08](../reviews/2026-11-13-detailed-implementation-audit.md)、[ADR 0272](0272-staged-import-media.md)、[ADR 0331](0331-off-worker-audio-import.md)
 - 置き換え: ADR 0272 の「公開後の失敗で新しく作った名前を消す」という判断。
 

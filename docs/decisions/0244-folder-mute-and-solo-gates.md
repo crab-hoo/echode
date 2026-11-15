@@ -1,8 +1,9 @@
 # ADR 0244: フォルダのミュートとソロを子孫のフェーダーへ反映する
 
-日付: 2026-11-03
-状態: 採用（FCA-06 のミュート・ソロ部分）
-関連: [FCA-06](../reviews/2026-11-03-full-code-audit.md#fca-06-フォルダのミックス操作が子に効かない)、[ADR 0024](0024-track-order.md)、[ADR 0116](0116-folder-drum-rack.md)
+- 日付: 2026-11-03
+- 状態: 現行（FCA-06 のミュート・ソロ部分）
+- 領域: 音声エンジン・書き出し
+- 関連: [FCA-06](../reviews/2026-11-03-full-code-audit.md#fca-06-フォルダのミックス操作が子に効かない)、[ADR 0024](0024-track-order.md)、[ADR 0116](0116-folder-drum-rack.md)
 
 ## 背景
 

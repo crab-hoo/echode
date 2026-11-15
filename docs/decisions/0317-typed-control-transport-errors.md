@@ -1,8 +1,9 @@
 # ADR 0317: 記述子の規則の違反と送信の拒否の原因を保持する
 
-日付: 2026-11-11
-状態: 採用
-関連: M1（DEV-7・SPG-11・XCA-16）、[ADR 0316](0316-typed-parameter-payload-errors.md)、[ADR 0288](0288-received-descriptors-are-all-owned.md)、[ADR 0042](0042-plugin-ipc.md)
+- 日付: 2026-11-11
+- 状態: 一部置換（[ADR 0318](0318-split-control-messages.md)）
+- 領域: プラグイン・隔離
+- 関連: M1（DEV-7・SPG-11・XCA-16）、[ADR 0316](0316-typed-parameter-payload-errors.md)、[ADR 0288](0288-received-descriptors-are-all-owned.md)、[ADR 0042](0042-plugin-ipc.md)
 
 ## 問題と再現
 

@@ -1,7 +1,8 @@
 # ADR 0226: モデル項目の表を保存・ジャーナル・スナップショットまで共有する
 
 - 日付: 2026-11-02
-- 状態: 採用
+- 状態: 現行
+- 領域: モデル・履歴・保存・API
 - 対象: SPG-09 の残り全体
 - 関連: [ADR 0021](0021-changeset.md)、[ADR 0028](0028-package-schema.md)、[ADR 0225](0225-track-package-fields.md)
 - 監査: [SPG-09](../reviews/2026-10-30-structure-audit.md#spg-09-モデルの項目追加の手数)

@@ -18,7 +18,14 @@ with patch.object(sys, "path", [str(ROOT / "scripts"), *sys.path]):
     spec = importlib.util.spec_from_file_location("diagnose", ROOT / "scripts/diagnose.py")
     diagnose = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(diagnose)
-    from documentation import anchor_errors, heading_anchors, local_link_errors
+    from documentation import (
+        adr_index_errors,
+        anchor_errors,
+        heading_anchors,
+        local_link_errors,
+        render_adr_index,
+        scan_adrs,
+    )
 
 
 class DiagnosticTests(unittest.TestCase):
@@ -383,6 +390,7 @@ class DeveloperDocumentationTests(unittest.TestCase):
             "docs/verification.md",
             "docs/PLAN.md",
             "docs/ARCHITECTURE.md",
+            "docs/decisions/README.md",
             "docs/phase2.md",
             "docs/interaction-design.md",
             "docs/architecture/model-and-history.md",
@@ -462,6 +470,51 @@ class DeveloperDocumentationTests(unittest.TestCase):
             run = run + 1 if line.startswith("#") else 0
             with self.subTest(line=lineno):
                 self.assertLessEqual(run, 3, "Makefile comment block exceeds 3 lines")
+
+    def test_adr_headers_and_generated_index_are_current(self):
+        entries, errors = scan_adrs(ROOT)
+        self.assertTrue(entries)
+        self.assertEqual(errors, [])
+        self.assertEqual(adr_index_errors(ROOT), [])
+
+    def test_adr_header_and_index_checks_reject_invalid_fixtures(self):
+        valid_two = {
+            "0001-first.md": (
+                "# 0001. First\n\n- 日付: 2026-10-08\n- 状態: 置換済み（[ADR 0002](0002-second.md)）\n"
+                "- 領域: 全体方針・計画\n\n## 背景\n"
+            ),
+            "0002-second.md": (
+                "# ADR 0002: Second\n\n- 日付: 2026-10-09\n- 状態: 現行\n- 領域: ビルド・検査・開発基盤\n\n## 背景\n"
+            ),
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            adr_dir = root / "docs/decisions"
+            adr_dir.mkdir(parents=True)
+            for name, content in valid_two.items():
+                (adr_dir / name).write_text(content, encoding="utf-8")
+            rendered, errors = render_adr_index(root)
+            self.assertEqual(errors, [])
+            (adr_dir / "README.md").write_text(rendered, encoding="utf-8")
+            self.assertEqual(adr_index_errors(root), [])
+
+            # Stale index is rejected.
+            (adr_dir / "README.md").write_text("# stale\n", encoding="utf-8")
+            self.assertTrue(adr_index_errors(root))
+
+            # Missing or unknown domain, legacy status, missing/backward superseding link fail.
+            bad_firsts = [
+                "# 0001. First\n\n- 状態: 採用\n- 領域: 全体方針・計画\n",
+                "# 0001. First\n\n- 状態: 置換済み\n- 領域: 全体方針・計画\n",
+                "# 0001. First\n\n- 状態: 置換済み（[ADR 0002](0999-missing.md)）\n- 領域: 全体方針・計画\n",
+                "# 0001. First\n\n- 状態: 一部置換（[ADR 0001](0001-first.md)）\n- 領域: 全体方針・計画\n",
+                "# 0001. First\n\n- 状態: 現行\n- 領域: 存在しない領域\n",
+                "# 0001. First\n\n- 状態: 現行\n",
+            ]
+            for idx, bad in enumerate(bad_firsts):
+                with self.subTest(case=idx):
+                    (adr_dir / "0001-first.md").write_text(bad, encoding="utf-8")
+                    self.assertTrue(adr_index_errors(root))
 
 
 if __name__ == "__main__":

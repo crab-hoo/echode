@@ -30,6 +30,7 @@ COMMON_GUIDES = (
     "docs/debugging/verification-and-build.md",
     "docs/PLAN.md",
     "docs/ARCHITECTURE.md",
+    "docs/decisions/README.md",
 )
 # Japanese text is about one token per three bytes. The start budget bounds the
 # full reads; the section budget bounds the smallest unit a section read returns.

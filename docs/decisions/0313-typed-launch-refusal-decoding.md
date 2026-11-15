@@ -1,8 +1,9 @@
 # ADR 0313: 起動拒否の不正なペイロードの原因を保持する
 
-日付: 2026-11-10
-状態: 採用
-関連: [ADR 0308](0308-typed-helper-launch-failures.md)、[ADR 0312](0312-typed-control-text-errors.md)、XCA-16 / M1
+- 日付: 2026-11-10
+- 状態: 現行
+- 領域: プラグイン・隔離
+- 関連: [ADR 0308](0308-typed-helper-launch-failures.md)、[ADR 0312](0312-typed-control-text-errors.md)、XCA-16 / M1
 
 ## 問題と再現
 

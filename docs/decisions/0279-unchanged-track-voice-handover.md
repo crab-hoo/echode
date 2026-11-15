@@ -1,7 +1,8 @@
 # ADR 0279: 計画の採用で、変わらないトラックの声をそのまま引き継ぐ
 
 - 日付: 2026-11-08
-- 状態: 採用。実機の聴感は UC-47 が未確認。
+- 状態: 一部置換（[ADR 0280](0280-placed-cursor-and-voice-matching.md)）。実機の聴感は UC-47 が未確認。
+- 領域: 音声エンジン・書き出し
 - 対象: [統合表](../reviews/2026-11-08-open-items-register.md) の R1（[FCA-02・04](../reviews/2026-11-03-full-code-audit.md) の残り）。
 - 置き換え: [ADR 0239](0239-live-note-cursor-work.md) の差替えの手順（`release_replaced`・`catch_up`・`keep_live_keys` を順に呼ぶ形）と、
   採用で追いかけたノートオンを番号順の組で振り分ける処理（ADR 0274 の `by_number`）。

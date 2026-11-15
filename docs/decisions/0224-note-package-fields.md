@@ -1,7 +1,8 @@
 # ADR 0224: ノートの項目表をモデルと保存へ共有する
 
 - 日付: 2026-11-02
-- 状態: 採用
+- 状態: 現行
+- 領域: モデル・履歴・保存・API
 - 対象: SPG-09 の続き。ノートのモデル・変更セット・パッケージ間の変換
 - 関連: [ADR 0216](0216-note-changeset-fields.md)、[ADR 0223](0223-device-package-fields.md)、[ADR 0028](0028-package-schema.md)
 - 監査: [SPG-09](../reviews/2026-10-30-structure-audit.md#spg-09-モデルの項目追加の手数)

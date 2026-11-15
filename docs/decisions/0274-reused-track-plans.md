@@ -1,7 +1,8 @@
 # ADR 0274: 変わらないトラックの再生計画を使い回す
 
 - 日付: 2026-11-06
-- 状態: 採用
+- 状態: 一部置換（[ADR 0279](0279-unchanged-track-voice-handover.md)）
+- 領域: 音声エンジン・書き出し
 - 対象: FCA-04。計画の複写と声の表の初期化はノート数に比例して残る。
 - 後続: 番号順の組（`by_number`）は [ADR 0279](0279-unchanged-track-voice-handover.md) でなくした。
 

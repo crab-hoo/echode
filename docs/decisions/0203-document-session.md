@@ -1,7 +1,8 @@
 # 0203. 文書の寿命の状態を DocumentSession へまとめ、文書の照合を 1 か所にする
 
 - 日付: 2026-10-31
-- 状態: 採用。実画面での文書切替・VoiceOver・聴感はユーザー確認待ち
+- 状態: 現行。実画面での文書切替・VoiceOver・聴感はユーザー確認待ち
+- 領域: モデル・履歴・保存・API
 - 対象: [構造監査](../reviews/2026-10-30-structure-audit.md) SPG-02
 - 関連: [ADR 0193](0193-header-mix-gesture-document-scope.md)、[ADR 0194](0194-clip-mix-gesture-document-scope.md)
 

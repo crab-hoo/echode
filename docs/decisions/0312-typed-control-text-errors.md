@@ -1,7 +1,8 @@
 # ADR 0312: 制御メッセージの不正な UTF-8 の原因を保持する
 
 - 日付: 2026-11-10
-- 状態: 採用
+- 状態: 現行
+- 領域: プラグイン・隔離
 - 対象: M1（DEV-7・SPG-11・XCA-16）、`echode-sandbox`
 - 前提: [ADR 0311](0311-typed-shared-memory-errors.md) の残り
 

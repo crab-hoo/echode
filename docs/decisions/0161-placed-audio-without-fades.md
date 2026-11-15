@@ -1,7 +1,8 @@
 # ADR 0161: 置いた音声に自動のフェードを付けない
 
 - 日付: 2026-10-25
-- 状態: 採用。[2026-10-25 の操作の報告](../reviews/2026-10-25-user-feedback.md) の FB-04 への対応。聴感はユーザー確認待ち
+- 状態: 現行。[2026-10-25 の操作の報告](../reviews/2026-10-25-user-feedback.md) の FB-04 への対応。聴感はユーザー確認待ち
+- 領域: 音声エンジン・書き出し
 - 関連: [ADR 0022](0022-clip-content-and-placement.md)、[ADR 0107](0107-mix-controls.md)、
   [ADR 0145](0145-sample-browser-file-drops.md)、[ADR 0154](0154-clip-move-and-duplicate.md)
 

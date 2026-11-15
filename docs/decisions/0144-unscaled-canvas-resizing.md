@@ -1,7 +1,9 @@
 # ADR 0144: ペインのリサイズで前のフレームを伸縮せず、指定ヘッダ幅を保つ
 
 - 日付: 2026-10-22
-- 状態: 採用（`contentsGravity` の上書きは [ADR 0149](0149-flipped-canvas-anchor-and-fixed-transport-chrome.md) で、
+- 状態: 一部置換（[ADR 0149](0149-flipped-canvas-anchor-and-fixed-transport-chrome.md)・[ADR 0150](0150-stale-drawable-frame.md)）
+- 領域: UI・描画・入力
+- 補足: （`contentsGravity` の上書きは [ADR 0149](0149-flipped-canvas-anchor-and-fixed-transport-chrome.md) で、
   入力と大きさの違う drawable をクリアして再試行する扱いは [ADR 0150](0150-stale-drawable-frame.md) で置き換えた）
 - 範囲: UIF-01。アレンジ・ピアノロールの Metal レイヤー、描画サイズ、トラックヘッダ幅の表示記憶
 

@@ -1,7 +1,8 @@
 # 0204. 文書の手番の調停を FFI から文書サービスの crate へ移す
 
 - 日付: 2026-10-31
-- 状態: 採用
+- 状態: 現行
+- 領域: モデル・履歴・保存・API
 - 対象: [構造監査](../reviews/2026-10-30-structure-audit.md) SPG-05
 - 関連: [ADR 0136](0136-output-opening-off-worker.md)、[ADR 0131](0131-device-view-and-responsive-parameters.md)、[ADR 0203](0203-document-session.md)
 

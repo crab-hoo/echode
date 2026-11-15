@@ -1,8 +1,9 @@
 # ADR 0319: 送信は待つ間に相手の分を読み、本体の要求は送信にも期限を持つ
 
-日付: 2026-11-11
-状態: 採用
-関連: 統合表の R9、[ADR 0042](0042-plugin-ipc.md)、[ADR 0199](0199-owned-helper-control-requests.md)、[ADR 0288](0288-received-descriptors-are-all-owned.md)、[ADR 0318](0318-split-control-messages.md)
+- 日付: 2026-11-11
+- 状態: 現行
+- 領域: プラグイン・隔離
+- 関連: 統合表の R9、[ADR 0042](0042-plugin-ipc.md)、[ADR 0199](0199-owned-helper-control-requests.md)、[ADR 0288](0288-received-descriptors-are-all-owned.md)、[ADR 0318](0318-split-control-messages.md)
 
 ## 問題と再現
 

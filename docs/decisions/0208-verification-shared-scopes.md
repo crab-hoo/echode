@@ -1,7 +1,8 @@
 # 0208. 検査の識別計算で同じ範囲の読込みを共有する
 
 - 日付: 2026-10-31
-- 状態: 採用
+- 状態: 現行
+- 領域: ビルド・検査・開発基盤
 - 関連: [ADR 0195](0195-verification-cost-observability.md)、[ADR 0197](0197-verification-target-scopes.md)、[ADR 0198](0198-verification-launch-and-cache-cost.md)
 
 ## 背景

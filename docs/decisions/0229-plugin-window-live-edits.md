@@ -1,7 +1,8 @@
 # ADR 0229: プラグインの窓での未記録の変更を、無関係な文書の変更から守る
 
 - 日付: 2026-11-02
-- 状態: 採用。実画面と第三者プラグインでの確認はユーザー担当
+- 状態: 現行。実画面と第三者プラグインでの確認はユーザー担当
+- 領域: プラグイン・隔離
 - 関連: [ADR 0132](0132-helper-plugin-windows.md)、[ADR 0130](0130-clap-parameter-editing.md)、
   [外部監査の精査](../reviews/2026-11-02-external-audit-review.md)の DOC-A1・DOC-A2、
   [実行指示](../reviews/2026-11-02-fix-instructions.md)の W1

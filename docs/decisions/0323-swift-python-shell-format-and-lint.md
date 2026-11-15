@@ -1,7 +1,8 @@
 # 0323. Swift・Python・シェルの整形と lint
 
 - 日付: 2026-11-12
-- 状態: 採用
+- 状態: 現行
+- 領域: ビルド・検査・開発基盤
 - 関連: [XCA-18](../reviews/2026-11-02-cross-cutting-audit.md#xca-18-rust-以外の整形と-lint)、[統合表の M5](../reviews/2026-11-08-open-items-register.md#2-保守性)、
   [ADR 0278](0278-audit-backlog-order.md)（順番）、[ADR 0276](0276-priority-order-and-delegated-decisions.md)（優先順位）、
   [ADR 0269](0269-github-public-ci-scope.md)（GitHub の検査）、[ADR 0212](0212-verification-tiers.md)（検査の段階）

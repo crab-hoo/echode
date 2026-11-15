@@ -1,7 +1,8 @@
 # 0324. エージェントのフックを置かない
 
 - 日付: 2026-11-12
-- 状態: 採用
+- 状態: 現行
+- 領域: ビルド・検査・開発基盤
 - 関連: [XCA-06](../reviews/2026-11-02-cross-cutting-audit.md#xca-06-防護がエージェントごとに違う)（ENV-04）、[統合表の M6](../reviews/2026-11-08-open-items-register.md#2-保守性)、
   [ADR 0278](0278-audit-backlog-order.md)（順番）、[ADR 0276](0276-priority-order-and-delegated-decisions.md)（優先順位）
 - 置き換え: [ADR 0197](0197-verification-target-scopes.md) の `hook_timeout` を外側の上限の正本とする決定、

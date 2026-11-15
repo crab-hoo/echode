@@ -1,7 +1,8 @@
 # 0326. 残る外部宣言を 1 か所に集め、SDK のヘッダと照合する
 
 - 日付: 2026-11-12
-- 状態: 採用
+- 状態: 現行
+- 領域: ビルド・検査・開発基盤
 - 関連: [ENG-15](../reviews/2026-10-08-audit.md#eng-15-手書きの-ffi-を減らし残すものは-sdk-のヘッダと突き合わせる)、[統合表の M9](../reviews/2026-11-08-open-items-register.md#2-保守性)、
   [ADR 0265](0265-symbol-scoped-foreign-declarations.md)（シンボル単位の許可）、[ADR 0278](0278-audit-backlog-order.md)（順番）、
   [ADR 0276](0276-priority-order-and-delegated-decisions.md)（優先順位）

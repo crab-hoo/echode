@@ -1,8 +1,9 @@
 # 0022. クリップは中身と配置に分ける
 
 - 日付: 2026-10-08
-- 状態: 採用
-  自動配置の小節基準は [ADR 0170](0170-content-relative-auto-bars.md) で中身の原点基準へ置き換えた。
+- 状態: 一部置換（[ADR 0117](0117-workflow-interactions.md)・[ADR 0170](0170-content-relative-auto-bars.md)・[ADR 0196](0196-lossless-package-floats.md)）
+- 領域: モデル・履歴・保存・API
+- 補足: 自動配置の小節基準は [ADR 0170](0170-content-relative-auto-bars.md) で中身の原点基準へ置き換えた。
   浮動小数点の小数点以下 9 桁への丸めは、[ADR 0196](0196-lossless-package-floats.md) で精度を落とさない表記へ置き換えた。
 - 項目: MOD-2
 

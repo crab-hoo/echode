@@ -1,8 +1,9 @@
 # ADR 0314: 拒否ペイロードの構造の原因を保持する
 
-日付: 2026-11-10
-状態: 採用
-関連: M1（DEV-7・SPG-11・XCA-16）、[ADR 0313](0313-typed-launch-refusal-decoding.md)
+- 日付: 2026-11-10
+- 状態: 現行
+- 領域: プラグイン・隔離
+- 関連: M1（DEV-7・SPG-11・XCA-16）、[ADR 0313](0313-typed-launch-refusal-decoding.md)
 
 ## 問題と再現
 

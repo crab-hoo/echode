@@ -1,8 +1,9 @@
 # ADR 0287: 中身のノートを共有の run に分け、Undo の段が編集した分だけを持つ
 
 - 日付: 2026-11-09
-- 状態: 採用。R6 をここで区切る。総量の予算は下の再開の条件まで入れない。
-  2026-11-14 に配置で再開の条件に届き、同じ run を配置にも使った（[ADR 0353](0353-shared-placement-runs.md)）。
+- 状態: 現行。R6 をここで区切る。総量の予算は下の再開の条件まで入れない。
+- 領域: モデル・履歴・保存・API
+- 補足: 2026-11-14 に配置で再開の条件に届き、同じ run を配置にも使った（[ADR 0353](0353-shared-placement-runs.md)）。
 - 対象: [統合表](../reviews/2026-11-08-open-items-register.md) の R6（[FCA-19](../reviews/2026-11-03-full-code-audit.md#fca-19-減らない記録)・MOD-12）と、[ADR 0286](0286-history-usage-diagnostics.md) の残る範囲。
 - 方針: [ADR 0276](0276-priority-order-and-delegated-decisions.md) の「段を捨てない。予算を入れる時は、古い段を Git の履歴へ移す方式に限る」。
 

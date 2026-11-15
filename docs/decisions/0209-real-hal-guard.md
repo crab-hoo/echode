@@ -1,7 +1,8 @@
 # 0209. UI テストのバンドルから実 HAL をなくし、触れたテストを名指しで止める
 
 - 日付: 2026-11-01
-- 状態: 採用
+- 状態: 現行
+- 領域: ビルド・検査・開発基盤
 - 関連: [ADR 0136](0136-output-opening-off-worker.md)、[ADR 0207](0207-continuation-handoff-tsan.md)
 
 ## 背景と原因

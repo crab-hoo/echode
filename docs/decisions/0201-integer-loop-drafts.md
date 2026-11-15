@@ -1,7 +1,8 @@
 # 0201. ループの UI 下書きを整数で共有する
 
 - 日付: 2026-10-30
-- 状態: 採用
+- 状態: 現行
+- 領域: モデル・履歴・保存・API
 - 対象: [構造監査](../reviews/2026-10-30-structure-audit.md) SPG-04 の残り
 - 前提: [ADR 0200](0200-shared-model-units-and-limits.md) の共通単位と変換
 

@@ -1,7 +1,8 @@
 # ADR 0072: 本体の署名は Hardened Runtime を明示する
 
 - 日付: 2026-10-13
-- 状態: 採用
+- 状態: 現行
+- 領域: ビルド・検査・開発基盤
 - 範囲: `Echode Local` で署名する配布バンドル。公証は [ADR 0061](0061-distribution-signing.md) のまま Phase 6
 
 ## 背景

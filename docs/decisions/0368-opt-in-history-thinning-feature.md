@@ -1,7 +1,8 @@
 # ADR 0368: 履歴の間引きとバンドルを非既定の feature へ閉じる
 
 - 日付: 2026-11-15
-- 状態: 採用
+- 状態: 現行
+- 領域: ビルド・検査・開発基盤
 - 関連: [DIA-11](../reviews/2026-11-13-detailed-implementation-audit.md#dia-11-接続していない間引き)、[ADR 0046](0046-history-thin.md)、[ADR 0211](0211-opt-in-history-spike.md)、[ADR 0230](0230-save-durability.md)、[ADR 0300](0300-typed-thinning-errors.md)、[ADR 0361](0361-unshipped-configurations-only-on-github.md)
 
 ## 問題と根拠

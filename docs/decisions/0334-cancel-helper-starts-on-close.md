@@ -1,8 +1,9 @@
 # ADR 0334: 出力を閉じる・機器を替える時は、起動中のヘルパーを待たずに取り消す
 
-日付: 2026-11-13
-状態: 採用。実機の操作感はユーザー確認待ち（UC-70）
-関連: [ADR 0136](0136-output-opening-off-worker.md)、[ADR 0142](0142-background-plugin-graph-preparation.md)、[ADR 0199](0199-owned-helper-control-requests.md)、[ADR 0276](0276-priority-order-and-delegated-decisions.md)
+- 日付: 2026-11-13
+- 状態: 現行。実機の操作感はユーザー確認待ち（UC-70）
+- 領域: プラグイン・隔離
+- 関連: [ADR 0136](0136-output-opening-off-worker.md)、[ADR 0142](0142-background-plugin-graph-preparation.md)、[ADR 0199](0199-owned-helper-control-requests.md)、[ADR 0276](0276-priority-order-and-delegated-decisions.md)
 
 ## 問題と再現
 

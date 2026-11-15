@@ -1,9 +1,10 @@
 # ADR 0322: 製品のログを `log` の窓口と一つのロガーに置き、オーディオスレッドの出来事はリングで制御スレッドへ渡す
 
-日付: 2026-11-12
-状態: 採用。実アプリでのファイルと統合ログの確認は UC-66 が未確認。
-関連: 統合表の M4（[DEV-8](../reviews/2026-10-08-audit.md#dev-8-ログの仕組みを置く)・[XCA-19](../reviews/2026-11-02-cross-cutting-audit.md#xca-19-ログの仕組み)）、
-[ADR 0238](0238-audio-callback-panics.md)、[ADR 0283](0283-output-time-callback-deadline.md)、[ADR 0286](0286-history-usage-diagnostics.md)、[ADR 0278](0278-audit-backlog-order.md)
+- 日付: 2026-11-12
+- 状態: 現行。実アプリでのファイルと統合ログの確認は UC-66 が未確認。
+- 領域: ビルド・検査・開発基盤
+- 関連: 統合表の M4（[DEV-8](../reviews/2026-10-08-audit.md#dev-8-ログの仕組みを置く)・[XCA-19](../reviews/2026-11-02-cross-cutting-audit.md#xca-19-ログの仕組み)）、
+  [ADR 0238](0238-audio-callback-panics.md)、[ADR 0283](0283-output-time-callback-deadline.md)、[ADR 0286](0286-history-usage-diagnostics.md)、[ADR 0278](0278-audit-backlog-order.md)
 
 ## 問題
 

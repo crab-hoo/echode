@@ -1,7 +1,8 @@
 # ADR 0233: 見送りの理由を検査ごとにし、検査の罠を減らす
 
 - 日付: 2026-11-03
-- 状態: 採用
+- 状態: 一部置換（[ADR 0325](0325-swift-test-stall-watchdog.md)）
+- 領域: ビルド・検査・開発基盤
 - 関連: [ADR 0212](0212-verification-tiers.md)、[横断監査](../reviews/2026-11-02-cross-cutting-audit.md)の XCA-08・09
 
 ## 背景

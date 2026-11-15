@@ -1,7 +1,8 @@
 # ADR 0300: 間引き・パック・バンドルの失敗を型で保持する
 
 - 日付: 2026-11-10
-- 状態: 採用
+- 状態: 現行
+- 領域: モデル・履歴・保存・API
 - 対象: 統合表 M1、DEV-7・SPG-11・XCA-16
 - 続き: [ADR 0299](0299-typed-document-journal-and-settings-errors.md)
 

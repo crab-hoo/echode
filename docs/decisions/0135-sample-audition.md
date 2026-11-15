@@ -1,7 +1,9 @@
 # ADR 0135: サンプルの単発試聴を文書ワーカーから独立した出力で鳴らす
 
 - 日付: 2026-10-21
-- 状態: 採用。P2-02 の共通サンプルブラウザの単発試聴を接続。実機の聴感はユーザー確認待ち。
+- 状態: 一部置換（[ADR 0143](0143-browser-click-and-audition-timing.md)・[ADR 0151](0151-streaming-sample-audition.md)・[ADR 0152](0152-browser-audition-controls.md)）
+- 領域: 音声エンジン・書き出し
+- 補足: P2-02 の共通サンプルブラウザの単発試聴を接続。実機の聴感はユーザー確認待ち。
   一覧の入力、試聴を変える選択の範囲、要求ごとの記録は [ADR 0143](0143-browser-click-and-audition-timing.md) で改めた
   全体の復号・一括 SRC と波形なしの制約は [ADR 0151](0151-streaming-sample-audition.md) で改めた。
   表示中のアイドル終了・音量・先頭固定は [ADR 0152](0152-browser-audition-controls.md) で改めた。

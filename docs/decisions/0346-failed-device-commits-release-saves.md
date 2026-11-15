@@ -1,9 +1,10 @@
 # ADR 0346: デバイスの確定の失敗でも背景保存の保留を終える
 
-日付: 2026-11-14
-状態: 採用
-関連: [ADR 0130](0130-clap-parameter-editing.md)、[ADR 0229](0229-plugin-window-live-edits.md)、
-[DIA-02](../reviews/2026-11-13-detailed-implementation-audit.md#dia-02-確定に失敗したデバイスが編集中のまま残る)
+- 日付: 2026-11-14
+- 状態: 現行
+- 領域: プラグイン・隔離
+- 関連: [ADR 0130](0130-clap-parameter-editing.md)、[ADR 0229](0229-plugin-window-live-edits.md)、
+  [DIA-02](../reviews/2026-11-13-detailed-implementation-audit.md#dia-02-確定に失敗したデバイスが編集中のまま残る)
 
 ## 問題と再現
 

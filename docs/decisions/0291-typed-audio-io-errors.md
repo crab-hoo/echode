@@ -1,7 +1,8 @@
 # ADR 0291: 出力・試聴のエラーを列挙型にする
 
 - 日付: 2026-11-09
-- 状態: 採用
+- 状態: 現行
+- 領域: 音声エンジン・書き出し
 - 対象: [統合表](../reviews/2026-11-08-open-items-register.md) の M1（[横断監査](../reviews/2026-11-02-cross-cutting-audit.md#xca-16-文字列のエラーspg-11-の見直し) の XCA-16、SPG-11・DEV-7）のうち `echode-audio-io`。
 - 方針: [ADR 0278](0278-audit-backlog-order.md) の「M1・M2 は crate の境界ごとに進め、`echode-audio-io` から始める」。
 - 関連: [ADR 0234](0234-typed-journal-durability.md)（保存の不確定の型）、[ADR 0284](0284-audio-path-panic-lints.md)（音声経路の lint の検査）。

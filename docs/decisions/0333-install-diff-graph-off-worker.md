@@ -1,8 +1,9 @@
 # ADR 0333: 出力の導入時の差分で増えるヘルパーも準備スレッドで起動し、再生はその計画を待つ
 
-日付: 2026-11-13
-状態: 採用。実機の操作感はユーザー確認待ち（UC-69）
-関連: [ADR 0136](0136-output-opening-off-worker.md)、[ADR 0142](0142-background-plugin-graph-preparation.md)、[ADR 0147](0147-output-prewarm-and-background-media.md)、[ADR 0330](0330-playing-edit-media-and-tempo-retime.md)、[ADR 0276](0276-priority-order-and-delegated-decisions.md)
+- 日付: 2026-11-13
+- 状態: 現行。実機の操作感はユーザー確認待ち（UC-69）
+- 領域: 音声エンジン・書き出し
+- 関連: [ADR 0136](0136-output-opening-off-worker.md)、[ADR 0142](0142-background-plugin-graph-preparation.md)、[ADR 0147](0147-output-prewarm-and-background-media.md)、[ADR 0330](0330-playing-edit-media-and-tempo-retime.md)、[ADR 0276](0276-priority-order-and-delegated-decisions.md)
 
 ## 問題と再現
 

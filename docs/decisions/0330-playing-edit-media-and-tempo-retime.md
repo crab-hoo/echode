@@ -1,8 +1,9 @@
 # ADR 0330: 再生中の編集の素材も別スレッドで読み、テンポの変わった計画は採用時に拍を保つ
 
-日付: 2026-11-12
-状態: 採用。実機の操作感と聴感はユーザー確認待ち（UC-67）
-関連: [ADR 0147](0147-output-prewarm-and-background-media.md)、[ADR 0142](0142-background-plugin-graph-preparation.md)、[ADR 0136](0136-output-opening-off-worker.md)、[ADR 0155](0155-remembered-playback-start.md)、[ADR 0275](0275-shared-integer-tempo-index.md)、[ADR 0278](0278-audit-backlog-order.md)、[ADR 0329](0329-plugin-states-by-name.md)
+- 日付: 2026-11-12
+- 状態: 現行。実機の操作感と聴感はユーザー確認待ち（UC-67）
+- 領域: 音声エンジン・書き出し
+- 関連: [ADR 0147](0147-output-prewarm-and-background-media.md)、[ADR 0142](0142-background-plugin-graph-preparation.md)、[ADR 0136](0136-output-opening-off-worker.md)、[ADR 0155](0155-remembered-playback-start.md)、[ADR 0275](0275-shared-integer-tempo-index.md)、[ADR 0278](0278-audit-backlog-order.md)、[ADR 0329](0329-plugin-states-by-name.md)
 
 ## 問題と再現
 

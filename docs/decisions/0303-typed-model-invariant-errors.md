@@ -1,7 +1,8 @@
 # ADR 0303: モデルの並びと不変条件の原因を型で保つ
 
 - 日付: 2026-11-10
-- 状態: 採用
+- 状態: 現行
+- 領域: モデル・履歴・保存・API
 - 関連: [ADR 0276](0276-priority-order-and-delegated-decisions.md)、[ADR 0298](0298-typed-package-validation-errors.md)、[ADR 0299](0299-typed-document-journal-and-settings-errors.md)
 - 対象: 統合表 M1（DEV-7・SPG-11・XCA-16）のモデルの境界
 

@@ -1,7 +1,8 @@
 # 0211. Phase 0 の履歴モデルを非既定の feature へ分離する
 
 - 日付: 2026-11-01
-- 状態: 採用
+- 状態: 現行
+- 領域: ビルド・検査・開発基盤
 - 対象: [構造監査](../reviews/2026-10-30-structure-audit.md) SPG-10 の履歴側
 - 関連: [S4](../spikes/S4-history.md)、[モデル・履歴設計](../architecture/model-and-history.md)
 

@@ -1,7 +1,8 @@
 # ADR 0350: 読めない履歴を空の履歴として開かない
 
 - 日付: 2026-11-14
-- 状態: 採用
+- 状態: 現行
+- 領域: モデル・履歴・保存・API
 - 関連: [IQA-01・02](../reviews/2026-11-13-implementation-quality-audit.md)、
   [ADR 0230](0230-save-durability.md)、[ADR 0297](0297-typed-autosave-and-git-errors.md)
 

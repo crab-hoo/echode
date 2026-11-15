@@ -1,7 +1,8 @@
 # ADR 0297: 自動保存の待ち手へ元のエラーを共有して返す
 
 - 日付: 2026-11-09
-- 状態: 採用
+- 状態: 現行
+- 領域: モデル・履歴・保存・API
 - 対象: [未完了項目の統合](../reviews/2026-11-08-open-items-register.md) の M1 のうち、製品の Git と自動保存。
 - 関連: [ADR 0296](0296-typed-storage-errors.md)（保管庫・復号）、[ADR 0234](0234-typed-journal-durability.md)（保存の不確定）。
 

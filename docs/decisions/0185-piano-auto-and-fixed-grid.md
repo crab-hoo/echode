@@ -1,7 +1,8 @@
 # ADR 0185: ピアノロールの自動・固定グリッド
 
 - 日付: 2026-10-28
-- 状態: 採用。P2-07 の先行分。実画面・VoiceOver はユーザー確認待ち
+- 状態: 現行。P2-07 の先行分。実画面・VoiceOver はユーザー確認待ち
+- 領域: UI・描画・入力
 - 関連: [操作要件](../interaction-design.md#構成を考えながら入力する)、
   [ADR 0172](0172-piano-click-and-input-length.md)、[ADR 0174](0174-shared-piano-viewport.md)
 

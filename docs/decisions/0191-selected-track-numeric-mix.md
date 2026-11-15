@@ -1,7 +1,8 @@
 # ADR 0191: 選択トラックの音量・パンを数値入力で相対調整する
 
 - 日付: 2026-10-28
-- 状態: 数値入力の先行分を採用。一括ドラッグ・読み上げの増減・コンソールは未接続
+- 状態: 現行。数値入力の先行分を採用。一括ドラッグ・読み上げの増減・コンソールは未接続
+- 領域: UI・描画・入力
 - 関連: [操作要件](../interaction-design.md#ミキサーの複数選択)、
   [ADR 0107](0107-mix-controls.md)、[ADR 0153](0153-value-control-clicks-and-typed-entry.md)、
   [ADR 0189](0189-selected-track-mute-and-solo.md)

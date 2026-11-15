@@ -129,6 +129,7 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
   失敗・取込みの誤り・0 件のモジュールは、その出力全体を表示して失敗にする。
   既存のローカル証拠は文書・宛先の例外一覧と注意書きを要求し、新しい `target/` リンクは拒否する（[証拠の保全](evidence/README.md)）。
   macOS 27 / M4 のビルド基準と生成物も検査する（[ADR 0114](decisions/0114-m4-build-baseline.md)）。
+  全 ADR の `- 状態:` / `- 領域:` ヘッダ、置換リンクの整合、[ADR の索引](decisions/README.md) の最新性も検証する（[ADR 0371](decisions/0371-adr-status-and-domain-index.md)）。
   文書だけの変更ではこれを再実行し、入力が変わっていない製品検査は再利用する。
   エージェント入口の選択の一致・失敗情報の保持・原文読込と鮮度の境界も既存の検査内で確認する（[手順](agent-workflow.md)）。
 - `check-format`: 従来 `check-base` のビルド後に行っていた Rust フォーマットを独立して先に検査する。

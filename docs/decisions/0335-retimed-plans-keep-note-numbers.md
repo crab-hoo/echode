@@ -1,7 +1,8 @@
 # ADR 0335: テンポ・レートだけが変わったトラックは、ノートの番号を前回の計画から位置で引き継ぐ
 
 - 日付: 2026-11-13
-- 状態: 採用
+- 状態: 現行
+- 領域: 音声エンジン・書き出し
 - 関連: [ADR 0274](0274-reused-track-plans.md)、[ADR 0267](0267-current-playback-id-mappings.md)、[ADR 0278](0278-audit-backlog-order.md)、[ADR 0333](0333-install-diff-graph-off-worker.md)
 
 ## 問題と計測

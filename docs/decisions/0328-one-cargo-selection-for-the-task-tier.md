@@ -1,7 +1,8 @@
 # 0328. 作業の段階の Cargo の呼出しを既定のメンバーの 1 つの選択にそろえる
 
 - 日付: 2026-11-12
-- 状態: 採用
+- 状態: 一部置換（[ADR 0361](0361-unshipped-configurations-only-on-github.md)）
+- 領域: ビルド・検査・開発基盤
 - 関連: [ADR 0093](0093-product-contract-gate.md)、[ADR 0212](0212-verification-tiers.md)、[ADR 0271](0271-task-tier-duplicate-runs.md)、
   [ADR 0276](0276-priority-order-and-delegated-decisions.md)（優先順位）、[ADR 0327](0327-instrumented-builds-only-on-github.md)
 - 置き換え: [ADR 0148](0148-verification-pipeline-speed.md) の「Rust の契約は 1 契約 1 プロセスの `cargo test -p` で実行する」を作業の段階について。

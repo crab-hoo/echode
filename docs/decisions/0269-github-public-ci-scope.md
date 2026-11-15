@@ -1,7 +1,9 @@
 # 0269. GitHub で公開し、CI の範囲を決める
 
 - 日付: 2026-11-05
-- 状態: 採用。同日の[追記](#2026-11-05-追記-全体の段階を-github-で実行する)で、全体の段階を CI へ移した
+- 状態: 一部置換（[ADR 0324](0324-no-agent-hooks.md)・[ADR 0327](0327-instrumented-builds-only-on-github.md)）
+- 領域: ビルド・検査・開発基盤
+- 補足: 同日の[追記](#2026-11-05-追記-全体の段階を-github-で実行する)で、全体の段階を CI へ移した
 - 関連: [ADR 0044](0044-swift-bridge.md)、[ADR 0114](0114-m4-build-baseline.md)、[ADR 0212](0212-verification-tiers.md)、
   [横断監査](../reviews/2026-11-02-cross-cutting-audit.md) の XCA-04・05・22
 - 置き換え: ADR 0044 の CI の節と、ADR 0114 の「CI のネイティブ検査」の記述

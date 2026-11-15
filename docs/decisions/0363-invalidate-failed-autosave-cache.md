@@ -1,7 +1,8 @@
 # ADR 0363: 失敗した自動保存のキャッシュを次へ渡さない
 
 - 日付: 2026-11-15
-- 状態: 採用
+- 状態: 現行
+- 領域: モデル・履歴・保存・API
 - 関連: [品質監査 IQA-04](../reviews/2026-11-13-implementation-quality-audit.md#iqa-04-失敗した自動保存の後のキャッシュ)、[ADR 0009](0009-package-autosave.md)、[ADR 0297](0297-typed-autosave-and-git-errors.md)
 
 ## 問題と再現

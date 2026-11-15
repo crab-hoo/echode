@@ -1,7 +1,8 @@
 # 0277. フォルダは Reaper と同じく、子の音を親トラックへ通す
 
 - 日付: 2026-11-08
-- 状態: 採用（意味の決定）。フォルダバスは [ADR 0338](0338-folder-bus.md)、PDC は [ADR 0339](0339-plugin-delay-compensation.md) で接続した
+- 状態: 現行（意味の決定）。フォルダバスは [ADR 0338](0338-folder-bus.md)、PDC は [ADR 0339](0339-plugin-delay-compensation.md) で接続した
+- 領域: 音声エンジン・書き出し
 - 関連: [ADR 0024](0024-track-order.md)、[ADR 0116](0116-folder-drum-rack.md)、[ADR 0191](0191-selected-track-numeric-mix.md)、
   [ADR 0244](0244-folder-mute-and-solo-gates.md)、[FCA-06](../reviews/2026-11-03-full-code-audit.md#fca-06-フォルダのミックス操作が子に効かない)、
   [設計書 8.4](../architecture/audio-engine.md#84-フォルダ)、[P2-03](../phase2.md#p2-03-ルーティングフォルダバスpdc)

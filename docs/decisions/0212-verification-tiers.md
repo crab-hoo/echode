@@ -1,7 +1,8 @@
 # ADR 0212: 作業ごとの検査と節目の全体検査を分ける
 
 - 日付: 2026-11-01
-- 状態: 採用
+- 状態: 一部置換（[ADR 0324](0324-no-agent-hooks.md)・[ADR 0327](0327-instrumented-builds-only-on-github.md)）
+- 領域: ビルド・検査・開発基盤
 - 対象: 検査の選択、製品契約の反例、Rust / Swift の基本検査、フックと報告
 - 前提: [ADR 0100](0100-scoped-verification.md)、[ADR 0148](0148-verification-pipeline-speed.md)、[ADR 0195](0195-verification-cost-observability.md)、[ADR 0197](0197-verification-target-scopes.md)
 - 後続: [ADR 0324](0324-no-agent-hooks.md) が終了フックと `hook_timeout` をなくした。作業の段階は各エージェントが `make verify` で呼ぶ。

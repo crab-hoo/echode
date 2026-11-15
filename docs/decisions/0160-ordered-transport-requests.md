@@ -1,8 +1,9 @@
 # ADR 0160: トランスポートの要求を順番待ちにし、操作子とサンプル一覧の Space を止めない
 
 - 日付: 2026-10-25
-- 状態: 採用。[2026-10-25 の操作の報告](../reviews/2026-10-25-user-feedback.md) の FB-01・FB-02 への対応。
-  実画面で暗転が消えたか、サンプル一覧での Space は、ユーザー確認待ち
+- 状態: 現行。[2026-10-25 の操作の報告](../reviews/2026-10-25-user-feedback.md) の FB-01・FB-02 への対応。
+- 領域: UI・描画・入力
+- 補足: 実画面で暗転が消えたか、サンプル一覧での Space は、ユーザー確認待ち
 - 関連: [ADR 0097](0097-cancellable-retained-transport.md)、[ADR 0133](0133-stopped-plugin-processing-and-edit-input.md)、
   [ADR 0143](0143-browser-click-and-audition-timing.md)、[ADR 0155](0155-remembered-playback-start.md)
 

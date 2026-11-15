@@ -1,7 +1,8 @@
 # 0361. 出荷しない構成は GitHub だけでビルドする
 
 - 日付: 2026-11-15
-- 状態: 採用
+- 状態: 現行
+- 領域: ビルド・検査・開発基盤
 - 関連: [ADR 0211](0211-opt-in-history-spike.md)、[ADR 0213](0213-opt-in-engine-spike.md)、[ADR 0269](0269-github-public-ci-scope.md)、
   [ADR 0276](0276-priority-order-and-delegated-decisions.md)（優先順位）、[ADR 0327](0327-instrumented-builds-only-on-github.md)、
   [ADR 0328](0328-one-cargo-selection-for-the-task-tier.md)

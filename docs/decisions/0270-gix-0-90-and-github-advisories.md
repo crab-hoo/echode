@@ -1,7 +1,8 @@
 # 0270. gix を 0.90 へ上げ、GitHub の勧告は RustSec と別に確かめる
 
 - 日付: 2026-11-05
-- 状態: 採用
+- 状態: 現行
+- 領域: ビルド・検査・開発基盤
 - 関連: [ADR 0005](0005-s2-confirmed-s4-next.md)（gix の採用）、[ADR 0046](0046-history-thin.md)（`gix-pack` による間引き）、
   [ADR 0230](0230-save-durability.md)（保存の同期）、[ADR 0269](0269-github-public-ci-scope.md)（GitHub の CI）
 

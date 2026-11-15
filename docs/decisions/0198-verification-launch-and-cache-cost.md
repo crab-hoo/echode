@@ -1,7 +1,8 @@
 # ADR 0198: 契約の起動コストと診断・ビルドキャッシュの境界を分ける
 
 - 日付: 2026-10-30
-- 状態: 採用
+- 状態: 現行
+- 領域: ビルド・検査・開発基盤
 - 対象: 製品契約、検査の表示と選択、TSan のビルド先
 - 前提: [ADR 0148](0148-verification-pipeline-speed.md)、[ADR 0195](0195-verification-cost-observability.md)、[ADR 0197](0197-verification-target-scopes.md)
 

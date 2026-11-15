@@ -1,7 +1,8 @@
 # 0210. サニタイザの Swift 全体実行の同時実行数を絞り、競合の検出は全テスト同時の実行で保つ
 
 - 日付: 2026-11-01
-- 状態: 採用
+- 状態: 現行
+- 領域: ビルド・検査・開発基盤
 - 関連: [ADR 0185](0185-piano-auto-and-fixed-grid.md)、[ADR 0207](0207-continuation-handoff-tsan.md)、[デバッグ手順](../debugging.md)
 
 ## 背景と原因
