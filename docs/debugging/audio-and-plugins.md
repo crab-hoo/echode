@@ -136,6 +136,17 @@ AudioToolbox の失敗は `MediaError` の操作別の変種で、`Property` は
 
 ## プラグイン
 
+### ヘルパーの終了・再起動の失敗後にプロセスや終了監視が残る
+
+`PluginHost::shutdown` の `Io` の元の errno と、再起動の準備・状態復元のどちらが失敗したかを記録する。
+`ECHILD` は外部での子の回収などによる待ちの失敗で、終了監視の join を省いてよい根拠ではない。
+`Drop` の `stop_watch` が共有領域と fan-in の破棄前に走ることを、`session_lifecycle_tests.rs` の `audit_dia08_*` で検査する。
+このテストは実際の `waitpid` の失敗を作るが、監視の代役は生ポインタを読まない。
+再起動の準備・復元が失敗した時は、エラーの返却前に新しい子を終了・回収し、監視も join する。
+子の PID があるだけで生存と判定せず、終了済みで未回収なのか、準備を待ち続ける子なのかを区別する。
+同じ回帰の ready にならない子で、返却時の回収済みの状態と監視の所有を照合する。音声機器やアプリの操作は不要である
+（[ADR 0362](../decisions/0362-published-media-and-helper-lifetimes.md)）。
+
 ### 機器一覧のエラーが続くのに警告が増えない
 
 `echode_audio_io::session` の `cause` と音声状態の `error` を確認する。

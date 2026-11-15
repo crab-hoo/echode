@@ -371,6 +371,12 @@ MySong.echode/
 コメントや部分一致を除外規則と見なさず、CRLF と末尾改行なしの正確な規則も保持する
 （[ADR 0031 の後続修正](../decisions/0031-content-addressed-store.md#除外規則の行単位の照合2026-10-29)）。
 
+編集の受理前は一時の名前だけを作り、拒否・取消ではその段階を捨てる。
+ハッシュの名前を公開した後は、同期・索引・ジャーナルの失敗でも名前を消さない。
+背景の別の段階が、既存の名前を見て一時ファイルを省いている可能性があるためである。
+再利用する名前も、ジャーナルの前にディレクトリを同期する。未参照の保管物の掃除は未実装
+（[ADR 0362](../decisions/0362-published-media-and-helper-lifetimes.md)）。
+
 保管庫・復号・ピークの失敗は `error.rs` の `PackageError` の変種で返す（[ADR 0296](../decisions/0296-typed-storage-errors.md)）。
 `Io` は元の `io::Error` と、従来表示していたパスを持ち、`Audio(MediaError)` は PCM 検証・取消・容量・AudioToolbox の状態コードとプロパティ番号を分ける。
 `MediaIndex` は元の JSON エラーを持つ。`Error::source` で原因を読め、表示の文は変えない。

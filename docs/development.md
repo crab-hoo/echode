@@ -428,6 +428,9 @@ CLAP のノート形式の対応の公開は `echode-plugin-host/src/note_ports.
 （[ADR 0227](decisions/0227-control-only-plugin-operations.md)）。
 確定が背景取得を引き取った後の失敗と再試行は `session_capture_tests.rs`、実ヘルパーとの組合せは `tests/isolation/state_saves.rs` に置く。
 
+待ちの失敗後の破棄と、準備に失敗した再起動のプロセス回収は `session_lifecycle_tests.rs` の `audit_dia08_*` に置く。
+実際の `waitpid` の `ECHILD` と、共有領域を ready にしない子で、監視の join と子の回収を区別して検査する。
+
 コールバックの費用がトラック数とともにどう増えるかの release 計測は `crates/echode-plugin-host/tests/track_scale.rs` に置き、`make spike-plugin-tracks` で動かす。
 ブロックのイベントの振り分けは `playback.rs` の `group_events`、ヘルパーのトラックのキーの索引は `plugins.rs` の `HostTracks` である（[ADR 0236](decisions/0236-callback-work-per-track.md)）。
 楽譜の大きさに比例する処理（ループの折り返し、再生中の編集、制御側の作り直し、モデルの探索）の release 計測は `crates/echode-engine/tests/scale.rs` に置き、`make spike-scale` で動かす（[実行指示](reviews/2026-11-03-fix-instructions.md)）。
@@ -623,6 +626,9 @@ f64 の和を f32 の面へ狭めた所（フォルダバス・マスター）�
 文書ワーカーの外の段階は `imports.rs` の `StagedImports`、使う側は `echode-document` の `import.rs`。
 回帰は `host_tests.rs`（段階済みの取込みの一致）と `import_tests.rs`（必須契約 `import-off-worker`）、
 時間は `make spike-import` で測る（[ADR 0331](decisions/0331-off-worker-audio-import.md)）。
+素材の公開後の保持とジャーナル失敗の競合は `host_tests.rs` の `audit_dia07_*`・`an_import_keeps_published_objects_*`、
+索引失敗の保持と未公開段階の破棄は `an_index_failure_*`、公開取込みの原因の保持は `tests/storage_errors.rs` で検査する
+（[ADR 0362](decisions/0362-published-media-and-helper-lifetimes.md)）。
 IEEE float WAV の異常値・有限値のビット保持・原本とパッケージの保持・一括編集の巻戻しと再オープンを通す。
 
 保管庫とキャッシュの Git 除外は `objects.rs::ensure_store_gitignore`、回帰は履歴の `tests/store_gitignore.rs` に置く。

@@ -724,11 +724,10 @@ fn object_entries(directory: &std::path::Path) -> Vec<String> {
     names
 }
 
-/// EXT-02: an import's object is named only with an accepted edit. A journal
-/// line that cleanly failed takes the new object back; one whose durability is
-/// unknown keeps it, because reopening replays that line.
+/// EXT-02 / DIA-07: rejected edits leave no published media, but once an
+/// accepted edit publishes PCM, even a clean journal failure keeps its name.
 #[test]
-fn an_import_keeps_its_object_only_while_its_journal_line_can_name_it() {
+fn an_import_keeps_published_objects_even_when_its_journal_line_fails() {
     let directory = scratch();
     write_package(&directory, &Project::new()).unwrap();
     let first = directory.with_extension("first.wav");
@@ -764,10 +763,12 @@ fn an_import_keeps_its_object_only_while_its_journal_line_can_name_it() {
             .is_err(),
             "{fault:?}"
         );
-        assert_eq!(
-            object_entries(&directory),
-            Vec::<String>::new(),
-            "{fault:?}"
+        assert_eq!(object_entries(&directory).len(), 1, "{fault:?}");
+        assert!(
+            host.snapshot()
+                .tracks()
+                .iter()
+                .all(|track| track.clips.is_empty())
         );
     }
     host.apply(vec![import(&first)]).unwrap();
@@ -785,7 +786,9 @@ fn an_import_keeps_its_object_only_while_its_journal_line_can_name_it() {
             .to_string()
             .contains("journal write failed")
     );
-    assert_eq!(object_entries(&directory), kept);
+    let after_failed = object_entries(&directory);
+    assert_eq!(after_failed.len(), 2);
+    assert!(kept.iter().all(|hash| after_failed.contains(hash)));
     crate::document::fail_next_journal(host.directory(), JournalFault::Uncertain);
     let failed = host.apply(vec![import_to(tracks[1], &second)]);
     assert!(
@@ -813,6 +816,123 @@ fn an_import_keeps_its_object_only_while_its_journal_line_can_name_it() {
     let _ = std::fs::remove_file(&second);
     assert_eq!(clips, 2, "the uncertain line is replayed on reopening");
     assert!(readable, "every replayed clip names a stored object");
+}
+
+/// DIA-07: B stages the object A just published, then A's journal fails.
+/// B must still be able to commit and reopen without losing its PCM.
+#[test]
+fn audit_dia07_a_stage_survives_another_imports_clean_journal_failure() {
+    for fault in [JournalFault::BeforeWrite, JournalFault::Sync] {
+        let directory = scratch();
+        write_package(&directory, &Project::new()).unwrap();
+        let wav = directory.with_extension("race.wav");
+        write_wav(&wav, 0.25);
+        let source = wav.to_string_lossy().into_owned();
+        let host = DocumentHost::open(&directory).unwrap();
+        host.perform(Command::AddTrack { name: "a".into() })
+            .unwrap();
+        let track = host.snapshot().tracks()[0].id;
+        let import = || Command::ImportAudio {
+            track,
+            start: echode_model::Tick::new(0),
+            path: source.clone(),
+        };
+        let (send, receive) = std::sync::mpsc::channel();
+        let package = directory.clone();
+        let path = source.clone();
+        crate::document::fail_next_journal_after(&directory, fault, move || {
+            // The hook runs after A names the PCM but before its journal fails.
+            // Join B's background stage here to fix the otherwise narrow race.
+            let staged = std::thread::spawn(move || {
+                assert_eq!(object_entries(&package).len(), 1);
+                let staged = StagedImports::stage(&package, &[path], &|| true);
+                assert_eq!(object_entries(&package).len(), 1, "B reused A's object");
+                staged
+            })
+            .join()
+            .unwrap();
+            send.send(staged).unwrap();
+        });
+        let error = host.perform(import()).unwrap_err();
+        assert!(matches!(error, HostError::Package(_)), "{error:?}");
+        assert!(host.snapshot().tracks()[0].clips.is_empty());
+        let staged = receive
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        host.perform_staged(import(), staged).unwrap();
+        let snapshot = host.snapshot();
+        let hash = snapshot
+            .content(snapshot.tracks()[0].clips[0].content)
+            .unwrap()
+            .audio
+            .as_ref()
+            .unwrap()
+            .hash
+            .clone();
+        let readable = crate::read_pcm(&directory, &hash).is_ok();
+        drop(snapshot);
+        drop(host);
+        let reopened = DocumentHost::open(&directory).unwrap();
+        assert_eq!(reopened.snapshot().tracks()[0].clips.len(), 1);
+        let recovered = crate::read_pcm(&directory, &hash).is_ok();
+        drop(reopened);
+        let _ = std::fs::remove_dir_all(&directory);
+        let _ = std::fs::remove_file(&wav);
+        assert!(
+            readable && recovered,
+            "DIA-07: B's committed PCM must survive A's failure"
+        );
+    }
+}
+
+/// DIA-07 also applies before journaling: failure to update the media index
+/// keeps named PCM, while later, unpublished transaction stages are removed.
+#[test]
+fn an_index_failure_keeps_published_pcm_but_discards_unpublished_stages() {
+    let directory = scratch();
+    write_package(&directory, &Project::new()).unwrap();
+    let first = directory.with_extension("index-first.wav");
+    let second = directory.with_extension("index-second.wav");
+    write_wav(&first, 0.25);
+    write_wav(&second, 0.5);
+    let host = DocumentHost::open(&directory).unwrap();
+    for name in ["a", "b"] {
+        host.perform(Command::AddTrack { name: name.into() })
+            .unwrap();
+    }
+    let tracks: Vec<_> = host
+        .snapshot()
+        .tracks()
+        .iter()
+        .map(|track| track.id)
+        .collect();
+    let blocker = directory.join("media").join("index.json");
+    std::fs::create_dir_all(&blocker).unwrap();
+    let import = |track: Id, source: &Path| {
+        serde_json::json!({
+            "type": "audio.import", "track": track, "start": 0, "path": source
+        })
+    };
+    let failed = host.apply(vec![import(tracks[0], &first), import(tracks[1], &second)]);
+    assert!(matches!(failed, Err(HostError::Package(_))), "{failed:?}");
+    let names = object_entries(&directory);
+    let untouched = host
+        .snapshot()
+        .tracks()
+        .iter()
+        .all(|track| track.clips.is_empty());
+    std::fs::remove_dir(&blocker).unwrap();
+    let retained = names.len() == 1 && crate::read_pcm(&directory, &names[0]).is_ok();
+    host.apply(vec![import(tracks[0], &first)]).unwrap();
+    let reused = object_entries(&directory) == names;
+    drop(host);
+    let _ = std::fs::remove_dir_all(&directory);
+    let _ = std::fs::remove_file(&first);
+    let _ = std::fs::remove_file(&second);
+    assert!(
+        retained && reused && untouched,
+        "DIA-07: an index failure retains only named PCM without accepting the edit"
+    );
 }
 
 /// ADR 0331: an import staged off the document thread lands as one staged

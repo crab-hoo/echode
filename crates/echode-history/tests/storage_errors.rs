@@ -70,7 +70,7 @@ fn package_and_object_reads_retain_io_causes() {
 }
 
 #[test]
-fn import_retains_a_malformed_index_cause_and_withdraws_the_object() {
+fn import_retains_a_malformed_index_cause_and_the_published_object() {
     let fixture = Fixture::new();
     let source = fixture.wav();
     fs::create_dir_all(fixture.0.join("media")).unwrap();
@@ -90,7 +90,7 @@ fn import_retains_a_malformed_index_cause_and_withdraws_the_object() {
         fs::read_dir(fixture.0.join("media/objects"))
             .unwrap()
             .count(),
-        0
+        1
     );
 }
 

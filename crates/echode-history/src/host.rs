@@ -927,28 +927,12 @@ fn publish_with_media(
     commit: &mut Publish<'_>,
     staged: Vec<crate::media::StagedAudio>,
 ) -> Result<(), HostError> {
-    let mut published = Vec::with_capacity(staged.len());
     for audio in staged {
-        match audio.publish(commit.directory) {
-            Ok(audio) => published.push(audio),
-            Err(error) => {
-                published
-                    .into_iter()
-                    .for_each(crate::media::PublishedAudio::withdraw);
-                return Err(HostError::Package(error));
-            }
-        }
+        audio
+            .publish(commit.directory)
+            .map_err(HostError::Package)?;
     }
-    let saved = publish_edit(commit);
-    if saved
-        .as_ref()
-        .is_err_and(|error| !error.durability_unknown())
-    {
-        published
-            .into_iter()
-            .for_each(crate::media::PublishedAudio::withdraw);
-    }
-    saved
+    publish_edit(commit)
 }
 
 fn publish_edit(commit: &mut Publish<'_>) -> Result<(), HostError> {

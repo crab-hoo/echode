@@ -227,8 +227,11 @@ fn take_journal_fault(directory: &Path) -> JournalFault {
         let mut faults = JOURNAL_FAULTS
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        if let Some(index) = faults.iter().position(|(candidate, _)| candidate == &path) {
-            return faults.swap_remove(index).1;
+        if let Some(index) = faults.iter().position(|failure| failure.path == path) {
+            let failure = faults.swap_remove(index);
+            drop(faults);
+            (failure.before)();
+            return failure.fault;
         }
     }
     let _ = directory;
@@ -236,18 +239,39 @@ fn take_journal_fault(directory: &Path) -> JournalFault {
 }
 
 #[cfg(test)]
-static JOURNAL_FAULTS: Mutex<Vec<(PathBuf, JournalFault)>> = Mutex::new(Vec::new());
+struct JournalFailure {
+    path: PathBuf,
+    fault: JournalFault,
+    before: Box<dyn FnOnce() + Send>,
+}
+
+#[cfg(test)]
+static JOURNAL_FAULTS: Mutex<Vec<JournalFailure>> = Mutex::new(Vec::new());
 
 /// The next journal append for `directory` fails in the requested way.
 #[cfg(test)]
 pub(crate) fn fail_next_journal(directory: &Path, fault: JournalFault) {
+    fail_next_journal_after(directory, fault, || {});
+}
+
+/// Runs `before` after media publication, before injecting the journal failure.
+#[cfg(test)]
+pub(crate) fn fail_next_journal_after(
+    directory: &Path,
+    fault: JournalFault,
+    before: impl FnOnce() + Send + 'static,
+) {
     let path = directory
         .canonicalize()
         .unwrap_or_else(|_| directory.to_path_buf());
     JOURNAL_FAULTS
         .lock()
         .unwrap_or_else(|error| error.into_inner())
-        .push((path, fault));
+        .push(JournalFailure {
+            path,
+            fault,
+            before: Box::new(before),
+        });
 }
 
 /// Drops lines at or below `through`. The kept suffix is synced, then renamed.

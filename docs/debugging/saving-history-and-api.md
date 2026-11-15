@@ -192,8 +192,15 @@ ID 生成と配列の複製を含む制御側の時間として前後を比べ�
 
 ### 取込みを拒否したのに保管庫のファイルが増えた
 
-`media/objects/` の名前で切り分ける。`.<hash>.<pid>-<seq>.tmp` は段階のまま残った一時ファイルで、その pid のプロセスが段階の途中で終わった。
-アプリでは段階を `echode-import-stage` スレッドで作る。文書を閉じる・ワーカーが落ちる時はそのスレッドを待って一時の名前を消すので、生きているプロセスの一時ファイルは段階中である（[ADR 0331](../decisions/0331-off-worker-audio-import.md)）。
+`media/objects/` の名前と、モデルの拒否か公開後の保存失敗かを切り分ける。
+`.<hash>.<pid>-<seq>.tmp` は段階の一時ファイルで、その pid のプロセスが途中で終わると残り得る。
+アプリでは `echode-import-stage` で段階を作り、閉じる・ワーカーが落ちる時は段階を待って一時の名前を消す（[ADR 0331](../decisions/0331-off-worker-audio-import.md)）。
+64 桁の名前は公開済みであり、同期・索引・ジャーナルの失敗でも消さない。背景の別の段階がその名前を使っている可能性がある
+（[ADR 0362](../decisions/0362-published-media-and-helper-lifetimes.md)）。Undo・削除後の素材と同じく、未参照でも掃除はしない。
+モデルの拒否でハッシュの名前・索引・ピークが増えるのは引き続き回帰で、`audit_ext02_*` が検出する。
+公開後の失敗では、編集が成立せず PCM は残ることを `host_tests::an_import_keeps_published_objects_*`・`an_index_failure_*` で検査する。
+同じ素材を並行して取り込んだ後に PCM が読めない時は、ジャーナルの失敗理由と素材のハッシュを記録し、`audit_dia07_*` を実行する。
+この回帰は、別スレッドの段階を公開後・失敗前に完了させ、後の編集と再オープンで PCM が残ることを確かめる。消失済みの素材は復元しない。
 
 ### ドロップの後の編集や Undo がしばらく効かない
 
@@ -201,9 +208,6 @@ ID 生成と配列の複製を含む制御側の時間として前後を比べ�
 待ちの長さは素材の長さに比例し、180 秒の 44.1 kHz で約 136 ms である（`make spike-import`）。
 この間に停止・位置移動・デバイスの一覧・再生ヘッドまで止まるなら回帰で、`import-off-worker` が検出する。
 段階のスレッドが panic した編集は `audio import panicked` で失敗し、後の手番は続く。
-64 桁の名前が増えたなら、その要求は受理されたか、ジャーナルの耐久性が不明で行が残り得る（[ADR 0272](../decisions/0272-staged-import-media.md)）。
-拒否された取込みでハッシュの名前・`media/index.json`・`cache/peaks` が増えるのは回帰で、`audit_ext02_*` と `host_tests::an_import_keeps_*` が検出する。
-Undo や削除で参照が消えた素材が残るのは仕様である。保管庫の掃除は未実装（[ADR 0031](../decisions/0031-content-addressed-store.md)）。
 
 ### 保存して開き直すと小さいゲインやパンが変わる・0 になる
 

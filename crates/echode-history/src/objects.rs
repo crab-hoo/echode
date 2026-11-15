@@ -31,9 +31,7 @@ pub fn hash_bytes(bytes: &[u8]) -> String {
 /// journal line that names the object is written next, and Git commits do not
 /// hold the store (XCA-03).
 pub fn write_object(package: &Path, bytes: &[u8]) -> Result<String, PackageError> {
-    stage_object(package, bytes)?
-        .publish(package)
-        .map(|published| published.hash)
+    stage_object(package, bytes)?.publish(package)
 }
 
 /// Immutable captured bytes and the object this capture has already synced.
@@ -90,12 +88,11 @@ impl PluginState {
 
 /// Bytes written beside `media/objects/<hash>` that the store does not name yet.
 ///
-/// An import stages its PCM before the edit that places it is checked. Only an
-/// accepted edit publishes the object; dropping the stage removes the
-/// temporary entry, so a rejected import leaves nothing in the store (EXT-02).
+/// Only an accepted edit publishes the object; dropping an unpublished stage
+/// removes its temporary entry (EXT-02). Once named, bytes stay in the store:
+/// another background stage may already rely on that name (DIA-07).
 pub(crate) struct StagedObject {
-    /// Taken by [`Self::publish`]; `Drop` then has nothing to remove.
-    objects: Option<Directory>,
+    objects: Directory,
     hash: String,
     /// `None` when the store already held matching bytes.
     temporary: Option<String>,
@@ -108,64 +105,29 @@ impl StagedObject {
 
     /// Renames the staged bytes to their hash and syncs the directory entry,
     /// which the journal line written next relies on (XCA-03).
-    pub(crate) fn publish(mut self, package: &Path) -> Result<PublishedObject, PackageError> {
-        let hash = std::mem::take(&mut self.hash);
-        let (Some(objects), Some(temporary)) = (self.objects.take(), self.temporary.take()) else {
-            return Ok(PublishedObject {
-                created: None,
-                hash,
-            });
-        };
+    pub(crate) fn publish(mut self, package: &Path) -> Result<String, PackageError> {
         let directory = package.join("media").join("objects");
-        let renamed = objects.has_file(&hash).and_then(|present| {
-            objects.rename_into(&temporary, &hash)?;
-            Ok(!present)
-        });
-        let created = match renamed {
-            Ok(created) => created,
-            Err(error) => {
-                let _ = objects.remove(&temporary);
-                return Err(io_error(&directory, error));
-            }
-        };
-        if let Err(error) = objects.sync() {
-            if created {
-                let _ = objects.remove(&hash);
-            }
-            return Err(io_error(&directory, error));
+        if let Some(temporary) = &self.temporary {
+            self.objects
+                .rename_into(temporary, &self.hash)
+                .map_err(|error| io_error(&directory, error))?;
+            self.temporary = None;
+            // Never remove a named object, even if syncing fails. Another
+            // stage can observe it as soon as the rename succeeds (DIA-07).
         }
-        Ok(PublishedObject {
-            created: created.then_some(objects),
-            hash,
-        })
-    }
-}
-
-/// A store entry named by an accepted stage.
-pub(crate) struct PublishedObject {
-    /// The store directory, kept only when publishing created the name.
-    created: Option<Directory>,
-    hash: String,
-}
-
-impl PublishedObject {
-    pub(crate) fn hash(&self) -> &str {
-        &self.hash
-    }
-
-    /// Removes the name again when the edit that needed it failed after
-    /// publishing. An entry that existed before the stage is kept.
-    pub(crate) fn withdraw(self) {
-        if let Some(objects) = self.created {
-            let _ = objects.remove(&self.hash);
-        }
+        // A reused name may come from a publish whose directory sync failed.
+        // Complete durability here before the caller can journal that name.
+        self.objects
+            .sync()
+            .map_err(|error| io_error(&directory, error))?;
+        Ok(std::mem::take(&mut self.hash))
     }
 }
 
 impl Drop for StagedObject {
     fn drop(&mut self) {
-        if let (Some(objects), Some(temporary)) = (&self.objects, self.temporary.take()) {
-            let _ = objects.remove(temporary);
+        if let Some(temporary) = self.temporary.take() {
+            let _ = self.objects.remove(temporary);
         }
     }
 }
@@ -196,7 +158,7 @@ pub(crate) fn stage_object(package: &Path, bytes: &[u8]) -> Result<StagedObject,
         )
     };
     Ok(StagedObject {
-        objects: Some(objects),
+        objects,
         hash,
         temporary,
     })

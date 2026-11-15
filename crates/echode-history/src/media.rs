@@ -115,28 +115,13 @@ impl StagedAudio {
         &self.stored
     }
 
-    /// Names the object, records the source name, and caches the staged
-    /// peaks. A failed index write takes back a name this call created.
-    pub(crate) fn publish(self, package: &Path) -> Result<PublishedAudio, PackageError> {
-        let object = self.object.publish(package)?;
-        if let Err(error) = remember_name(package, object.hash(), &self.source, &self.stored) {
-            object.withdraw();
-            return Err(error);
-        }
-        let _ = crate::peaks::store_peaks(package, object.hash(), &self.peaks);
-        Ok(PublishedAudio(object))
-    }
-}
-
-/// A published import. The edit that names it is not durable yet.
-pub(crate) struct PublishedAudio(crate::objects::PublishedObject);
-
-impl PublishedAudio {
-    /// Removes an object this import created, for an edit whose journal line
-    /// was not written. The index entry and peaks stay: both are rebuilt or
-    /// ignored without the object.
-    pub(crate) fn withdraw(self) {
-        self.0.withdraw();
+    /// Names the object, records the source name, and caches the staged peaks.
+    /// A failure leaves named bytes intact for other staged imports (DIA-07).
+    pub(crate) fn publish(self, package: &Path) -> Result<(), PackageError> {
+        let hash = self.object.publish(package)?;
+        remember_name(package, &hash, &self.source, &self.stored)?;
+        let _ = crate::peaks::store_peaks(package, &hash, &self.peaks);
+        Ok(())
     }
 }
 

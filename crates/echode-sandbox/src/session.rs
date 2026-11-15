@@ -721,12 +721,17 @@ impl PluginHost {
         self.child = launched.child;
         self.control.lock().control = launched.control;
         self.start_watch();
-        self.finish_launch(None)?;
-        let state = self.control.applied_state();
-        if let Some(state) = state {
-            self.control.restore_applied(&state)?;
+        let started = self.finish_launch(None).and_then(|()| {
+            if let Some(state) = self.control.applied_state() {
+                self.control.restore_applied(&state)?;
+            }
+            Ok(())
+        });
+        if started.is_err() {
+            self.force_stop();
+            self.stop_watch();
         }
-        Ok(())
+        started
     }
 
     pub fn layout(&self) -> SessionLayout {
@@ -1278,6 +1283,9 @@ impl PluginHost {
 impl Drop for PluginHost {
     fn drop(&mut self) {
         let _ = self.shutdown();
+        // shutdown can fail after marking the host closed. The watcher must
+        // still be joined before its raw mapping and fan-in pointers expire.
+        self.stop_watch();
     }
 }
 
@@ -1721,6 +1729,10 @@ mod operations;
 #[cfg(test)]
 #[path = "session_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "session_lifecycle_tests.rs"]
+mod lifecycle_tests;
 
 #[cfg(test)]
 #[path = "session_correlation_tests.rs"]

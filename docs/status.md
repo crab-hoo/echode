@@ -35,7 +35,7 @@
   読めない Git の参照・設定は、原本を保って開くことを拒否する（[ADR 0350](decisions/0350-unreadable-history-is-not-empty.md)）。
 - **パッケージの浮動小数点の精度**: 既に丸められた保存値は復元しない（[ADR 0196](decisions/0196-lossless-package-floats.md)）。
 - **素材とキャッシュの Git 除外**: 任意の Git パターンの正規化はしない（[ADR 0031](decisions/0031-content-addressed-store.md#除外規則の行単位の照合2026-10-29)）。
-- **素材の回収**: 保管庫の掃除はなく、Undo や削除で参照が消えた素材は残る（[ADR 0272](decisions/0272-staged-import-media.md)）。
+- **素材の回収**: 公開後は失敗時も素材を消さない。掃除はない（[ADR 0362](decisions/0362-published-media-and-helper-lifetimes.md)）。
 - **保存済み音声の有限性**: 保存済み PCM と外部音声の取込みは、NaN・無限大を含めば拒否する。
   波形キャッシュのマップ読込みと実機の聴感は、この検証の範囲外である（[ADR 0056](decisions/0056-audio-import.md#外部音声の一括復号と取込みの検証2026-10-29)）。
 - **波形キャッシュの破損**: 壊れたキャッシュは元の PCM から作り直し、素材が読めなければ波形を出さない。
