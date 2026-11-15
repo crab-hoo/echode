@@ -81,6 +81,7 @@
 アプリは NDJSON のファイルと統合ログ（サブシステム `io.echode`）、CLI は統合ログだけへ書く。
 ファイルへは有界の待ち行列と書込みスレッドを通し、呼んだスレッドをディスクで止めない。あふれた分は捨てて数える。
 オーディオスレッドは書かず、エンジンのリングで制御スレッドへ渡す（[§7.1](audio-engine.md#71-スレッド)）。
+非コールバックの `thread` の panic は `{backtrace:#}` の実行時アドレスと dyld の `images` 読み込み基底を記録し、保管した dSYM と `atos` で行番号へ戻せるようにする（[ADR 0372](../decisions/0372-release-line-tables-and-dsym-archive.md)）。
 診断の NDJSON（ログ・panic・試聴）の回転は `echode_log::append_lines` の 1 つの規則による。
 
 ## 17. ビルドと配布
@@ -89,6 +90,11 @@
   Swift は `-target-cpu apple-m4` と `-Xcc -mcpu=apple-m4` を対で指定する
   （[ADR 0112](../decisions/0112-m4-minimum.md)、[ADR 0114](../decisions/0114-m4-build-baseline.md)）
 - **XCFramework と XcodeGen**: Rust を静的ライブラリとして XCFramework にまとめ、`project.yml` から XcodeGen でプロジェクトを生成する（`.xcodeproj` は手編集しない）
+- **release の行番号情報と dSYM 保管**: `Cargo.toml` の `[profile.release]` は `debug = "line-tables-only"` と `split-debuginfo = "packed"` を持ち、
+  `.cargo/config.toml` の `strip = "none"`（ADR 0113）と組んで、出荷バイナリへ DWARF を埋め込まずに行番号の `.dSYM` を生成する。
+  `make dist` は署名後の 4 実行ファイル（`Echode`・`echode-cli`・`echode-plugin-host`・`EchodeSinePad`）について
+  バンドル外へ `<版>-<ビルド>-<git>` ごとに `.dSYM` と `manifest.json` を保管し、`LC_UUID` の一致・`__DWARF` なし・バンドル内 `.dSYM` なしを検証する
+  （[ADR 0372](../decisions/0372-release-line-tables-and-dsym-archive.md)）
 - **署名と配布**: 開発でも配布でも自己署名証明書 `Echode Local` で署名し、マイク等の TCC 許可を維持する（証明書未作成時の `make app` のみアドホック署名）。
   配布バンドルは `Echode.app/Contents/MacOS/Echode`、`Contents/Helpers/EchodePluginHost.app`（`LSUIElement`、このヘルパーのみ library validation 無効化）、`Contents/MacOS/echode-cli`、`Contents/Frameworks/EchodeFFI.xcframework` で構成する
   （[ADR 0061](../decisions/0061-distribution-signing.md)）

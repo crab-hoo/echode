@@ -20,8 +20,8 @@ cp "$header" target/dist/include/echode.h
 cp swift/EchodeBridge/CEchodeFfi/include/module.modulemap target/dist/include/module.modulemap
 
 export ECHODE_RUST_LIBRARY_DIR="$PWD/target/release"
-swift build -c release --package-path swift/EchodeApp --scratch-path target/echode-dist
-app_bin="$(swift build -c release --package-path swift/EchodeApp --scratch-path target/echode-dist --show-bin-path)"
+swift build -c release --product Echode --package-path swift/EchodeApp --scratch-path target/echode-dist
+app_bin="$(swift build -c release --product Echode --package-path swift/EchodeApp --scratch-path target/echode-dist --show-bin-path)"
 
 python3 scripts/distribution.py xcframework \
     --library target/release/libechode_ffi.a \
@@ -50,8 +50,19 @@ else
     python3 scripts/distribution.py sign --app target/dist/Echode.app
 fi
 
+dsym_dir="$(
+    python3 scripts/distribution.py archive-dsyms \
+        --app target/dist/Echode.app \
+        --output-dir target/dist/dSYMs \
+        --target Contents/MacOS/Echode "$app_bin/Echode" Echode.app.dSYM \
+        --target Contents/MacOS/echode-cli target/release/echode echode-cli.dSYM \
+        --target Contents/Helpers/EchodePluginHost.app/Contents/MacOS/echode-plugin-host target/release/echode-plugin-host EchodePluginHost.app.dSYM \
+        --target Contents/PlugIns/EchodeSinePad.clap/Contents/MacOS/EchodeSinePad target/release/libechode_sine_pad.dylib EchodeSinePad.clap.dSYM
+)"
+
 if [[ -n "${TARGET_BUILD_DIR:-}" && -n "${WRAPPER_NAME:-}" ]]; then
     rm -rf "${TARGET_BUILD_DIR:?}/${WRAPPER_NAME:?}"
     cp -R target/dist/Echode.app "${TARGET_BUILD_DIR}/${WRAPPER_NAME}"
 fi
 printf 'Built %s/target/dist/Echode.app\n' "$PWD"
+printf 'Archived dSYMs in %s\n' "$dsym_dir"

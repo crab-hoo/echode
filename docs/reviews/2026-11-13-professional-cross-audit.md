@@ -51,7 +51,7 @@ Phase 2 の音の意味を変える変更（フォルダバス、PDC、モノの
 | PCA-03 | 保守性 | 全文を読む資料が上限 44,000 バイトに対し 43,994 バイト | 対応済み（[ADR 0370](../decisions/0370-domain-status-guides.md)） |
 | PCA-04 | 保守性 | ADR 339 件に、現行か置換済みかを機械で引ける索引がない | 対応済み（[ADR 0371](../decisions/0371-adr-status-and-domain-index.md)） |
 | PCA-05 | 堅牢性 | PDC の回帰が、ループの折返し・停止後の残り・余韻付きの書出しを通していない | 対応済み（2026-11-14、ADR 0340。停止の直後に再生した時の重なりは回帰にしていない） |
-| PCA-06 | 保守性 | release の設定が既定のままで、配布物の異常終了を行番号まで戻せない | 未対応 |
+| PCA-06 | 保守性 | release の設定が既定のままで、配布物の異常終了を行番号まで戻せない | 対応済み（2026-11-15、[ADR 0372](../decisions/0372-release-line-tables-and-dsym-archive.md)） |
 | PCA-07 | 保守性 | `full` の赤が日をまたいで残り、その間も音声経路の変更が入った | 未対応 |
 | PCA-09 | 効率 | 文書ワーカーが停止中も 20 ms ごとに起きる | 未対応 |
 | PCA-10 | 保守性 | HAL の過負荷通知を聞いておらず、音切れの記録がエンジン自身の期限だけ | 対応済み（[ADR 0366](../decisions/0366-hal-fault-isolation-and-overload-notices.md)） |
@@ -146,6 +146,10 @@ PCA-08 は指摘ではなく、確かめて問題がなかった項目の一覧�
   第三者プラグインと実機でしか起きない失敗は、利用者の記録だけが手がかりになる。
 - **案**: release に `debug = "line-tables-only"` と `split-debuginfo = "packed"` を置き、`make dist` で dSYM を版ごとに保管する。
   本体の大きさは変わらない。あふれ検査は E4 の計測と一緒に決める。
+- **対応（2026-11-15）**: `Cargo.toml` に `[profile.release]`（`debug = "line-tables-only"`・`split-debuginfo = "packed"`）を追加し、
+  `make dist`（`scripts/build-dist.sh`・`scripts/distribution.py`）で署名後の全 4 バイナリの `.dSYM` を版・ビルド・コミットごとに保管して UUID 一致と `__DWARF` なしを検証するようにした。
+  あわせて `panic.ndjson` に `{backtrace:#}` の 16 進アドレスと dyld `images` を残し、`distribution.py symbolicate` から保管済み dSYM で行番号へ戻せるようにした（[ADR 0372](../decisions/0372-release-line-tables-and-dsym-archive.md)）。
+  あふれ検査は予定どおり E4 に残す。
 
 ### PCA-07 `full` の赤が日をまたいで残る
 

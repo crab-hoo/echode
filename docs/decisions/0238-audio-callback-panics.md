@@ -1,7 +1,7 @@
 # ADR 0238: オーディオコールバックの panic を捕まえ、理由を残す
 
 - 日付: 2026-11-03
-- 状態: 現行
+- 状態: 一部置換（[0372](0372-release-line-tables-and-dsym-archive.md)）
 - 領域: 音声エンジン・書き出し
 - 関連: [ADR 0047](0047-product-audio.md)、[ADR 0135](0135-sample-audition.md)、[横断監査](../reviews/2026-11-02-cross-cutting-audit.md)の XCA-14
 

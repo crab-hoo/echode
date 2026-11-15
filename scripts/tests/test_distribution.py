@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -144,6 +145,97 @@ class DistributionSpec(unittest.TestCase):
         self.assertIn("io.echode.plugin-host", info)
         self.assertIn("<key>LSUIElement</key><true/>", info.replace(" ", "").replace("\n", ""))
 
+    def test_release_profile_keeps_packed_line_tables_without_embedded_dwarf(self):
+        workspace = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))
+        release = workspace.get("profile", {}).get("release", {})
+        self.assertEqual(release.get("debug"), "line-tables-only")
+        self.assertEqual(release.get("split-debuginfo"), "packed")
+
+        cargo_config = tomllib.loads((ROOT / ".cargo/config.toml").read_text(encoding="utf-8"))
+        self.assertEqual(cargo_config.get("profile", {}).get("release", {}).get("strip"), "none")
+
+        dist_script = (ROOT / "scripts/build-dist.sh").read_text(encoding="utf-8")
+        self.assertIn("archive-dsyms", dist_script)
+        for shipped in (
+            "Contents/MacOS/Echode",
+            "Contents/MacOS/echode-cli",
+            "Contents/Helpers/EchodePluginHost.app/Contents/MacOS/echode-plugin-host",
+            "Contents/PlugIns/EchodeSinePad.clap/Contents/MacOS/EchodeSinePad",
+        ):
+            self.assertIn(shipped, dist_script)
+
+    def test_packed_release_binary_symbolicates_panic_ndjson_from_archived_dsym(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "src").mkdir()
+            (root / "Cargo.toml").write_text(
+                '[package]\nname = "dsym-probe"\nversion = "0.1.0"\nedition = "2024"\n\n'
+                "[profile.release]\n"
+                'debug = "line-tables-only"\n'
+                'split-debuginfo = "packed"\n',
+                encoding="utf-8",
+            )
+            (root / "src/main.rs").write_text(
+                'unsafe extern "C" {\n'
+                "    fn _dyld_get_image_header(image_index: u32) -> *const core::ffi::c_void;\n"
+                "}\n"
+                "#[inline(never)]\n"
+                "fn probe_panic_site() -> String {\n"
+                '    format!("{:#}", std::backtrace::Backtrace::force_capture())\n'
+                "}\n"
+                "fn main() {\n"
+                "    let bt = probe_panic_site();\n"
+                "    let hdr = unsafe { _dyld_get_image_header(0) } as usize;\n"
+                "    let exe = std::env::current_exe().unwrap();\n"
+                '    let escaped_bt = bt.replace(\'\\\\\', "\\\\\\\\").replace(\'"\', "\\\\\\"").replace(\'\\n\', "\\\\n");\n'
+                '    let escaped_exe = exe.display().to_string().replace(\'\\\\\', "\\\\\\\\").replace(\'"\', "\\\\\\"");\n'
+                '    println!("{{\\"source\\":\\"thread\\",\\"thread\\":\\"worker\\",\\"message\\":\\"probe\\",\\"backtrace\\":\\"{escaped_bt}\\",\\"images\\":[{{\\"path\\":\\"{escaped_exe}\\",\\"load\\":\\"0x{hdr:x}\\",\\"slide\\":\\"0x0\\"}}]}}");\n'
+                "}\n",
+                encoding="utf-8",
+            )
+            subprocess.run(
+                [
+                    "cargo",
+                    "build",
+                    "--offline",
+                    "--release",
+                    "--manifest-path",
+                    str(root / "Cargo.toml"),
+                    "--target-dir",
+                    str(root / "target"),
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            built_bin = root / "target/release/dsym-probe"
+            built_dsym = root / "target/release/dsym-probe.dSYM"
+            self.assertTrue(built_dsym.is_dir())
+            self.assertFalse(distribution.has_embedded_dwarf(built_bin))
+            self.assertEqual(distribution.macho_uuids(built_bin), distribution.macho_uuids(built_dsym))
+
+            # Archive dSYM elsewhere and move only the bare binary to simulate an end-user machine.
+            archive = root / "archive"
+            archive.mkdir()
+            archived_dsym = archive / "dsym-probe.dSYM"
+            shutil.copytree(built_dsym, archived_dsym)
+            user_dir = root / "user"
+            user_dir.mkdir()
+            isolated_bin = user_dir / "dsym-probe"
+            shutil.copy2(built_bin, isolated_bin)
+            shutil.rmtree(root / "target")
+
+            raw_entry = subprocess.check_output([str(isolated_bin)], text=True).strip()
+            entry = json.loads(raw_entry)
+            self.assertIn("0x", entry["backtrace"])
+            self.assertNotIn("main.rs:", entry["backtrace"])
+
+            panic_log = user_dir / "panic.ndjson"
+            panic_log.write_text(raw_entry + "\n", encoding="utf-8")
+            symbolicated = distribution.symbolicate_panic_log(archive, panic_log)
+            self.assertIn("main.rs:6", symbolicated)
+
 
 class SignedBundle(unittest.TestCase):
     def test_a_temporary_identity_signs_the_helper_app_and_leaves_the_main_app_strict(self):
@@ -272,6 +364,91 @@ class SignedBundle(unittest.TestCase):
             ["codesign", "-d", "--entitlements", "-", str(path)], capture_output=True, text=True, check=False
         )
         return completed.stdout + completed.stderr
+
+    def test_archive_dsyms_matches_uuids_and_rejects_mismatches(self):
+        password = "echode-test"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            keychain = root / "Echode.keychain-db"
+            try:
+                distribution.create_signing_keychain(keychain, password)
+
+                main_src = root / "main_app.c"
+                main_obj = root / "main_app.o"
+                main_src.write_text("int main(void) { return 0; }\n", encoding="utf-8")
+                main_bin = root / "echode-main"
+                subprocess.run(CLANG + ["-gline-tables-only", "-c", str(main_src), "-o", str(main_obj)], check=True)
+                subprocess.run(CLANG + [str(main_obj), "-o", str(main_bin)], check=True)
+
+                helper_src = root / "helper_bin.c"
+                helper_obj = root / "helper_bin.o"
+                helper_src.write_text("int main(void) { return 1; }\n", encoding="utf-8")
+                helper_bin = root / "echode-helper"
+                subprocess.run(CLANG + ["-gline-tables-only", "-c", str(helper_src), "-o", str(helper_obj)], check=True)
+                subprocess.run(CLANG + [str(helper_obj), "-o", str(helper_bin)], check=True)
+                subprocess.run(["xcrun", "dsymutil", str(helper_bin), "-o", str(helper_bin) + ".dSYM"], check=True)
+
+                framework = root / "EchodeFFI.xcframework"
+                plugin = root / "EchodeSinePad.clap"
+                plugin_bin = plugin / "Contents/MacOS/EchodeSinePad"
+                plugin_bin.parent.mkdir(parents=True)
+                shutil.copy2(self.foreign_library(root), plugin_bin)
+                shutil.copy2(ROOT / "Packaging/EchodeSinePad-Info.plist", plugin / "Contents/Info.plist")
+
+                app = root / "Echode.app"
+                distribution.assemble_app(
+                    app,
+                    main_bin,
+                    helper_bin,
+                    ROOT / "swift/EchodeApp/Info.plist",
+                    framework if framework.exists() else None,
+                    plugins=[plugin],
+                    cli=helper_bin,
+                )
+                distribution.sign_app(app, keychain=keychain)
+
+                dsym_root = root / "dSYMs"
+                targets = [
+                    ("Contents/MacOS/Echode", main_bin, "Echode.app.dSYM"),
+                    ("Contents/MacOS/echode-cli", helper_bin, "echode-cli.dSYM"),
+                    (
+                        "Contents/Helpers/EchodePluginHost.app/Contents/MacOS/echode-plugin-host",
+                        helper_bin,
+                        "EchodePluginHost.app.dSYM",
+                    ),
+                    (
+                        "Contents/PlugIns/EchodeSinePad.clap/Contents/MacOS/EchodeSinePad",
+                        root / "libforeign.dylib",
+                        "EchodeSinePad.clap.dSYM",
+                    ),
+                ]
+                archive_dir = distribution.archive_dsyms(app, dsym_root, targets)
+                self.assertEqual(list(app.rglob("*.dSYM")), [])
+                manifest = json.loads((archive_dir / "manifest.json").read_text(encoding="utf-8"))
+                self.assertEqual(manifest["version"], "0.0.0")
+                self.assertEqual(manifest["build"], "1")
+                self.assertEqual(len(manifest["binaries"]), 4)
+                for item in manifest["binaries"]:
+                    installed = app / item["app_path"]
+                    archived_dsym = archive_dir / item["dsym"]
+                    self.assertFalse(distribution.has_embedded_dwarf(installed))
+                    self.assertEqual(distribution.macho_uuids(installed), distribution.macho_uuids(archived_dsym))
+
+                # Stale prebuilt .dSYM UUID must be rejected instead of archiving mismatched symbols.
+                stale_dsym = Path(f"{main_bin}.dSYM")
+                shutil.copytree(archive_dir / "echode-cli.dSYM", stale_dsym)
+                with self.assertRaisesRegex(RuntimeError, "UUID does not match"):
+                    distribution.archive_dsyms(app, dsym_root, targets[:1])
+                shutil.rmtree(stale_dsym)
+
+                # Embedded .dSYM inside the shipped bundle must be rejected.
+                embedded = app / "Contents/Resources/Echode.app.dSYM"
+                shutil.copytree(archive_dir / "Echode.app.dSYM", embedded)
+                with self.assertRaisesRegex(RuntimeError, "must not contain .dSYM"):
+                    distribution.archive_dsyms(app, dsym_root, targets[:1])
+            finally:
+                if keychain.exists():
+                    subprocess.run(["security", "delete-keychain", str(keychain)], check=False)
 
 
 if __name__ == "__main__":

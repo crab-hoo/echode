@@ -45,6 +45,7 @@ fn a_caught_callback_panic_keeps_its_location_and_stops_later_blocks() {
     assert_eq!(lines.len(), 1, "reported once: {lines:?}");
     assert_eq!(lines[0]["source"], "test callback");
     assert!(lines[0].get("backtrace").is_none());
+    assert!(lines[0].get("images").is_none());
 }
 
 #[test]
@@ -90,7 +91,14 @@ fn another_threads_panic_is_appended_with_its_thread_and_backtrace() {
             .unwrap()
             .contains("panic_log_tests.rs:")
     );
-    assert!(lines[0]["backtrace"].is_string());
+    let backtrace = lines[0]["backtrace"].as_str().unwrap();
+    assert!(backtrace.contains("0x"), "{backtrace}");
+    let images = lines[0]["images"].as_array().unwrap();
+    assert!(!images.is_empty(), "{lines:?}");
+    let first_load = images[0]["load"].as_str().unwrap();
+    let hex = first_load.strip_prefix("0x").unwrap();
+    assert!(u64::from_str_radix(hex, 16).unwrap() > 0, "{first_load}");
+    assert!(images[0]["path"].as_str().is_some_and(|p| !p.is_empty()));
 }
 
 #[test]
@@ -107,6 +115,7 @@ fn a_full_log_moves_aside_before_the_next_line() {
         thread: None,
         message: "after rotation",
         backtrace: None,
+        images: &[],
     };
     append(&path, &entry);
     assert_eq!(

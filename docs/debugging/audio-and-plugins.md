@@ -752,7 +752,11 @@ Undo では記録のハッシュとヘルパーが最後に保存・読込した
 
 エラーの `<場所>: <文>` は、panic した Rust のソースの位置である。そのブロックからコールバックは無音で、プレイヤーを再び使わない（[ADR 0238](../decisions/0238-audio-callback-panics.md)）。
 アプリの記録は `~/Library/Logs/Echode/panic.ndjson` で、`make debug-report` が `app-logs/` へ写す。
-`source` が `output callback` / `audition callback` ならコールバック、`thread` ならほかのスレッドで、`backtrace` が付く。FFI の中の panic は、この行を書いた後に異常終了する。
+`source` が `output callback` / `audition callback` ならコールバック、`thread` ならほかのスレッドで、`backtrace`（16 進アドレス）と dyld `images` が付く。
+FFI の中の panic は、この行を書いた後に異常終了する。
+配布ビルドの行番号は保管済みの dSYM（`target/dist/dSYMs/<版>-<ビルド>-<git>`）を使い、
+`python3 scripts/distribution.py symbolicate --dsyms <dSYMフォルダ> --panic-log <panic.ndjson>` または `xcrun atos -o <target.dSYM> -l <load> <pc...>` で戻す
+（[ADR 0372](../decisions/0372-release-line-tables-and-dsym-archive.md)）。
 再現は、その場所を通る入力の `cargo test` で行う。デバッグのテストの `GuardAlloc` は panic 中の確保を許すので、`ForbidAlloc` の内側の panic もテストの失敗として文が出る。
 理由のない SIGABRT は、panic ではない確保を `GuardAlloc` が止めたことを疑う。
 

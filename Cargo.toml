@@ -76,3 +76,10 @@ unnecessary_safety_comment = "warn"
 # their file and line in backtraces; workspace crates keep full debug info for lldb.
 [profile.dev.package."*"]
 debug = "line-tables-only"
+
+# Release keeps line tables in packed dSYMs so crash reports and panic.ndjson
+# resolve source lines without embedding DWARF in shipped Mach-O binaries.
+# `.cargo/config.toml` keeps `strip = "none"` alongside this for macOS 27 LINKEDIT.
+[profile.release]
+debug = "line-tables-only"
+split-debuginfo = "packed"

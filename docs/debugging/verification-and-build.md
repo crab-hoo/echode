@@ -310,6 +310,9 @@ release の proc-macro / cdylib 読込失敗（`E0463` / `mis-aligned LINKEDIT s
 `cargo install` はリポジトリの `.cargo/config.toml` を読まず、release の既定の `-C strip=debuginfo` で依存の proc-macro を作る。
 ツールの導入は `CARGO_PROFILE_RELEASE_STRIP=none` を付ける（`test_tool_installs_keep_release_symbols_for_macos_27`）。
 2026-11-09 と 11-11 の `full` の fuzz は、これで `make setup-fuzz` の `serde_derive` の読込に失敗していた。手元の macOS 27.0・Xcode 27.1 では再現しなかった。
+`make dist` の `archive-dsyms` が `UUID does not match`・`contains embedded __DWARF`・`must not contain .dSYM` で止まる時は、
+`Cargo.toml` の `[profile.release]`（`debug = "line-tables-only"`・`split-debuginfo = "packed"`）と
+`.cargo/config.toml` の `strip = "none"` および古い `.dSYM` の残留を確認する（[ADR 0372](../decisions/0372-release-line-tables-and-dsym-archive.md)）。
 `scripts/check_build_host.py` が `sysctl machdep.cpu.brand_string` を読めない隔離環境では、CPU 情報の読取が許される環境で再実行する。
 
 ### GitHub Actions の失敗

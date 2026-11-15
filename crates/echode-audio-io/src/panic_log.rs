@@ -13,6 +13,7 @@
 
 use std::any::Any;
 use std::cell::UnsafeCell;
+use std::ffi::CStr;
 use std::panic::{AssertUnwindSafe, PanicHookInfo, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -51,7 +52,8 @@ pub fn keep_panic_log(log: Option<PathBuf>) {
             let mut message = String::new();
             let _ = describe(info, &mut message);
             let thread = std::thread::current();
-            let backtrace = std::backtrace::Backtrace::force_capture().to_string();
+            let backtrace = format!("{:#}", std::backtrace::Backtrace::force_capture());
+            let images = loaded_images();
             append(
                 path,
                 &Entry {
@@ -60,6 +62,7 @@ pub fn keep_panic_log(log: Option<PathBuf>) {
                     thread: thread.name(),
                     message: &message,
                     backtrace: Some(&backtrace),
+                    images: &images,
                 },
             );
         }
@@ -72,6 +75,13 @@ fn log_path() -> Option<&'static Path> {
 }
 
 #[derive(serde::Serialize)]
+struct LoadedImage {
+    path: String,
+    load: String,
+    slide: String,
+}
+
+#[derive(serde::Serialize)]
 struct Entry<'a> {
     time_ms: u64,
     /// `thread` for a panic the hook wrote, otherwise the callback's name.
@@ -80,6 +90,47 @@ struct Entry<'a> {
     message: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     backtrace: Option<&'a str>,
+    #[serde(skip_serializing_if = "<[LoadedImage]>::is_empty")]
+    images: &'a [LoadedImage],
+}
+
+fn loaded_images() -> Vec<LoadedImage> {
+    // SAFETY: dyld maintains the process image table and returns 0 before initialization.
+    let count = unsafe { mach2::dyld::_dyld_image_count() };
+    let mut images = Vec::new();
+    for index in 0..count {
+        // SAFETY: dyld returns null pointers if `index` races past the table; checked below.
+        let (header, slide, name) = unsafe {
+            (
+                mach2::dyld::_dyld_get_image_header(index),
+                mach2::dyld::_dyld_get_image_vmaddr_slide(index),
+                mach2::dyld::_dyld_get_image_name(index),
+            )
+        };
+        if header.is_null() || name.is_null() {
+            continue;
+        }
+        // SAFETY: `name` is non-null and points to dyld's NUL-terminated path for the image.
+        let path = unsafe { CStr::from_ptr(name) }.to_string_lossy();
+        if index > 0 && is_system_image(path.as_ref()) {
+            continue;
+        }
+        let formatted_slide = if slide < 0 {
+            format!("-0x{:x}", slide.unsigned_abs())
+        } else {
+            format!("0x{slide:x}")
+        };
+        images.push(LoadedImage {
+            path: path.into_owned(),
+            load: format!("0x{:x}", header.addr()),
+            slide: formatted_slide,
+        });
+    }
+    images
+}
+
+fn is_system_image(path: &str) -> bool {
+    path.starts_with("/System/") || path.starts_with("/usr/lib/")
 }
 
 fn now_ms() -> u64 {
@@ -292,6 +343,7 @@ impl CallbackPanic {
                         thread: None,
                         message: &reason,
                         backtrace: None,
+                        images: &[],
                     },
                 );
             }
