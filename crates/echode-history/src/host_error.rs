@@ -39,7 +39,8 @@ impl std::error::Error for HostError {
 }
 
 impl HostError {
-    pub(super) fn durability_unknown(&self) -> bool {
+    /// Whether a write may have landed and all later writes must be refused.
+    pub fn durability_unknown(&self) -> bool {
         matches!(self, Self::Package(error) if error.is_durability_unknown())
     }
 }

@@ -325,6 +325,17 @@ Rust の `PackageError::original()` で共有の配達の包みを除き、変�
 `tests/autosave_errors.rs` は公開入口、`autosave_tests.rs` は合流した待ち手と受信側の消失を切り分ける。
 共有の失敗も `is_durability_unknown()` で判定し、元のファイルを保全してから調べる（[ADR 0297](../decisions/0297-typed-autosave-and-git-errors.md)）。
 
+### 自動保存が増えない・取得済みのプラグイン状態を記録できない
+
+`echode_history::host` の `autosave stopped accepting snapshots; edits remain in the journal` は送信先の切断で、初回だけ error を書く。
+`history.usage.autosave_stopped` でも区別できる。以後も確定済みの編集はジャーナルに残り、自動保存の再開は開き直した時である。
+完了後の `an autosave failed` とは分ける。原本の保全なしにジャーナルを削除しない。
+
+`echode_document::saves` の `a captured plugin state could not be recorded; retrying later` は取得後の保管庫・ジャーナル側の失敗である。
+`device` と型付きの `cause` を確認する。同じ原因は繰り返し書かず、最新の内容を残して間隔を空ける。
+耐久性が不明なら `the document stopped taking edits: a write's durability is unknown` が正本で、以後は記録を試さない。
+共通の間隔と保持の規則は [設計書](../architecture/model-and-history.md#68-背景の再試行と停止の診断)、回帰は `saves_tests.rs` と `host_tests.rs` にある。
+
 ### パッケージの拒否が JSON・版・モデルのどれか分からない
 
 `PackageError::original()` が `Validation` なら、`PackageValidationError` の種類を調べる。

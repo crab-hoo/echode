@@ -51,7 +51,7 @@
 - **文書の手番の調停（SPG-05）**: CLI と MCP はこのサービスを使わず、`DocumentHost` へ直接つなぐ（[ADR 0204](decisions/0204-document-service.md)）。
 - **Swift の型付き編集入口（SPG-03）**: 互換の raw JSON の入口が残る（[ADR 0202](decisions/0202-generated-swift-edit-actions.md)）。
 - **製品のログ**: 異常終了で待ち行列の残りは失われ、ヘルパーは終了時の stderr の末尾だけ。
-  履歴の使用量は文書を閉じる時だけ書く。実アプリは UC-66（[ADR 0322](decisions/0322-product-log.md)）。
+  自動保存停止は `history.usage`、使用量ログは終了時。実アプリは UC-66（[ADR 0322](decisions/0322-product-log.md)）。
 
 ### 音声・再生・トランスポート
 

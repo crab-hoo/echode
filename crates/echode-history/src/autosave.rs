@@ -78,6 +78,22 @@ struct Cache {
 }
 
 impl Autosave {
+    #[cfg(test)]
+    pub(crate) fn stop_for_test(&self) {
+        self.request.send(Request::Shutdown).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while self
+            .thread
+            .as_ref()
+            .is_some_and(|thread| !thread.is_finished())
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "autosave did not stop"
+            );
+            std::thread::yield_now();
+        }
+    }
     pub fn create(directory: &Path) -> Result<Self, PackageError> {
         crate::objects::ensure_store_gitignore(directory)?;
         let directory = directory.to_path_buf();

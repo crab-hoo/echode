@@ -20,6 +20,7 @@ mod package_io;
 mod peaks;
 #[cfg(feature = "spike")]
 mod project;
+pub mod retry;
 #[cfg(feature = "spike")]
 mod store;
 mod thin;
@@ -48,7 +49,7 @@ pub use imports::{StagedImports, command_import_source, transaction_import_sourc
 pub use media::{
     AudioFileReader, DecodedPcm, StoredAudio, decode_audio_file, import_audio, read_pcm,
 };
-pub use objects::{hash_bytes as object_hash, read_object, write_object};
+pub use objects::{PluginState, hash_bytes as object_hash, read_object, write_object};
 pub use peaks::{PeakColumn, Waveforms, cache_peaks};
 pub use thin::{
     DAY, HOUR, HOURLY_SPAN, RECENT, SavePoint, StoreSize, git_store_size, kept_indexes,

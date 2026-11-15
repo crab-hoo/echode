@@ -1113,7 +1113,6 @@ fn a_live_plugin_edit_survives_only_updates_that_keep_its_recorded_state() {
 /// device change whose inventory cannot be read, every service turn reads it
 /// again and logs the failure again. The worker services 50 times a second.
 #[test]
-#[ignore = "DIA-03: a failed inventory read is retried and logged on every service turn"]
 fn audit_dia03_a_failed_inventory_read_is_not_retried_on_every_service_turn() {
     struct Unreadable(AtomicU64);
     impl Outputs for Unreadable {

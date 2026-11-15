@@ -36,6 +36,58 @@ pub fn write_object(package: &Path, bytes: &[u8]) -> Result<String, PackageError
         .map(|published| published.hash)
 }
 
+/// Immutable captured bytes and the object this capture has already synced.
+/// Keep this value across failed journal attempts, not across captures.
+/// Store operations belong on a non-realtime control thread. A successful
+/// receipt trusts immutable store contents, but never a replaced directory link.
+#[derive(Debug)]
+pub struct PluginState {
+    bytes: Vec<u8>,
+    stored: std::sync::Mutex<Option<(std::path::PathBuf, String)>>,
+    #[cfg(test)]
+    full_checks: std::sync::atomic::AtomicU64,
+}
+
+impl PluginState {
+    pub fn new(bytes: Vec<u8>) -> Self {
+        Self {
+            bytes,
+            stored: Default::default(),
+            #[cfg(test)]
+            full_checks: Default::default(),
+        }
+    }
+
+    pub(crate) fn store(&self, package: &Path) -> Result<String, PackageError> {
+        let mut stored = self
+            .stored
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some((owner, hash)) = &*stored
+            && owner == package
+        {
+            let present = Directory::open(package)
+                .and_then(|root| root.required_child("media"))
+                .and_then(|media| media.required_child("objects"))
+                .and_then(|objects| objects.has_file(hash));
+            let present = match present {
+                Ok(present) => present,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+                Err(error) => return Err(io_error(package, error)),
+            };
+            if present {
+                return Ok(hash.clone());
+            }
+        }
+        #[cfg(test)]
+        self.full_checks
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let hash = write_object(package, &self.bytes)?;
+        *stored = Some((package.to_path_buf(), hash.clone()));
+        Ok(hash)
+    }
+}
+
 /// Bytes written beside `media/objects/<hash>` that the store does not name yet.
 ///
 /// An import stages its PCM before the edit that places it is checked. Only an
@@ -149,6 +201,10 @@ pub(crate) fn stage_object(package: &Path, bytes: &[u8]) -> Result<StagedObject,
         temporary,
     })
 }
+
+#[cfg(test)]
+#[path = "objects_retry_tests.rs"]
+mod retry_tests;
 
 /// Writes the ignore rules for the object store. Existing rules are kept.
 pub(crate) fn ensure_store_gitignore(directory: &Path) -> Result<(), PackageError> {

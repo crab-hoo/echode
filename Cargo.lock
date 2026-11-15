@@ -753,6 +753,7 @@ dependencies = [
  "echode-actions",
  "echode-audio-io",
  "echode-history",
+ "echode-log",
  "echode-model",
  "log",
  "serde",
@@ -837,6 +838,7 @@ name = "echode-history"
 version = "0.0.0"
 dependencies = [
  "echode-actions",
+ "echode-log",
  "echode-model",
  "flate2",
  "gix",

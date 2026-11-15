@@ -223,15 +223,14 @@ impl<P: Presenter> Worker<P> {
             self.readers.activity.publish(device, plugin);
         }
         self.saves.add(self.audio.take_plugin_saves());
-        if self.importing.is_some() {
-            // Recorded after the import, as if it had held the worker.
+        if self.importing.is_some() || self.host.edits_halted() {
+            // Collect the latest captures, but never attempt a refused write.
             return;
         }
         let host = &self.host;
-        let recorded = self.saves.record(|device, bytes| {
-            host.commit_plugin_state(Id::from_raw(device), bytes)
-                .is_ok()
-        });
+        let recorded = self
+            .saves
+            .record(|device, state| host.commit_plugin_save(Id::from_raw(device), state));
         if recorded {
             self.audio.keep_live_plugin_edits(self.saves.held());
             self.audio.update(self.host.snapshot());

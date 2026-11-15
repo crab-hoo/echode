@@ -136,6 +136,14 @@ AudioToolbox の失敗は `MediaError` の操作別の変種で、`Property` は
 
 ## プラグイン
 
+### 機器一覧のエラーが続くのに警告が増えない
+
+`echode_audio_io::session` の `cause` と音声状態の `error` を確認する。
+一覧の読取り失敗は [共通の間隔](../architecture/model-and-history.md#68-背景の再試行と停止の診断) で再試行し、同じ原因の警告を省く。
+警告が増えなくても回復済みとは限らない。成功までは最後の一覧・選択・位置を保持し、成功時に `error` を消す。
+機器ごとの問い合わせ失敗を一覧全体の失敗にする制約（IQA-06）は残る。
+`session_retry_tests.rs` は機器なし・仮想時計で再試行と原因の変化を調べる。実機を開いて再現する必要はない。
+
 ### ヘルパーの保存・復元・パラメーター・窓の要求が時間切れ／busy になる
 
 `plugin main request N timed out; outcome unknown` は実行の取消ではない。

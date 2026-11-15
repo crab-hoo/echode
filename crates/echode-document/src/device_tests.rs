@@ -174,10 +174,9 @@ fn audit_dia02_a_failed_commit_does_not_hold_later_background_saves() {
     assert_eq!(host.history_usage().unwrap().undo_steps, 0);
     // The plugin then saves on its own, as after any change. The newest wins.
     saves.add(vec![(device.raw(), b"later".to_vec())]);
-    let recorded = saves.record(|id, bytes| {
+    let recorded = saves.record(|id, state| {
         assert_eq!(id, device.raw());
-        assert_eq!(bytes, b"later");
-        host.commit_plugin_state(Id::from_raw(id), bytes).unwrap()
+        host.commit_plugin_save(Id::from_raw(id), state)
     });
     assert!(
         recorded,

@@ -64,6 +64,7 @@ fn history_usage_reports_the_kept_steps_without_editing() {
     assert_eq!(usage["versions"]["tracks"], 1);
     assert!(usage["versions"]["bytes"].as_u64().unwrap() > 0);
     assert!(usage["journal_changes"].as_u64().unwrap() > 0);
+    assert_eq!(usage["autosave_stopped"], false);
     // Reading the usage is not an edit: redo still restores the undone track.
     response(&session, r#"{"jsonrpc":"2.0","method":"edit.redo","id":5}"#);
     let summary = response(

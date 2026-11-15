@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 use echode_engine::ClipLoader;
 use echode_model::Project;
@@ -158,6 +159,7 @@ pub struct Session {
     notifications: Option<hardware::Notifications>,
     hardware_epoch: Arc<AtomicU64>,
     observed_epoch: u64,
+    inventory_retry: echode_history::retry::BackgroundRetry,
     inventory: Inventory,
     selected_uid: Option<String>,
     tick: i64,
@@ -199,6 +201,7 @@ impl Session {
             notifications: None,
             hardware_epoch: Arc::new(AtomicU64::new(0)),
             observed_epoch: 0,
+            inventory_retry: Default::default(),
             inventory: Inventory::default(),
             selected_uid: None,
             tick: 0,
@@ -678,14 +681,29 @@ impl Session {
     }
 
     pub fn service(&mut self) {
-        if self.refreshed
-            && self.hardware_epoch.load(Ordering::Acquire) != self.observed_epoch
-            && let Err(error) = self.refresh().and_then(|_| self.reconcile())
+        self.service_with_clock(Instant::now);
+    }
+
+    #[cfg(test)]
+    fn service_at(&mut self, now: Instant) {
+        self.service_with_clock(|| now);
+    }
+
+    fn service_with_clock(&mut self, clock: impl Fn() -> Instant) {
+        if (self.inventory_retry.pending()
+            || (self.refreshed
+                && self.hardware_epoch.load(Ordering::Acquire) != self.observed_epoch))
+            && self.inventory_retry.ready(clock())
+            && let Err(error) = self.refresh_with_clock(&clock).and_then(|_| {
+                self.reconcile()
+                    .inspect_err(|error| self.fail(error.clone()))
+            })
         {
             self.park();
             self.playing = false;
             self.sync_activity();
-            self.fail(error);
+            // refresh_with_clock records inventory failures with the shared policy.
+            self.error = Some(error);
         }
         self.retiring.retain(|opening| !opening.finished());
         if let Some(result) = self.opening.as_mut().and_then(Opening::poll)
@@ -791,12 +809,28 @@ impl Session {
     }
 
     fn refresh(&mut self) -> Result<(), AudioError> {
+        self.refresh_with_clock(Instant::now)
+    }
+
+    fn refresh_with_clock(&mut self, clock: impl Fn() -> Instant) -> Result<(), AudioError> {
         let epoch = self.hardware_epoch.load(Ordering::Acquire);
-        let (inventory, notifications) = self.outputs.refresh(&self.hardware_epoch)?;
+        let (inventory, notifications) = match self.outputs.refresh(&self.hardware_epoch) {
+            Ok(inventory) => inventory,
+            Err(error) => {
+                if self.inventory_retry.failed(clock(), &error) {
+                    self.fail(error.clone());
+                } else {
+                    self.error = Some(error.clone());
+                }
+                return Err(error);
+            }
+        };
+        self.inventory_retry.succeeded();
         self.notifications = notifications;
         self.refreshed = true;
         self.inventory = inventory;
         self.observed_epoch = epoch;
+        self.error = None;
         Ok(())
     }
 
@@ -994,3 +1028,7 @@ pub(crate) fn desired<'a>(inventory: &'a Inventory, uid: Option<&str>) -> Option
 #[cfg(test)]
 #[path = "session_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "session_retry_tests.rs"]
+mod retry_tests;

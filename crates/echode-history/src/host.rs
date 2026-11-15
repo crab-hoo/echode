@@ -57,10 +57,10 @@ enum Request {
     Redo {
         reply: Sender<Result<(), HostError>>,
     },
-    /// Plugin bytes already written to the object store. This is not a user edit.
+    /// A captured state; its object is written only after the halted check.
     AbsorbPluginState {
         device: Id,
-        state: String,
+        capture: Arc<crate::PluginState>,
         reply: Sender<Result<bool, HostError>>,
     },
     Revisions {
@@ -73,6 +73,10 @@ enum Request {
     AcceptRecovery {
         reply: Sender<Result<(), HostError>>,
     },
+    #[cfg(test)]
+    StopAutosave {
+        reply: Sender<()>,
+    },
     Shutdown,
 }
 
@@ -80,13 +84,19 @@ enum Request {
 pub struct DocumentHost {
     request: Sender<Request>,
     thread: Option<JoinHandle<()>>,
-    snapshot: Arc<Mutex<Arc<Project>>>,
+    snapshot: Arc<SharedDocument>,
     lock: PackageLock,
     /// Commit recovery read, and the last journal line included in that project.
     base_revision: String,
     applied_seq: u64,
     recovery: Option<RecoveryNotice>,
     recovery_pending: Arc<AtomicBool>,
+}
+
+/// The worker publishes the project and its terminal write status here.
+struct SharedDocument {
+    project: Mutex<Arc<Project>>,
+    halted: AtomicBool,
 }
 
 /// Exclusive ownership of one package, in this process and across processes.
@@ -196,7 +206,10 @@ impl DocumentHost {
         let applied_seq = recovered.applied_seq;
         let project = recovered.project;
         let next_seq = next_journal_seq(&directory)?.max(applied_seq.saturating_add(1));
-        let snapshot = Arc::new(Mutex::new(Arc::new(project.clone())));
+        let snapshot = Arc::new(SharedDocument {
+            project: Mutex::new(Arc::new(project.clone())),
+            halted: AtomicBool::new(false),
+        });
         let autosave = Autosave::create(&directory)?;
         // A confirmed edit is journaled before it returns. The first autosave
         // can still die with `save.pending` and no tip, and then recover
@@ -244,6 +257,7 @@ impl DocumentHost {
         Arc::clone(
             &self
                 .snapshot
+                .project
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner()),
         )
@@ -255,27 +269,33 @@ impl DocumentHost {
     /// `Ok(false)` means the device is gone and the bytes must not be applied.
     /// `Err` means the object or the journal did not finish; the caller keeps the bytes.
     pub fn commit_plugin_state(&self, device: Id, bytes: &[u8]) -> Result<bool, HostError> {
+        self.commit_plugin_save(device, Arc::new(crate::PluginState::new(bytes.to_vec())))
+    }
+
+    /// Records a capture without rewriting its object after a journal failure.
+    pub fn commit_plugin_save(
+        &self,
+        device: Id,
+        capture: Arc<crate::PluginState>,
+    ) -> Result<bool, HostError> {
         self.require_recovery_confirmation()
             .map_err(HostError::Package)?;
-        let hash = crate::write_object(self.directory(), bytes).map_err(HostError::Package)?;
-        let project = self.snapshot();
-        let Some(current) = device_state(&project, device) else {
-            return Ok(false);
-        };
-        if current.as_deref() == Some(hash.as_str()) {
-            return Ok(true);
-        }
         let (reply, incoming) = mpsc::channel();
         self.request
             .send(Request::AbsorbPluginState {
                 device,
-                state: hash,
+                capture,
                 reply,
             })
             .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?;
         incoming
             .recv()
             .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?
+    }
+
+    /// No more writes may be attempted until this document is reopened.
+    pub fn edits_halted(&self) -> bool {
+        self.snapshot.halted.load(Ordering::Acquire)
     }
 
     /// Applies `command`, writing any nonempty edit to the journal before returning.
@@ -446,17 +466,18 @@ fn worker(
     directory: std::path::PathBuf,
     project: Project,
     autosave: Autosave,
-    snapshot: Arc<Mutex<Arc<Project>>>,
+    snapshot: Arc<SharedDocument>,
     incoming: Receiver<Request>,
     recovery_pending: Arc<AtomicBool>,
     mut next_seq: u64,
 ) {
+    let halted = &snapshot.halted;
     let mut session = Session::open(project);
     let mut inflight: Vec<(u64, PendingAutosave)> = Vec::new();
-    let mut halted = false;
+    let mut autosave_status = crate::retry::BackgroundRetry::default();
     while let Ok(request) = incoming.recv() {
         finish_saves(&directory, &mut inflight);
-        if halted
+        if halted.load(Ordering::Acquire)
             && !matches!(
                 request,
                 Request::Shutdown | Request::Revisions { .. } | Request::Usage { .. }
@@ -467,6 +488,11 @@ fn worker(
         }
         match request {
             Request::Shutdown => break,
+            #[cfg(test)]
+            Request::StopAutosave { reply } => {
+                autosave.stop_for_test();
+                let _ = reply.send(());
+            }
             Request::AcceptRecovery { reply } => {
                 let result = if recovery_pending.load(Ordering::Acquire) {
                     let seq = next_seq.saturating_sub(1);
@@ -502,9 +528,10 @@ fn worker(
                                     autosave: &autosave,
                                     inflight: &mut inflight,
                                     next_seq: &mut next_seq,
+                                    autosave_status: &mut autosave_status,
                                     session: &session,
                                 });
-                                settle(&mut session, parked, &mut halted, saved)
+                                settle(&mut session, parked, halted, saved)
                                     .map(|()| Action::Restore { revision })
                             }
                             Err(error) => {
@@ -534,12 +561,12 @@ fn worker(
                                                 autosave: &autosave,
                                                 inflight: &mut inflight,
                                                 next_seq: &mut next_seq,
+                                                autosave_status: &mut autosave_status,
                                                 session: &session,
                                             },
                                             vec![staged],
                                         );
-                                        settle(&mut session, parked, &mut halted, saved)
-                                            .map(|()| action)
+                                        settle(&mut session, parked, halted, saved).map(|()| action)
                                     }
                                     Err(error) => {
                                         session.unpark_redo(parked);
@@ -565,9 +592,10 @@ fn worker(
                                     autosave: &autosave,
                                     inflight: &mut inflight,
                                     next_seq: &mut next_seq,
+                                    autosave_status: &mut autosave_status,
                                     session: &session,
                                 });
-                                settle(&mut session, parked, &mut halted, saved).map(|()| action)
+                                settle(&mut session, parked, halted, saved).map(|()| action)
                             }
                             Err(error) => {
                                 session.unpark_redo(parked);
@@ -607,11 +635,12 @@ fn worker(
                                 autosave: &autosave,
                                 inflight: &mut inflight,
                                 next_seq: &mut next_seq,
+                                autosave_status: &mut autosave_status,
                                 session: &session,
                             },
                             std::mem::take(&mut staged),
                         );
-                        settle(&mut session, parked, &mut halted, saved).map(|()| applied)
+                        settle(&mut session, parked, halted, saved).map(|()| applied)
                     }
                     Err(error) => {
                         session.unpark_redo(parked);
@@ -635,13 +664,14 @@ fn worker(
                                 autosave: &autosave,
                                 inflight: &mut inflight,
                                 next_seq: &mut next_seq,
+                                autosave_status: &mut autosave_status,
                                 session: &session,
                             },
                             JournalOp::Undo,
                             Vec::new(),
                             changes,
                         );
-                        invert_on_failure(&mut session, &mut halted, saved, true)
+                        invert_on_failure(&mut session, halted, saved, true)
                     }
                     Err(error) => Err(HostError::Action(error)),
                 };
@@ -652,7 +682,9 @@ fn worker(
                 let _ = reply.send(autosave.revisions().map_err(HostError::Package));
             }
             Request::Usage { reply } => {
-                let _ = reply.send(Ok(session.usage()));
+                let mut usage = session.usage();
+                usage.autosave_stopped = autosave_status.stopped();
+                let _ = reply.send(Ok(usage));
             }
             Request::Redo { reply } => {
                 let before = session.project().clone();
@@ -667,13 +699,14 @@ fn worker(
                                 autosave: &autosave,
                                 inflight: &mut inflight,
                                 next_seq: &mut next_seq,
+                                autosave_status: &mut autosave_status,
                                 session: &session,
                             },
                             JournalOp::Redo,
                             Vec::new(),
                             changes,
                         );
-                        invert_on_failure(&mut session, &mut halted, saved, false)
+                        invert_on_failure(&mut session, halted, saved, false)
                     }
                     Err(error) => Err(HostError::Action(error)),
                 };
@@ -681,9 +714,20 @@ fn worker(
             }
             Request::AbsorbPluginState {
                 device,
-                state,
+                capture,
                 reply,
             } => {
+                if device_state(session.project(), device).is_none() {
+                    let _ = reply.send(Ok(false));
+                    continue;
+                }
+                let state = match capture.store(&directory) {
+                    Ok(state) => state,
+                    Err(error) => {
+                        let _ = reply.send(Err(HostError::Package(error)));
+                        continue;
+                    }
+                };
                 let previous = session.project().clone();
                 let result = match session.absorb_plugin_state(device, Some(state.clone())) {
                     Ok(None) => Ok(true),
@@ -695,6 +739,7 @@ fn worker(
                                 autosave: &autosave,
                                 inflight: &mut inflight,
                                 next_seq: &mut next_seq,
+                                autosave_status: &mut autosave_status,
                                 session: &session,
                             },
                             JournalOp::Edit,
@@ -708,7 +753,9 @@ fn worker(
                             Ok(()) => Ok(true),
                             Err(error) => {
                                 session.reinstall_current(previous);
-                                note_failure(&mut halted, &error);
+                                if error.durability_unknown() {
+                                    note_failure(halted, &error);
+                                }
                                 Err(error)
                             }
                         }
@@ -735,7 +782,8 @@ fn worker(
     log::info!(
         target: LOG,
         package = package_name(&directory).as_str(),
-        halted = halted,
+        halted = halted.load(Ordering::Acquire),
+        autosave_stopped = autosave_status.stopped(),
         undo_steps = usage.undo_steps,
         redo_steps = usage.redo_steps,
         version_bytes = usage.versions.bytes,
@@ -761,16 +809,17 @@ fn package_name(directory: &Path) -> String {
 
 struct Publish<'a> {
     directory: &'a Path,
-    snapshot: &'a Arc<Mutex<Arc<Project>>>,
+    snapshot: &'a Arc<SharedDocument>,
     autosave: &'a Autosave,
     inflight: &'a mut Vec<(u64, PendingAutosave)>,
     next_seq: &'a mut u64,
+    autosave_status: &'a mut crate::retry::BackgroundRetry,
     session: &'a Session,
 }
 
-fn note_failure(halted: &mut bool, error: &HostError) {
+fn note_failure(halted: &AtomicBool, error: &HostError) {
     if error.durability_unknown() {
-        *halted = true;
+        halted.store(true, Ordering::Release);
         log::error!(
             target: LOG,
             error:% = error,
@@ -787,7 +836,7 @@ fn note_failure(halted: &mut bool, error: &HostError) {
 fn settle(
     session: &mut Session,
     parked: echode_actions::ParkedRedo,
-    halted: &mut bool,
+    halted: &AtomicBool,
     result: Result<(), HostError>,
 ) -> Result<(), HostError> {
     match result {
@@ -804,7 +853,7 @@ fn settle(
 /// followed `Session::undo`, so `redo` puts that step back.
 fn invert_on_failure(
     session: &mut Session,
-    halted: &mut bool,
+    halted: &AtomicBool,
     result: Result<(), HostError>,
     undo: bool,
 ) -> Result<(), HostError> {
@@ -818,7 +867,7 @@ fn invert_on_failure(
                 session.undo().map(|_| ())
             };
             if restored.is_err() {
-                *halted = true;
+                halted.store(true, Ordering::Release);
             }
             Err(error)
         }
@@ -848,6 +897,10 @@ fn reply_halted(request: Request) {
         }
         Request::AcceptRecovery { reply } => {
             let _ = reply.send(Err(error));
+        }
+        #[cfg(test)]
+        Request::StopAutosave { reply } => {
+            let _ = reply.send(());
         }
         Request::Shutdown => {}
     }
@@ -926,10 +979,24 @@ fn publish(
     let published = Arc::new(commit.session.project().clone());
     *commit
         .snapshot
+        .project
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = Arc::clone(&published);
-    if let Ok(pending) = commit.autosave.save(published, line.seq) {
-        commit.inflight.push((line.seq, pending));
+    if !commit.autosave_status.stopped() {
+        match commit.autosave.save(published, line.seq) {
+            Ok(pending) => commit.inflight.push((line.seq, pending)),
+            Err(error) => {
+                if commit.autosave_status.stop(&error) {
+                    log::error!(
+                        target: LOG,
+                        package = package_name(commit.directory).as_str(),
+                        error:% = error,
+                        cause:? = error;
+                        "autosave stopped accepting snapshots; edits remain in the journal"
+                    );
+                }
+            }
+        }
     }
     Ok(())
 }

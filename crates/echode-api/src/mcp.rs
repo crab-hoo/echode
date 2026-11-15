@@ -392,7 +392,7 @@ fn tools() -> Vec<Value> {
              json!({"type":"object","properties":{"actions":{"type":"array","items":{"type":"object"}}},"required":["actions"],"additionalProperties":false}), false),
         tool("echode.edit.undo", "Undo", "Undo the last edit in the configured session.", empty.clone(), false),
         tool("echode.edit.redo", "Redo", "Redo the last undone edit in the configured session.", empty.clone(), false),
-        tool("echode.history.usage", "History memory", "Read how many Undo and Redo steps the session keeps and an estimate of the memory only they hold.", empty.clone(), true),
+        tool("echode.history.usage", "History memory", "Read Undo and Redo memory usage and whether autosave has stopped.", empty.clone(), true),
         tool("echode.project.summary", "Project summary", "Read the configured project's meter and tracks without opening an audio device.", empty, true),
     ]);
     tools.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));

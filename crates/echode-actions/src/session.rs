@@ -45,6 +45,9 @@ pub struct HistoryUsage {
     pub journal_changes: u64,
     /// Estimate of those journal entries; text and ID lists are not counted.
     pub journal_bytes: u64,
+    /// The document host could not submit to its autosave worker. Journaled
+    /// edits remain durable, but saved revisions and compaction have stopped.
+    pub autosave_stopped: bool,
 }
 
 /// The editable session: current project, undo, redo, and the journal that
@@ -114,6 +117,7 @@ impl Session {
             versions,
             journal_changes,
             journal_bytes,
+            autosave_stopped: false,
         }
     }
 

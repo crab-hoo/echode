@@ -415,6 +415,80 @@ fn audit_aud03_unknown_durability_stops_later_edits_until_recovery() {
 }
 
 #[test]
+fn audit_dia05_a_halted_document_does_not_write_plugin_objects() {
+    let directory = scratch();
+    let (project, track) = Project::new().add_track("fx");
+    let device = Id::generate();
+    let project = project
+        .add_clap_device(track, device, "org.example.fx")
+        .unwrap();
+    write_package(&directory, &project).unwrap();
+    let host = DocumentHost::open(&directory).unwrap();
+    crate::document::fail_next_journal(host.directory(), JournalFault::Uncertain);
+    assert!(
+        host.perform(Command::AddTrack {
+            name: "uncertain".into()
+        })
+        .is_err()
+    );
+    let bytes = b"must not be written while halted";
+    assert!(host.commit_plugin_state(device, bytes).is_err());
+    assert!(
+        !directory
+            .join("media/objects")
+            .join(crate::object_hash(bytes))
+            .exists(),
+        "a halted document wrote plugin bytes before refusing the request"
+    );
+    drop(host);
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+#[test]
+fn audit_dia05_a_failed_record_keeps_the_current_state_and_can_land_later() {
+    let directory = scratch();
+    let (project, track) = Project::new().add_track("fx");
+    let device = Id::generate();
+    let project = project
+        .add_clap_device(track, device, "org.example.fx")
+        .unwrap();
+    write_package(&directory, &project).unwrap();
+    let host = DocumentHost::open(&directory).unwrap();
+    assert!(host.commit_plugin_state(device, b"original").unwrap());
+    let latest = Arc::new(crate::PluginState::new(b"latest".to_vec()));
+    for fault in [JournalFault::BeforeWrite, JournalFault::Sync] {
+        crate::document::fail_next_journal(host.directory(), fault);
+        assert!(
+            host.commit_plugin_save(device, Arc::clone(&latest))
+                .is_err()
+        );
+        assert_eq!(
+            device_state(&host.snapshot(), device),
+            Some(Some(crate::object_hash(b"original")))
+        );
+        assert!(!host.edits_halted());
+    }
+    host.perform(Command::AddTrack {
+        name: "unrelated".into(),
+    })
+    .unwrap();
+    assert!(host.commit_plugin_save(device, latest).unwrap());
+    assert_eq!(host.history_usage().unwrap().undo_steps, 1);
+    drop(host);
+    let reopened = DocumentHost::open(&directory).unwrap();
+    assert_eq!(
+        device_state(&reopened.snapshot(), device),
+        Some(Some(crate::object_hash(b"latest")))
+    );
+    assert_eq!(
+        crate::read_object(&directory, &crate::object_hash(b"latest")).unwrap(),
+        b"latest"
+    );
+    drop(reopened);
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+#[test]
 fn history_usage_follows_undo_and_redo_and_answers_after_a_halt() {
     let directory = scratch();
     write_package(&directory, &Project::new()).unwrap();
@@ -448,20 +522,57 @@ fn history_usage_follows_undo_and_redo_and_answers_after_a_halt() {
 #[test]
 fn only_the_typed_durability_error_halts_later_edits() {
     // A path or an OS message can contain the same words (XCA-16).
-    let mut halted = false;
+    let halted = AtomicBool::new(false);
     let lookalike = HostError::Package(PackageError::Io {
         path: Some(PathBuf::from(format!(
             "/tmp/{JOURNAL_DURABILITY_UNKNOWN}/journal.jsonl"
         ))),
         error: std::io::Error::from_raw_os_error(libc::EACCES),
     });
-    note_failure(&mut halted, &lookalike);
-    assert!(!halted);
+    note_failure(&halted, &lookalike);
+    assert!(!halted.load(Ordering::Acquire));
     note_failure(
-        &mut halted,
+        &halted,
         &HostError::Package(PackageError::durability_unknown()),
     );
-    assert!(halted);
+    assert!(halted.load(Ordering::Acquire));
+}
+
+#[test]
+fn audit_iqa05_a_stopped_autosave_is_reported_once_without_losing_edits() {
+    let capture = echode_log::testing::capture();
+    let directory = scratch();
+    write_package(&directory, &Project::new()).unwrap();
+    let host = DocumentHost::open(&directory).unwrap();
+    let (reply, done) = mpsc::channel();
+    host.request.send(Request::StopAutosave { reply }).unwrap();
+    done.recv().unwrap();
+    for name in ["first", "second", "third"] {
+        host.perform(Command::AddTrack { name: name.into() })
+            .unwrap();
+    }
+    let records = capture.with_field("package", &serde_json::json!(package_name(&directory)));
+    let errors: Vec<_> = records
+        .iter()
+        .filter(|record| {
+            record["message"] == "autosave stopped accepting snapshots; edits remain in the journal"
+        })
+        .collect();
+    assert_eq!(
+        errors.len(),
+        1,
+        "a stopped autosave must be logged exactly once"
+    );
+    assert_eq!(errors[0]["level"], "error");
+    assert!(host.history_usage().unwrap().autosave_stopped);
+    assert_eq!(host.history_usage().unwrap().undo_steps, 3);
+    assert_eq!(names(&host), ["first", "second", "third"]);
+    drop(host);
+    let reopened = DocumentHost::open(&directory).unwrap();
+    assert_eq!(names(&reopened), ["first", "second", "third"]);
+    assert!(!reopened.history_usage().unwrap().autosave_stopped);
+    drop(reopened);
+    let _ = std::fs::remove_dir_all(directory);
 }
 
 #[test]
