@@ -182,8 +182,13 @@ fn messages_read_during_a_send_keep_their_order_and_descriptors() {
     let region = crate::MappedRegion::create_shared(layout).unwrap();
     let (mut sender, mut peer) = Socket::pair().unwrap();
     for id in [1, 2] {
-        peer.send_remap_tagged(id, layout, region.duplicate_fd().unwrap())
-            .unwrap();
+        peer.send_remap_tagged(
+            id,
+            layout,
+            PortLayout::new(vec![], vec![1]),
+            region.duplicate_fd().unwrap(),
+        )
+        .unwrap();
     }
     peer.send_tagged(3, &ControlMessage::State(vec![3; 3]))
         .unwrap();
@@ -204,8 +209,12 @@ fn messages_read_during_a_send_keep_their_order_and_descriptors() {
     );
     assert!(sender.wait_readable(Duration::ZERO).unwrap());
     for expected in [1, 2] {
-        let Some((id, ControlMessage::Remap { layout: got, fd })) =
-            sender.try_recv_tagged().unwrap()
+        let Some((
+            id,
+            ControlMessage::Remap {
+                layout: got, fd, ..
+            },
+        )) = sender.try_recv_tagged().unwrap()
         else {
             panic!("expected remap {expected}");
         };

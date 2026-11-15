@@ -19,6 +19,7 @@ use crate::params::{
     read_text_request, read_values, write_changes, write_infos, write_parsed, write_text_request,
     write_values,
 };
+use crate::ports::PortLayout;
 use crate::refusal::{Refusal, read_refusal, write_refusal};
 use crate::region::SessionLayout;
 use std::borrow::Cow;
@@ -75,6 +76,7 @@ const PARSE_PARAM: u32 = 33;
 const PARAM_PARSED: u32 = 34;
 const TAIL_CHANGED: u32 = 36;
 const TAIL_REQUEST: u32 = 37;
+const PORTS_CHANGED: u32 = 38;
 
 #[derive(Debug)]
 pub enum ControlMessage {
@@ -92,8 +94,11 @@ pub enum ControlMessage {
     TailRequest,
     /// Notice: latest declared tail, including zero and CLAP's infinite values.
     TailChanged(u32),
+    /// Storage for `layout`, routed as `ports` (ADR 0382). A helper with a
+    /// plugin processes it only while its plugin was activated with `ports`.
     Remap {
         layout: SessionLayout,
+        ports: PortLayout,
         fd: OwnedFd,
     },
     Remapped,
@@ -116,6 +121,10 @@ pub enum ControlMessage {
     },
     /// The plugin has no usable audio-port description.
     PortsRejected(Refusal),
+    /// Notice: the plugin was activated again with other audio ports. Blocks
+    /// of a mapping routed for the previous ports are silent until the parent
+    /// maps and routes these (ADR 0382).
+    PortsChanged(PortLayout),
     /// State or tail request did not finish: the helper did not call the plugin, the
     /// plugin refused, or the outcome is unknown.
     StateRejected(Refusal),
@@ -161,6 +170,7 @@ impl ControlMessage {
             Self::Dirty
                 | Self::PluginRestarted { .. }
                 | Self::TailChanged(_)
+                | Self::PortsChanged(_)
                 | Self::RequestProcess
                 | Self::Hello
                 | Self::GuiClosed
@@ -340,18 +350,16 @@ impl Socket {
         }
     }
 
-    /// Send a new mapping. `fd` is duplicated by the kernel; this end is closed.
-    pub fn send_remap(&mut self, layout: SessionLayout, fd: OwnedFd) -> io::Result<()> {
-        self.send_remap_tagged(0, layout, fd)
-    }
-
+    /// Send a new mapping routed for `ports`. `fd` is duplicated by the
+    /// kernel; this end is closed.
     pub fn send_remap_tagged(
         &mut self,
         id: u64,
         layout: SessionLayout,
+        ports: PortLayout,
         fd: OwnedFd,
     ) -> io::Result<()> {
-        self.send_tagged(id, &ControlMessage::Remap { layout, fd })
+        self.send_tagged(id, &ControlMessage::Remap { layout, ports, fd })
     }
 
     /// True at once when a send already read a message or an error ahead.
@@ -604,7 +612,11 @@ fn encode(message: &ControlMessage) -> (u32, Cow<'_, [u8]>) {
         }
         ControlMessage::TailRequest => (TAIL_REQUEST, Vec::new()),
         ControlMessage::TailChanged(samples) => (TAIL_CHANGED, samples.to_le_bytes().to_vec()),
-        ControlMessage::Remap { layout, .. } => (REMAP, layout_bytes(*layout).to_vec()),
+        ControlMessage::Remap { layout, ports, .. } => {
+            let mut bytes = layout_bytes(*layout).to_vec();
+            bytes.extend_from_slice(&port_bytes(&ports.inputs, &ports.outputs));
+            (REMAP, bytes)
+        }
         ControlMessage::Remapped => (REMAPPED, Vec::new()),
         ControlMessage::RemapFailed => (REMAP_FAILED, Vec::new()),
         ControlMessage::CancelRemap => (CANCEL_REMAP, Vec::new()),
@@ -624,6 +636,9 @@ fn encode(message: &ControlMessage) -> (u32, Cow<'_, [u8]>) {
             (PORTS, bytes)
         }
         ControlMessage::PortsRejected(refusal) => (PORTS_REJECTED, write_refusal(refusal)),
+        ControlMessage::PortsChanged(ports) => {
+            (PORTS_CHANGED, port_bytes(&ports.inputs, &ports.outputs))
+        }
         ControlMessage::StateRejected(refusal) => (STATE_REJECTED, write_refusal(refusal)),
         ControlMessage::ParamsRequest => (PARAMS_REQUEST, Vec::new()),
         ControlMessage::Params(infos) => (PARAMS, write_infos(infos)),
@@ -664,9 +679,22 @@ fn decode_body(
     fd: Option<OwnedFd>,
 ) -> io::Result<Option<ControlMessage>> {
     if typ == REMAP {
-        let layout = read_layout(&owned)?;
+        let (layout, ports) =
+            owned
+                .split_at_checked(LAYOUT_BYTES)
+                .ok_or(ControlDecodeError::WrongSize {
+                    field: ControlField::RemapLayout,
+                    expected: LAYOUT_BYTES,
+                    actual: owned.len(),
+                })?;
+        let layout = read_layout(layout)?;
+        let (inputs, outputs) = read_ports(ports)?;
         let fd = fd.ok_or(ControlDecodeError::MissingMapping)?;
-        return Ok(Some(ControlMessage::Remap { layout, fd }));
+        return Ok(Some(ControlMessage::Remap {
+            layout,
+            ports: PortLayout::new(inputs, outputs),
+            fd,
+        }));
     }
     drop(fd);
     match typ {
@@ -721,6 +749,10 @@ fn decode_body(
             }
         }
         PORTS_REJECTED => ControlMessage::PortsRejected(read_refusal(body)?),
+        PORTS_CHANGED => {
+            let (inputs, outputs) = read_ports(body)?;
+            ControlMessage::PortsChanged(PortLayout::new(inputs, outputs))
+        }
         STATE_REJECTED => ControlMessage::StateRejected(read_refusal(body)?),
         PARAMS_REQUEST => {
             read_fixed::<0>(body, ControlField::EmptyBody { message_type: typ })?;
@@ -815,8 +847,11 @@ fn read_counts(body: &[u8], input: bool) -> io::Result<(Vec<u32>, &[u8])> {
     Ok((counts, rest))
 }
 
-fn layout_bytes(layout: SessionLayout) -> [u8; 20] {
-    let mut body = [0u8; 20];
+/// A remap's layout, before the ports it is routed for.
+const LAYOUT_BYTES: usize = 20;
+
+fn layout_bytes(layout: SessionLayout) -> [u8; LAYOUT_BYTES] {
+    let mut body = [0u8; LAYOUT_BYTES];
     let fields = [
         layout.max_frames,
         layout.input_channels,
@@ -844,7 +879,7 @@ fn read_layout(body: &[u8]) -> io::Result<SessionLayout> {
     else {
         return Err(ControlDecodeError::WrongSize {
             field: ControlField::RemapLayout,
-            expected: 20,
+            expected: LAYOUT_BYTES,
             actual: body.len(),
         }
         .into());
@@ -1054,12 +1089,20 @@ mod tests {
         };
         let region = MappedRegion::create_shared(layout).expect("shm");
         let dup = region.duplicate_fd().expect("dup");
-        parent.send_remap(layout, dup).expect("send");
+        let ports = PortLayout::new(vec![], vec![1]);
+        parent
+            .send_remap_tagged(0, layout, ports.clone(), dup)
+            .expect("send");
         let message = child.recv_timeout(Duration::from_secs(2)).expect("recv");
-        let ControlMessage::Remap { layout: got, fd } = message else {
+        let ControlMessage::Remap {
+            layout: got,
+            ports: routed,
+            fd,
+        } = message
+        else {
             panic!("expected remap");
         };
-        assert_eq!(got, layout);
+        assert_eq!((got, routed), (layout, ports));
         let mapped = MappedRegion::from_fd(fd).expect("map");
         assert_eq!(mapped.layout(), layout);
         child.send(&ControlMessage::Remapped).expect("ack");

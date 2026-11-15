@@ -45,11 +45,11 @@ CLAP の遅延は有効化の直後にメインスレッドで読み、初回の
 `clap.tail.changed` は主スレッドへ中継して最新値を読み、再有効化後も更新する。
 親は `PluginControl` の共有 atomic に値を集約し、ゼロと無限値も反映する。
 書出しの確定前には番号付きの問合せで読み直す（[ADR 0352](../decisions/0352-live-clap-tails-and-export-fence.md)）。
-`clap.audio-ports` は名前と、寸法を変えないフラグ・ポート型・in-place ペアの通知を許可する。
-音声は常に別々の f32 バッファを使い、名前やこれらのヒントの通知では再起動しない。
-初回のポート ID・境界・チャンネル数を固定し、再有効化前には無効化後の記述を読み直して一致を検証する。
-不一致や記述の失敗では再有効化・再起動の完了通知をせず、隔離ヘルパーを停止する。
-ポート数・チャンネル数の動的変更は未対応である（[ADR 0374](../decisions/0374-dimension-preserving-audio-port-rescans.md)）。
+`clap.audio-ports` は 6 つの単一フラグすべてを対応と答え、名前・フラグ・型・in-place ペア・ID の変更では共有領域を変えない。
+音声は常に別々の f32 バッファを使い、名前だけの通知では再起動しない。
+入出力ごとのチャンネル数の列（`PortLayout`）は有効化ごとに読み直して処理器へ渡し、`Remap` も対象の構成を運んで一致するブロックだけを処理する（不一致の間は無音でイベントを捨てる）。
+有効化で `PortLayout` が変われば `PortsChanged` で親へ知らせ、エンジンは最新の構成でルーティングの検証と共有領域の準備を行い、計画の採用で両者を同時に切り替えてリセットとノートの再送を行う。
+トラックが受けられない構成は `BusMapping` で計画を断り、ホストから構成を選ぶ `audio-ports-config` 等は未対応である（[ADR 0374](../decisions/0374-dimension-preserving-audio-port-rescans.md)、[ADR 0382](../decisions/0382-audio-port-changes-exchange-mapping-and-routing.md)）。
 `clap.note-ports` は native CLAP・MIDI 1.0・MIDI 2.0・MPE を対応と答える。
 入力形式はこの順で選び、既存の経路を保つ（[ADR 0375](../decisions/0375-midi-1-notes-for-midi-only-clap-ports.md)、[ADR 0379](../decisions/0379-midi2-notes-for-clap-ports.md)）。
 MIDI 2.0 はグループ 0 の UMP で、16 bit のベロシティ（0 も発音）と 32 bit のポリプレッシャーを送る。

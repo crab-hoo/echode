@@ -39,12 +39,6 @@ fn malformed_control_metadata_retains_a_structural_cause() {
             "chain message is the wrong size",
         ),
         (
-            REMAP,
-            ControlField::RemapLayout,
-            20,
-            "remap layout is the wrong size",
-        ),
-        (
             GUI_COMMAND,
             ControlField::PluginCommand,
             1,
@@ -63,6 +57,29 @@ fn malformed_control_metadata_retains_a_structural_cause() {
                 diagnostic,
             );
         }
+    }
+    // A remap's layout comes before the ports it is routed for.
+    for actual in 0..20 {
+        assert_cause(
+            receive(REMAP, &vec![0; actual]).unwrap_err(),
+            ControlDecodeError::WrongSize {
+                field: ControlField::RemapLayout,
+                expected: 20,
+                actual,
+            },
+            "remap layout is the wrong size",
+        );
+    }
+    for (ports, input, actual) in [(0, true, 0), (3, true, 3), (4, false, 0), (7, false, 3)] {
+        assert_cause(
+            receive(REMAP, &vec![0; 20 + ports]).unwrap_err(),
+            ControlDecodeError::WrongSize {
+                field: ControlField::PortCount { input },
+                expected: 4,
+                actual,
+            },
+            "port description is truncated",
+        );
     }
     for typ in [
         PARAMS_REQUEST,
@@ -84,7 +101,7 @@ fn malformed_control_metadata_retains_a_structural_cause() {
         }
     }
     // The next type past the most recent notice is still unknown.
-    for typ in [0, TAIL_REQUEST + 1, 256, u32::MAX] {
+    for typ in [0, PORTS_CHANGED + 1, 256, u32::MAX] {
         assert_cause(
             receive(typ, &[1, 2, 3]).unwrap_err(),
             ControlDecodeError::UnknownMessageType(typ),
@@ -99,7 +116,15 @@ fn malformed_control_metadata_retains_a_structural_cause() {
         );
     }
     assert_cause(
-        receive(REMAP, &layout_bytes(SessionLayout::stereo())).unwrap_err(),
+        receive(
+            REMAP,
+            &[
+                layout_bytes(SessionLayout::stereo()).as_slice(),
+                &port_bytes(&[2], &[2]),
+            ]
+            .concat(),
+        )
+        .unwrap_err(),
         ControlDecodeError::MissingMapping,
         "remap did not include a mapping",
     );

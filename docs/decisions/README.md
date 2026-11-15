@@ -2,7 +2,7 @@
 
 <!-- scripts/documentation.py --write-adr-index で自動生成。直接編集せず、各 ADR の `- 状態:` / `- 領域:` を更新する。 -->
 
-全 381 件の設計判断を領域別・状態別に並べる。日々の作業で現在有効な制約を確かめる時は「現行・一部置換」を見る。
+全 382 件の設計判断を領域別・状態別に並べる。日々の作業で現在有効な制約を確かめる時は「現行・一部置換」を見る。
 
 ## 集計
 
@@ -11,10 +11,10 @@
 | [全体方針・計画](#全体方針計画) | 12 | 10 | 2 | 0 | 0 |
 | [モデル・履歴・保存・API](#モデル履歴保存api) | 82 | 73 | 8 | 0 | 1 |
 | [音声エンジン・書き出し](#音声エンジン書き出し) | 102 | 74 | 26 | 2 | 0 |
-| [プラグイン・隔離](#プラグイン隔離) | 69 | 57 | 12 | 0 | 0 |
+| [プラグイン・隔離](#プラグイン隔離) | 70 | 57 | 13 | 0 | 0 |
 | [UI・描画・入力](#ui描画入力) | 62 | 54 | 8 | 0 | 0 |
 | [ビルド・検査・開発基盤](#ビルド検査開発基盤) | 54 | 38 | 16 | 0 | 0 |
-| 合計 | 381 | 306 | 72 | 2 | 1 |
+| 合計 | 382 | 306 | 73 | 2 | 1 |
 
 ## 全体方針・計画
 
@@ -316,7 +316,7 @@
 | [0311](0311-typed-shared-memory-errors.md) | 現行 | 共有メモリの失敗で操作と errno を保持する |
 | [0312](0312-typed-control-text-errors.md) | 現行 | 制御メッセージの不正な UTF-8 の原因を保持する |
 
-#### ADR 0313〜0381
+#### ADR 0313〜0382
 
 | ADR | 状態 | 表題 |
 |---|---|---|
@@ -344,11 +344,12 @@
 | [0362](0362-published-media-and-helper-lifetimes.md) | 現行 | 公開済み素材を保持し、失敗したヘルパーの寿命を閉じる |
 | [0364](0364-remove-unused-region-restart-reset.md) | 現行 | 未使用の共有領域リセット入口を削除する |
 | [0367](0367-helper-notice-bounds-and-audit-diagnostics.md) | 現行 | ヘルパー通知の集約・上限制限と診断・状態同期の補強 |
-| [0374](0374-dimension-preserving-audio-port-rescans.md) | 現行 | 音声ポートの寸法を変えない通知を許可し、再有効化前に構成を検証する |
+| [0374](0374-dimension-preserving-audio-port-rescans.md) | 一部置換（[0382](0382-audio-port-changes-exchange-mapping-and-routing.md)） | 音声ポートの寸法を変えない通知を許可し、再有効化前に構成を検証する |
 | [0375](0375-midi-1-notes-for-midi-only-clap-ports.md) | 一部置換（[0379](0379-midi2-notes-for-clap-ports.md)） | CLAP 形式を受けないノート入力ポートへ曲のノートを MIDI 1.0 で送る |
 | [0379](0379-midi2-notes-for-clap-ports.md) | 一部置換（[0380](0380-mpe-member-channels-for-clap-ports.md)） | MIDI 2.0 だけを受ける CLAP ポートへ曲のノートを UMP で送る |
 | [0380](0380-mpe-member-channels-for-clap-ports.md) | 一部置換（[0381](0381-mpe-note-expression.md)） | MPE だけを受ける CLAP ポートへ下位ゾーンを設定し、ノートをメンバーチャンネルで送る |
 | [0381](0381-mpe-note-expression.md) | 現行 | MPE の表情は単独所有中のメンバーへ送り、ノートオン前に初期値を送る |
+| [0382](0382-audio-port-changes-exchange-mapping-and-routing.md) | 現行 | 音声ポートの変更を、共有領域と親のルーティングの交換として接続する |
 
 ## UI・描画・入力
 

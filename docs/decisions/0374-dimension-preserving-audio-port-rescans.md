@@ -1,7 +1,7 @@
 # 0374. 音声ポートの寸法を変えない通知を許可し、再有効化前に構成を検証する
 
 - 日付: 2026-11-15
-- 状態: 現行
+- 状態: 一部置換（[0382](0382-audio-port-changes-exchange-mapping-and-routing.md)）
 - 領域: プラグイン・隔離
 - 対象: F2・FCA-07・P2-03 の `clap.audio-ports`
 - 一部置換: [ADR 0355](0355-clap-audio-port-name-rescans.md) の名前だけを許可する判断

@@ -34,7 +34,17 @@ fn parameter_operation_preserves_control_metadata_causes() {
                 actual: 0,
             },
         ),
-        (9, vec![0; 20], MissingMapping),
+        (
+            9,
+            vec![0; 20],
+            WrongSize {
+                field: ControlField::PortCount { input: true },
+                expected: 4,
+                actual: 0,
+            },
+        ),
+        // A layout, then no input ports and no output ports.
+        (9, vec![0; 28], MissingMapping),
         (
             15,
             vec![],

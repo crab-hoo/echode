@@ -279,17 +279,17 @@ bit 7 が立つ時は誤った判定で、下位 bit の不足は未到達の区
 
 ### CLAP の音声ポートの変更が反映されない
 
-`clap.audio-ports` は名前・フラグ・ポート型・in-place ペアを許可するが、リスト・チャンネル数の変更は許可しない。
-名前は保持・表示せず、音声はヒントにかかわらず別々の f32 バッファを使うため、通知だけでは再起動しない。
-再有効化前には無効化後の ID・ポート境界・各チャンネル数を初回の記述と照合する（[ADR 0374](../decisions/0374-dimension-preserving-audio-port-rescans.md)）。
-`plugin audio port layout changed` は、この照合に失敗してヘルパーを停止した診断である。
+`clap.audio-ports` は 6 つの単一フラグすべてを対応と答え、名前は保持・表示せず、音声は別々の f32 バッファを使うため名前だけの通知では再起動しない。
+入出力ごとのチャンネル数の列（`PortLayout`）は有効化ごとに無効化後の記述から読み直し、変われば `PortsChanged` で親の改訂を進める。
+ヘルパーは処理器の `PortLayout` と共有領域の `PortLayout` が一致するブロックだけを処理し、親が新しい共有領域とルーティングを採用するまでは無音になる（[ADR 0382](../decisions/0382-audio-port-changes-exchange-mapping-and-routing.md)）。
+ステレオの FX 母線へモノ主入力を返すなどトラックが受けられない構成は、エンジンの計画準備が `bus mapping` で断り、古い計画のままそのデバイスが無音になる。
 `activate after restart failed` に記述の拒否やゼロチャンネル等の原因が続く時は、無効化後の `count`・`get` の答えを調べる。
-まず対応を問い合わせたフラグ・通知時に変えた項目・初回と無効化後の記述を区別する。
-非対応の変更を許可したとみなして再起動を繰り返さず、機器なしの回帰と比較する。
-公開する対応フラグは `echode-plugin-host/src/audio_ports.rs`、実ヘルパーの回帰は次である。
+ホストから構成を選ぶ `audio-ports-config`・`configurable-audio-ports` は未対応である。
+対応フラグは `echode-plugin-host/src/audio_ports.rs`、実ヘルパーとエンジンの回帰は次である。
 
 ```sh
 cargo test -q -p echode-plugin-host --test isolation audio_ports::
+cargo test -q -p echode-plugin-host --test hosted_playback audio_ports::
 ```
 
 ### CLAP がテンポ・再生位置を取得できない
@@ -412,7 +412,7 @@ shell 除去でこの環境の起動遅延自体が解決したとは扱わず�
 
 拒否ペイロードではなく、外側の制御メタデータが不正である。
 `SessionError::Io` の `io::Error::get_ref` を `ControlDecodeError` に downcast する。
-`WrongSize` は `ControlField` と必要・実際のバイト数で、ポートの列と数は `input` で方向を分ける。
+`WrongSize` は `ControlField` と必要・実際のバイト数で、ポート記述と `Remap` のポート列は方向や要素数を分ける。
 固定長の `expected` は一致すべき長さ、不足した列の `expected` は最低限必要な長さである。
 `MessageLength` は宣言長と許容範囲、未知の種類・コマンドは受けた値、余分なポートの列は残りの長さを持つ。
 文面や生バイトで分類せず、アプリとヘルパーの版・送信側を確認する。自動再送はしない。

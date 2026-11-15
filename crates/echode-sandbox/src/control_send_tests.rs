@@ -162,16 +162,23 @@ fn a_remap_sent_as_a_message_carries_its_descriptor() {
     let region = crate::MappedRegion::create_shared(layout).unwrap();
     let message = ControlMessage::Remap {
         layout,
+        ports: PortLayout::new(vec![1], vec![1]),
         fd: region.duplicate_fd().unwrap(),
     };
     let (mut sender, mut receiver) = Socket::pair().unwrap();
     sender.send_tagged(31, &message).unwrap();
     let (id, received) = receiver.recv_tagged(Duration::from_secs(2)).unwrap();
     assert_eq!(id, 31);
-    let ControlMessage::Remap { layout: got, fd } = received else {
+    let ControlMessage::Remap {
+        layout: got,
+        ports,
+        fd,
+    } = received
+    else {
         panic!("expected a remap");
     };
     assert_eq!(got, layout);
+    assert_eq!(ports, PortLayout::new(vec![1], vec![1]));
     assert_eq!(crate::MappedRegion::from_fd(fd).unwrap().layout(), layout);
     let ControlMessage::Remap { fd: kept, .. } = &message else {
         unreachable!();
@@ -196,13 +203,16 @@ fn a_split_remap_passes_its_descriptor_with_the_frame_of_its_type() {
     let region = crate::MappedRegion::create_shared(layout).unwrap();
     let message = ControlMessage::Remap {
         layout,
+        ports: PortLayout::new(vec![], vec![1]),
         fd: region.duplicate_fd().unwrap(),
     };
     let (mut sender, mut receiver) = Socket::pair().unwrap();
-    // The 20-byte layout crosses as five parts and the remap frame.
+    // The 20-byte layout and 12 bytes of ports cross as seven parts and the
+    // remap frame.
     sender.send_split(3, &message, SMALL_BODY, None).unwrap();
-    let ControlMessage::Remap { layout: got, fd } =
-        receiver.recv_timeout(Duration::from_secs(2)).unwrap()
+    let ControlMessage::Remap {
+        layout: got, fd, ..
+    } = receiver.recv_timeout(Duration::from_secs(2)).unwrap()
     else {
         panic!("expected a remap");
     };

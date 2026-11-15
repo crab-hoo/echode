@@ -403,6 +403,7 @@ fn fault_code(text: &str) -> u8 {
         "timer-support" => 25,
         "tail-changed" => 26,
         "audio-ports" => 27,
+        _ if text.starts_with("audio-ports:") => 27,
         "note-ports" => 28,
         "params-rescan" => 29,
         "transport" => 30,
@@ -493,6 +494,9 @@ fn note_fault(plugin_id: &CStr) {
     }
     if let Some(frames) = text.trim().strip_prefix("claim:") {
         latency::claim(frames);
+    }
+    if let Some(layout) = text.trim().strip_prefix("audio-ports:") {
+        audio_ports::schedule(layout);
     }
     FAULT_BITS.store(fault_code(text.trim()), Ordering::Relaxed);
 }
@@ -835,6 +839,8 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
             // Several times one 256-frame block at 48 kHz (about 5.3 ms).
             Fault::SlowProcess => std::thread::sleep(std::time::Duration::from_millis(20)),
             Fault::Callback => self.host.request_callback(),
+            // Atomics only: the scheduled layout and the restart request.
+            Fault::AudioPorts => audio_ports::processed(self.host),
             Fault::Restart | Fault::Latency => self.host.request_restart(),
             Fault::RestartNested => {
                 if !NESTED_REQUESTED.swap(true, Ordering::AcqRel) {
@@ -1083,7 +1089,6 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
             | Fault::HostLog
             | Fault::TimerSupport
             | Fault::TailChanged
-            | Fault::AudioPorts
             | Fault::ParamRescan
             | Fault::Activate
             | Fault::Generate

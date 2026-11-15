@@ -74,41 +74,151 @@ fn dimension_preserving_audio_port_rescans_revalidate_before_activation_under_rt
     }
 }
 
+/// Waits until the parent has read the ports of the plugin's latest
+/// activation, and returns their revision.
+fn wait_ports(host: &mut PluginHost, expected: &PortLayout) -> u64 {
+    // An eventual notice, not a performance measurement.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        host.poll_notice().expect("notices");
+        let (revision, ports) = host.control_handle().audio_ports();
+        if ports == *expected {
+            return revision;
+        }
+        assert!(!host.has_exited(), "{}", host.stderr_log());
+        assert!(
+            Instant::now() < deadline,
+            "the parent did not read {expected:?}: {ports:?}; {}",
+            host.stderr_log()
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// One block through the current mapping, each input channel at its own
+/// level. Outputs start at 1.0, so a written silence is visible.
+fn process_ports(host: &mut PluginHost, frames: usize) -> Vec<Vec<f32>> {
+    let layout = host.layout();
+    let input: Vec<Vec<f32>> = (0..layout.input_channels)
+        .map(|channel| vec![0.125 * (channel + 1) as f32; frames])
+        .collect();
+    let mut output = vec![vec![1.0; frames]; layout.output_channels as usize];
+    let inputs: Vec<&[f32]> = input.iter().map(Vec::as_slice).collect();
+    let mut outputs: Vec<&mut [f32]> = output.iter_mut().map(Vec::as_mut_slice).collect();
+    host.process(&inputs, &mut outputs, Duration::from_secs(2))
+        .expect("a block through the mapping");
+    output
+}
+
+/// ADR 0382: a plugin that changes its channel counts or its port list while
+/// inactive keeps running. The mapping routed for the old ports is silent
+/// rather than processed in buffers of another shape, even when the flattened
+/// sizes match, and a mapping routed for the new ports carries the plugin's
+/// audio. Going back to the first ports is another change.
 #[test]
-fn dimension_changes_are_rejected_before_reactivation_under_rtsan() {
-    // The fixture deliberately violates the advertised LIST/CHANNEL_COUNT
-    // restrictions, without sending an unsupported rescan flag. Even matching
-    // flattened sizes must not let changed port boundaries or IDs reach process.
-    for layout in [2u8, 3, 4, 6, 8] {
+fn dimension_changes_reach_the_parent_and_a_mapping_routed_for_them_under_rtsan() {
+    let stereo = PortLayout::new(vec![2], vec![2]);
+    for (layout, inputs, outputs, reads) in [
+        (2u8, vec![1], vec![2], 4u8),
+        (3, vec![1, 1], vec![2], 5),
+        (6, vec![2], vec![1], 4),
+    ] {
+        let changed = PortLayout::new(inputs, outputs);
         let mut host = spawn_plugin(Some("audio-ports"), SessionLayout::stereo());
         wait_probe(&mut host, [3, 1, 2, 0]);
+        let (first, ports) = host.control_handle().audio_ports();
+        assert_eq!((host.ports(), &ports), (&stereo, &stereo));
         host.control_handle().restore_state(&[layout]).unwrap();
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while !host.has_exited() {
+        let revision = wait_ports(&mut host, &changed);
+        assert_ne!(revision, first, "mode {layout}");
+        wait_probe(&mut host, [7, 2, reads, layout]);
+        assert_eq!(
+            host.ports(),
+            &stereo,
+            "the parent remaps; the helper does not"
+        );
+        for plane in process_ports(&mut host, 32) {
             assert!(
-                Instant::now() < deadline,
-                "changed audio-port layout reached reactivation: mode {layout}; {}",
-                host.stderr_log()
+                plane.iter().all(|sample| *sample == 0.0),
+                "mode {layout}: a mapping for the old ports reached process"
             );
-            std::thread::sleep(Duration::from_millis(10));
         }
-        // The stderr reader may still be draining after waitpid observes exit.
-        while !host
-            .stderr_log()
-            .contains("plugin audio port layout changed")
-        {
-            assert!(Instant::now() < deadline, "{}", host.stderr_log());
-            std::thread::sleep(Duration::from_millis(10));
+        assert!(host.follow_ports().expect("a mapping for the new ports"));
+        assert_eq!(host.ports(), &changed);
+        assert_eq!(
+            (host.layout().input_channels, host.layout().output_channels),
+            (
+                changed.input_channels().unwrap(),
+                changed.output_channels().unwrap()
+            )
+        );
+        assert!(!host.follow_ports().unwrap(), "the mapping is current");
+        for frames in [1, 32, 127, 256] {
+            // The fixture doubles the input paired with each output channel,
+            // and the second output channel of a one-input port has none.
+            let output = process_ports(&mut host, frames);
+            for (channel, plane) in output.iter().enumerate() {
+                let expected = if channel == 0 { 0.25 } else { 0.0 };
+                assert!(
+                    plane
+                        .iter()
+                        .all(|sample| (*sample - expected).abs() < 1.0e-6),
+                    "mode {layout}, channel {channel}: {plane:?}"
+                );
+            }
         }
+        let log = host.stderr_log();
         assert!(
-            !host.stderr_log().contains("audio-port-activation 2"),
-            "a changed layout must be rejected before activate"
+            !log.contains("activate failed") && !log.contains("activate after restart failed"),
+            "{log}"
         );
-        assert!(
-            !host.stderr_log().contains("restart did not produce"),
-            "the specific failure must be retained without a redundant fallback"
-        );
+        if layout == 6 {
+            host.control_handle().restore_state(&[0]).unwrap();
+            assert_ne!(wait_ports(&mut host, &stereo), revision);
+            for plane in process_ports(&mut host, 32) {
+                assert!(plane.iter().all(|sample| *sample == 0.0));
+            }
+            assert!(host.follow_ports().unwrap());
+            assert_eq!(host.ports(), &stereo);
+            check_audio(&mut host);
+        }
     }
+}
+
+/// Port ids are not routing. A plugin that renumbers its ports keeps its
+/// mapping, its processor's audio, and its ports revision (ADR 0382).
+#[test]
+fn port_identity_changes_keep_the_mapping_under_rtsan() {
+    for layout in [4u8, 8] {
+        let mut host = spawn_plugin(Some("audio-ports"), SessionLayout::stereo());
+        wait_probe(&mut host, [3, 1, 2, 0]);
+        let (revision, ports) = host.control_handle().audio_ports();
+        host.control_handle().restore_state(&[layout]).unwrap();
+        wait_probe(&mut host, [7, 2, 4, layout]);
+        check_audio(&mut host);
+        host.poll_notice().expect("notices");
+        assert_eq!(host.control_handle().audio_ports(), (revision, ports));
+        assert!(!host.follow_ports().unwrap());
+    }
+}
+
+/// A mapping must hold exactly the ports it is routed for; the parent refuses
+/// another before asking the helper, and the current mapping keeps playing.
+#[test]
+fn a_mapping_that_does_not_hold_its_ports_is_refused_under_rtsan() {
+    let mut host = spawn_plugin(Some("audio-ports"), SessionLayout::stereo());
+    wait_probe(&mut host, [3, 1, 2, 0]);
+    let refused =
+        host.prepare_mapping_for(SessionLayout::stereo(), PortLayout::new(vec![2], vec![1]));
+    assert!(
+        matches!(
+            refused,
+            Err(SessionError::Protocol(ProtocolError::PortsOutsideLayout))
+        ),
+        "{refused:?}"
+    );
+    assert!(!host.mapping_pending());
+    check_audio(&mut host);
 }
 
 #[test]

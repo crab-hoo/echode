@@ -6,8 +6,8 @@ use echode_plugin_host::measure_in_process;
 use echode_realtime::{Event, NoteEvent, Target};
 use echode_sandbox::{
     BlockProgress, ControlSendError, Delivered, FanIn, LaunchFailure, LaunchFailureKind,
-    PluginHost, PluginNotice, Refusal, SessionError, SessionLayout, SpawnOptions, WorkgroupHandoff,
-    WorkgroupMembership, copy_workgroup_port, join_workgroup,
+    PluginHost, PluginNotice, PortLayout, ProtocolError, Refusal, SessionError, SessionLayout,
+    SpawnOptions, WorkgroupHandoff, WorkgroupMembership, copy_workgroup_port, join_workgroup,
 };
 use std::path::{Path, PathBuf};
 use std::process::Command;

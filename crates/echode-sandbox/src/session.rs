@@ -9,6 +9,7 @@ use crate::applied::AppliedState;
 use crate::control::{ControlMessage, Socket};
 use crate::error::{ProtocolError, SessionError, WorkgroupError};
 use crate::gui::PluginActivity;
+use crate::ports::PortLayout;
 use crate::refusal::Refusal;
 use crate::region::{Collected, Delivered, FanIn, MappedRegion, RegionError, SessionLayout};
 use crate::sync::{SyncFlags, wake_one};
@@ -103,7 +104,9 @@ pub struct PluginHost {
     workgroup: Option<crate::RetainedWorkgroup>,
     region: Arc<MappedRegion>,
     root: Arc<MappedRegion>,
-    previous_region: Option<Arc<MappedRegion>>,
+    /// The mapping `region` replaced and the ports it was routed for, kept
+    /// until another mapping is prepared or this one is cancelled.
+    previous_region: Option<(Arc<MappedRegion>, PortLayout)>,
     child: HelperProcess,
     control: PluginControl,
     stderr: Arc<Mutex<String>>,
@@ -117,10 +120,9 @@ pub struct PluginHost {
     watch_slots: Arc<Mutex<WatchSlots>>,
     watch_stop: Arc<AtomicBool>,
     fan: Option<Arc<FanIn>>,
-    /// Channel count of each declared input port. Empty when no plugin is loaded.
-    input_ports: Vec<u32>,
-    /// Channel count of each declared output port.
-    output_ports: Vec<u32>,
+    /// The ports `region` is routed for (ADR 0382). Empty when no plugin is
+    /// loaded. [`PluginControl::audio_ports`] has the plugin's latest ports.
+    ports: PortLayout,
 }
 
 /// Covers the helper's flush and main-thread read bounds. Late replies are
@@ -157,6 +159,16 @@ pub struct PluginControl {
     activity: Arc<Mutex<PluginActivity>>,
     latency_samples: Arc<AtomicU32>,
     tail_samples: Arc<AtomicU32>,
+    ports: Arc<Mutex<DeclaredPorts>>,
+    ports_revision: Arc<AtomicU64>,
+}
+
+/// The ports the plugin was last activated with, and how many times they
+/// changed. The revision is also kept in an atomic for cheap comparisons.
+#[derive(Default)]
+struct DeclaredPorts {
+    revision: u64,
+    layout: PortLayout,
 }
 
 /// Maximum pending replies or startup handshake messages retained in `inbox`.
@@ -187,6 +199,9 @@ struct ControlState {
     save_failure_reported: bool,
     latency_samples: Arc<AtomicU32>,
     tail_samples: Arc<AtomicU32>,
+    /// The same storage as [`PluginControl::audio_ports`].
+    ports: Arc<Mutex<DeclaredPorts>>,
+    ports_revision: Arc<AtomicU64>,
 }
 
 impl PluginControl {
@@ -195,6 +210,8 @@ impl PluginControl {
         let activity = Arc::new(Mutex::new(PluginActivity::default()));
         let latency_samples = Arc::new(AtomicU32::new(0));
         let tail_samples = Arc::new(AtomicU32::new(0));
+        let ports = Arc::new(Mutex::new(DeclaredPorts::default()));
+        let ports_revision = Arc::new(AtomicU64::new(0));
         Self {
             socket: Arc::new(Mutex::new(ControlState {
                 control,
@@ -213,11 +230,15 @@ impl PluginControl {
                 save_failure_reported: false,
                 latency_samples: Arc::clone(&latency_samples),
                 tail_samples: Arc::clone(&tail_samples),
+                ports: Arc::clone(&ports),
+                ports_revision: Arc::clone(&ports_revision),
             })),
             applied,
             activity,
             latency_samples,
             tail_samples,
+            ports,
+            ports_revision,
         }
     }
 
@@ -231,6 +252,19 @@ impl PluginControl {
     /// Values at least i32::MAX represent an infinite tail in CLAP.
     pub fn tail_samples(&self) -> u32 {
         self.tail_samples.load(Ordering::Acquire)
+    }
+
+    /// The audio ports the plugin was last activated with, and their
+    /// revision. The revision grows each time they change, so a routing made
+    /// for an older revision is stale even if the ports came back (ADR 0382).
+    pub fn audio_ports(&self) -> (u64, PortLayout) {
+        let ports = self.ports.lock().unwrap_or_else(|error| error.into_inner());
+        (ports.revision, ports.layout.clone())
+    }
+
+    /// The revision of [`Self::audio_ports`], without the lock.
+    pub fn ports_revision(&self) -> u64 {
+        self.ports_revision.load(Ordering::Acquire)
     }
 
     /// Window notices and plugin-made changes since the last call, in order.
@@ -386,6 +420,18 @@ impl ControlState {
             }
             _ => {}
         }
+        match &message {
+            ControlMessage::Ports {
+                inputs, outputs, ..
+            } => self.declare_ports(PortLayout::new(inputs.clone(), outputs.clone())),
+            ControlMessage::PortsChanged(ports) => {
+                if id == 0 {
+                    self.declare_ports(ports.clone());
+                }
+                return; // A notice; the routing follows the stored ports.
+            }
+            _ => {}
+        }
         if id == 0
             && matches!(
                 message,
@@ -438,6 +484,15 @@ impl ControlState {
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .merge(note);
+    }
+
+    fn declare_ports(&mut self, layout: PortLayout) {
+        let mut ports = self.ports.lock().unwrap_or_else(|error| error.into_inner());
+        if ports.layout != layout {
+            ports.layout = layout;
+            ports.revision = ports.revision.wrapping_add(1);
+            self.ports_revision.store(ports.revision, Ordering::Release);
+        }
     }
 
     fn push_restart_notice(&mut self, latency_samples: u32) {
@@ -719,8 +774,7 @@ impl PluginHost {
             watch_slots,
             watch_stop,
             fan: options.fan_in.clone(),
-            input_ports: Vec::new(),
-            output_ports: Vec::new(),
+            ports: PortLayout::default(),
         };
         host.start_watch();
         if let Err(error) = host.finish_launch(options.cancel) {
@@ -740,6 +794,8 @@ impl PluginHost {
         self.region = Arc::new(MappedRegion::create_shared(self.region.layout())?);
         self.root = Arc::clone(&self.region);
         self.previous_region = None;
+        // The new helper announces its ports again before any mapping.
+        self.ports = PortLayout::default();
         self.point_watch();
         {
             let mut control = self.control.lock();
@@ -791,14 +847,21 @@ impl PluginHost {
         self.region.layout()
     }
 
-    /// Channel counts of the plugin's input ports, in declaration order.
-    pub fn input_ports(&self) -> &[u32] {
-        &self.input_ports
+    /// The ports the current mapping is routed for, in declaration order.
+    /// They can lag the plugin's latest ports until a mapping for those is
+    /// prepared (ADR 0382).
+    pub fn ports(&self) -> &PortLayout {
+        &self.ports
     }
 
-    /// Channel counts of the plugin's output ports, in declaration order.
+    /// Channel counts of the current mapping's input ports.
+    pub fn input_ports(&self) -> &[u32] {
+        &self.ports.inputs
+    }
+
+    /// Channel counts of the current mapping's output ports.
     pub fn output_ports(&self) -> &[u32] {
-        &self.output_ports
+        &self.ports.outputs
     }
 
     pub fn stderr_log(&self) -> String {
@@ -990,11 +1053,28 @@ impl PluginHost {
 
     /// Prepare replacement storage while the current mapping keeps processing.
     /// The first request on the new endpoint activates it at a block boundary.
+    /// The mapping keeps the current ports.
     pub fn prepare_mapping(&mut self, layout: SessionLayout) -> Result<(), SessionError> {
+        let ports = self.ports.clone();
+        self.prepare_mapping_for(layout, ports)
+    }
+
+    /// Like [`Self::prepare_mapping`], routed for `ports`. With a plugin, the
+    /// layout holds exactly their channels; the helper processes the mapping
+    /// only while its plugin was activated with them (ADR 0382). The caller
+    /// exchanges its routing for these ports with the endpoint it takes next.
+    pub fn prepare_mapping_for(
+        &mut self,
+        layout: SessionLayout,
+        ports: PortLayout,
+    ) -> Result<(), SessionError> {
         if self.root.is_dead() {
             return Err(SessionError::HelperDown);
         }
-        if layout == self.layout() {
+        if self.plugin.is_some() && !ports.matches(layout) {
+            return Err(ProtocolError::PortsOutsideLayout.into());
+        }
+        if layout == self.layout() && ports == self.ports {
             return Ok(());
         }
         if !self.region.is_ready() && self.previous_region.is_some() {
@@ -1005,7 +1085,12 @@ impl PluginHost {
         let fd = region.duplicate_fd()?;
         let mut control = self.control.lock();
         let deadline = Instant::now() + STATE_REPLY;
-        let id = control.request(ControlMessage::Remap { layout, fd }, deadline)?;
+        let message = ControlMessage::Remap {
+            layout,
+            ports: ports.clone(),
+            fd,
+        };
+        let id = control.request(message, deadline)?;
         let reply = control.wait_reply(id, deadline, |message| {
             matches!(
                 message,
@@ -1015,7 +1100,9 @@ impl PluginHost {
         drop(control);
         match reply {
             ControlMessage::Remapped => {
-                self.previous_region = Some(std::mem::replace(&mut self.region, Arc::new(region)));
+                let previous = std::mem::replace(&mut self.region, Arc::new(region));
+                let routed = std::mem::replace(&mut self.ports, ports);
+                self.previous_region = Some((previous, routed));
                 Ok(())
             }
             ControlMessage::RemapFailed => Err(SessionError::RemapRefused),
@@ -1042,15 +1129,33 @@ impl PluginHost {
             matches!(message, ControlMessage::RemapCancelled)
         })?;
         drop(control);
-        if let Some(previous) = self.previous_region.take() {
+        if let Some((previous, ports)) = self.previous_region.take() {
             self.region = previous;
+            self.ports = ports;
         }
         Ok(())
     }
 
     /// Synchronous control-only mapping change for standalone callers.
     pub fn remap(&mut self, layout: SessionLayout) -> Result<(), SessionError> {
-        self.prepare_mapping(layout)?;
+        let ports = self.ports.clone();
+        self.remap_for(layout, ports)
+    }
+
+    /// Synchronous control-only mapping change to the plugin's latest ports.
+    /// Returns whether they differed from the current mapping's ports.
+    pub fn follow_ports(&mut self) -> Result<bool, SessionError> {
+        let (_, ports) = self.control.audio_ports();
+        if self.plugin.is_none() || ports == self.ports {
+            return Ok(false);
+        }
+        let layout = ports.fit(self.layout())?;
+        self.remap_for(layout, ports)?;
+        Ok(true)
+    }
+
+    fn remap_for(&mut self, layout: SessionLayout, ports: PortLayout) -> Result<(), SessionError> {
+        self.prepare_mapping_for(layout, ports)?;
         if !self.region.is_ready() {
             self.region.activate_mapping(Duration::from_secs(2))?;
         }
@@ -1199,25 +1304,22 @@ impl PluginHost {
                 ControlMessage::Ports { .. } | ControlMessage::PortsRejected(_)
             )
         })?;
-        let (inputs, outputs) = match ports {
+        let ports = match ports {
             ControlMessage::Ports {
                 inputs, outputs, ..
-            } => (inputs, outputs),
+            } => PortLayout::new(inputs, outputs),
             ControlMessage::PortsRejected(refusal) => return Err(refusal.into()),
             _ => return Err(ProtocolError::UnexpectedReply("describe audio ports").into()),
         };
-        let input_channels = sum_channels(&inputs)?;
-        let output_channels = sum_channels(&outputs)?;
-        self.input_ports = inputs;
-        self.output_ports = outputs;
+        // The helper routes its first mapping for the ports it announced,
+        // whatever the boundaries, so equal totals need no new mapping.
         let layout = self.region.layout();
-        if layout.input_channels == input_channels && layout.output_channels == output_channels {
+        let next = ports.fit(layout)?;
+        self.ports = ports.clone();
+        if next == layout {
             return Ok(());
         }
-        let mut next = layout;
-        next.input_channels = input_channels;
-        next.output_channels = output_channels;
-        self.remap(next)
+        self.remap_for(next, ports)
     }
 
     fn wait_until_ready(
@@ -1520,16 +1622,6 @@ fn inheritable(fd: i32) -> std::io::Result<OwnedFd> {
         // SAFETY: `fcntl` returned a new descriptor that nothing else owns.
         Ok(unsafe { OwnedFd::from_raw_fd(dup) })
     }
-}
-
-fn sum_channels(counts: &[u32]) -> Result<u32, SessionError> {
-    let mut total = 0u32;
-    for channels in counts {
-        total = total
-            .checked_add(*channels)
-            .ok_or(ProtocolError::ChannelCountOverflow)?;
-    }
-    Ok(total)
 }
 
 fn spawn_stderr_reader(mut pipe: Box<dyn Read + Send>, slot: Arc<Mutex<String>>) {

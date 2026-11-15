@@ -218,12 +218,12 @@ CLAP の遅延の取得とデバイス列の表示は [ADR 0246](decisions/0246-
 `clap.timer-support` は停止中・窓なしでも主スレッドから通知し、callback 中の登録・解除を扱う（[ADR 0351](decisions/0351-clap-main-thread-timers.md)）。
 `clap.tail` の実行中の変更と再有効化後の値を反映し、書出しの自動長を更新する。
 短い曲も確定前に値を問い合わせる（[ADR 0352](decisions/0352-live-clap-tails-and-export-fence.md)）。
-`clap.audio-ports` の対応範囲と固定する寸法は [プラグイン設計書 §9.1](architecture/plugins-and-devices.md#91-共通の抽象) にまとめる（[ADR 0374](decisions/0374-dimension-preserving-audio-port-rescans.md)）。
+`clap.audio-ports` の通知と、共有領域・親のルーティングの同時交換は [プラグイン設計書 §9.1](architecture/plugins-and-devices.md#91-共通の抽象) にまとめる（[ADR 0374](decisions/0374-dimension-preserving-audio-port-rescans.md)、[ADR 0382](decisions/0382-audio-port-changes-exchange-mapping-and-routing.md)）。
 `clap.note-ports` は名前の通知で再起動せず、無効化中の全走査に合わせて終了処理を読み直す（[ADR 0356](decisions/0356-clap-note-port-capabilities-and-lifecycle.md)）。
 CLAP・MIDI 1.0 を受けず MIDI 2.0 を受けるポートへは、グループ 0 の UMP で曲のノートを送る（[ADR 0379](decisions/0379-midi2-notes-for-clap-ports.md)）。
 MPE だけを受けるポートへは、下位ゾーンを設定してからメンバーチャンネルで曲のノートを送る（[ADR 0380](decisions/0380-mpe-member-channels-for-clap-ports.md)）。
 MPE の表情の受信・変換は単独所有中のノート ID だけに送り、各発音前に中立値を送る（[ADR 0381](decisions/0381-mpe-note-expression.md)）。
-表情の曲からの生成と編集、音声ポートのリスト・チャンネル数の動的変更は残る。
+表情の曲からの生成と編集、ホストから構成を選ぶ音声ポート拡張は残る。
 曲のテンポ・拍位置・秒・拍子・小節・ループの生成と全段への配布、CLAP の `process.transport` へ接続した。
 ブロック内のテンポ境界・折返しと停止の状態も渡す（[ADR 0358](decisions/0358-product-musical-transport.md)）。
 各段の曲時刻は入力音声の PDC へ補正する（[ADR 0378](decisions/0378-pdc-stage-transport.md)）。

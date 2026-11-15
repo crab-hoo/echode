@@ -21,7 +21,7 @@ use std::time::Duration;
 use echode_sandbox::{
     AudioPort, ControlMessage, GuiReport, LaunchFailure, LaunchFailureKind, MainReplyKind,
     ParamChange, ParamEvent, ParamEventKind, ParamInfo, ParamRelay, ParamText, ParamValue, Pending,
-    PluginCommand, PluginFailure, Refusal, SessionLayout, Socket,
+    PluginCommand, PluginFailure, PortLayout, Refusal, SessionLayout, Socket,
 };
 
 use crate::bytes::Bytes;
@@ -119,7 +119,7 @@ fn assert_round_trip(id: u64, message: ControlMessage) {
 /// `Debug`, except that a remap's descriptor number is left out.
 fn describe(message: &ControlMessage) -> String {
     match message {
-        ControlMessage::Remap { layout, .. } => format!("Remap({layout:?})"),
+        ControlMessage::Remap { layout, ports, .. } => format!("Remap({layout:?}, {ports:?})"),
         other => format!("{other:?}"),
     }
 }
@@ -371,7 +371,8 @@ pub(crate) fn seeds() -> Vec<Vec<u8>> {
     ] {
         seeds.push(seed(0, 0, &stream));
     }
-    let remap = encode_remap(7, SessionLayout::stereo());
+    let stereo = || PortLayout::new(vec![2], vec![2]);
+    let remap = encode_remap(7, SessionLayout::stereo(), stereo());
     let layout = remap.get(16..).expect("a remap frame has its layout");
     let (head, tail) = layout.split_at(12);
     let first = frame(7, 35, head);
@@ -383,7 +384,7 @@ pub(crate) fn seeds() -> Vec<Vec<u8>> {
     // A remap with its mapping, after one plain message.
     let hello = encode(0, &ControlMessage::Hello);
     let mut stream = hello.clone();
-    stream.extend_from_slice(&encode_remap(7, SessionLayout::stereo()));
+    stream.extend_from_slice(&encode_remap(7, SessionLayout::stereo(), stereo()));
     seeds.push(seed(1, hello.len() as u16, &stream));
     seeds
 }
@@ -433,11 +434,11 @@ fn encode(id: u64, message: &ControlMessage) -> Vec<u8> {
     bytes
 }
 
-fn encode_remap(id: u64, layout: SessionLayout) -> Vec<u8> {
+fn encode_remap(id: u64, layout: SessionLayout, ports: PortLayout) -> Vec<u8> {
     let (mut sender, mut raw) = sender_pair();
     let mapping = OwnedFd::from(File::open("/dev/null").expect("open /dev/null"));
     sender
-        .send_remap_tagged(id, layout, mapping)
+        .send_remap_tagged(id, layout, ports, mapping)
         .expect("send a seed remap");
     drop(sender);
     let mut bytes = Vec::new();
@@ -486,6 +487,7 @@ fn sample_messages() -> Vec<ControlMessage> {
             latency_samples: 32,
         },
         ControlMessage::PortsRejected(Refusal::Plugin(PluginFailure::NoAudioPorts)),
+        ControlMessage::PortsChanged(PortLayout::new(vec![1, 1], vec![6])),
         ControlMessage::PortsRejected(Refusal::Plugin(PluginFailure::PortWithoutChannels(
             AudioPort {
                 input: false,

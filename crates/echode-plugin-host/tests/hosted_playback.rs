@@ -9,6 +9,8 @@ use echode_sandbox::{PluginHost, PluginNotice, SessionLayout, SpawnOptions};
 use echode_engine::{LoadedClip, PlaybackCommand, PluginRoute, tick_to_sample};
 use echode_model::{AudioRef, Id, NoteDraft, NoteGeometry, Project, Tick};
 
+#[path = "hosted_playback/audio_ports.rs"]
+mod audio_ports;
 #[path = "hosted_playback/auto_mute.rs"]
 mod auto_mute;
 #[path = "hosted_playback/background_graph.rs"]
@@ -1533,16 +1535,19 @@ fn mono_gain_route() -> PluginRoute {
 }
 
 fn stereo_clips(track: u128, left: f32, right: f32) -> echode_engine::ClipLoader {
+    stereo_clips_of(track, left, right, 1024)
+}
+
+fn stereo_clips_of(track: u128, left: f32, right: f32, frames: usize) -> echode_engine::ClipLoader {
+    let (left, right): (Arc<[f32]>, Arc<[f32]>) =
+        (vec![left; frames].into(), vec![right; frames].into());
     Arc::new(move |_, _| {
         Ok(vec![LoadedClip::new(
             track,
             0,
-            echode_engine::FinitePlanes::new(
-                Arc::from(vec![left; 1024]),
-                Some(Arc::from(vec![right; 1024])),
-            )
-            .unwrap()
-            .into(),
+            echode_engine::FinitePlanes::new(Arc::clone(&left), Some(Arc::clone(&right)))
+                .unwrap()
+                .into(),
         )])
     })
 }

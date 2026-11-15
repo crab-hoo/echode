@@ -132,6 +132,8 @@ pub enum ProtocolError {
     UnexpectedReply(&'static str),
     /// The declared audio ports have more channels than `u32` counts.
     ChannelCountOverflow,
+    /// A mapping was to be routed for ports its layout does not hold exactly.
+    PortsOutsideLayout,
     /// A queued message was gone when this side took it.
     QueueLost,
     /// Every request id has been used.
@@ -143,6 +145,7 @@ impl std::fmt::Display for ProtocolError {
         match self {
             Self::UnexpectedReply(what) => write!(f, "helper did not {what}"),
             Self::ChannelCountOverflow => f.write_str("audio port channel count overflowed"),
+            Self::PortsOutsideLayout => f.write_str("mapping does not hold its audio ports"),
             Self::QueueLost => f.write_str("queued control message disappeared"),
             Self::RequestIdsExhausted => f.write_str("control request ids exhausted"),
         }

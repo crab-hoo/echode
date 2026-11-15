@@ -912,6 +912,25 @@ class PolicyTests(unittest.TestCase):
                 {"check", "check-product-contracts", "rtsan"} <= self.selected(f"crates/echode-plugin-host/src/{file}")
             )
 
+    def test_audio_port_contracts_cover_dynamic_routing_and_mapping_guard(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        for name, target, file in (
+            ("plugin-audio-port-routing", "hosted_playback", "crates/echode-engine/src/plugins.rs"),
+            ("plugin-audio-port-mapping", "isolation", "crates/echode-plugin-host/src/threads.rs"),
+        ):
+            contract = contracts[name]
+            self.assertEqual(contract["package"], "echode-plugin-host")
+            self.assertEqual(contract["target"], ["--test", target])
+            self.assertTrue(contract["test"].startswith("audio_ports::"))
+            self.assertTrue(contract["test"].endswith("under_rtsan"))
+            self.assertEqual(contract["negative_control"]["file"], file)
+        for path in (
+            "crates/echode-plugin-host/src/audio_ports.rs",
+            "crates/echode-plugin-host/tests/isolation/audio_ports.rs",
+            "crates/echode-test-plugin/src/audio_ports.rs",
+        ):
+            self.assertTrue({"check", "check-product-contracts", "rtsan"} <= self.selected(path))
+
     def test_mix_controls_select_product_ownership_and_live_audio_checks(self):
         contracts = {item["id"]: item for item in self.policy["product_contracts"]}
         for contract_id, swift_test in (
@@ -2773,6 +2792,8 @@ class PolicyTests(unittest.TestCase):
                 "plugin-mpe-notes",
                 "plugin-mpe-lifecycle",
                 "plugin-mpe-expression",
+                "plugin-audio-port-routing",
+                "plugin-audio-port-mapping",
                 "plugin-state-poll",
                 "transport-declick",
                 "output-safety-deadline",

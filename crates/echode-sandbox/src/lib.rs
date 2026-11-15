@@ -35,6 +35,7 @@ mod main_reply;
 pub mod os_workgroup;
 mod params;
 mod payload_decode;
+mod ports;
 mod refusal;
 mod refusal_decode;
 mod region;
@@ -60,6 +61,7 @@ pub use params::{
     PARAM_STEPPED, ParamChange, ParamInfo, ParamText, ParamValue,
 };
 pub use payload_decode::{ParamField, ParamPayload, PayloadDecodeError, WindowFlag};
+pub use ports::PortLayout;
 pub use refusal::{AudioPort, Pending, PluginFailure, Refusal};
 pub use refusal_decode::{RefusalDecodeError, RefusalField};
 pub use region::{

@@ -7,7 +7,7 @@
 
 - **CLAP の互換性**: 第三者のテンポ同期・聴感は UC-85、ほかの互換性は UC-80〜83。
   遅延のある前段と後段・フォルダ FX のテンポ同期の聴感は UC-91（[ADR 0378](../decisions/0378-pdc-stage-transport.md)）。
-  音声ポートのリスト・チャンネル数の動的変更は未対応。再有効化前の変更検出時はヘルパーを停止する（[ADR 0374](../decisions/0374-dimension-preserving-audio-port-rescans.md)）。
+  音声ポートのリスト・チャンネル数の変更中は新しい計画の採用まで無音とし、ホストから構成を選ぶ拡張（`audio-ports-config` 等）と主ポート以外の接続は未対応。第三者の切替・聴感は UC-95（[ADR 0382](../decisions/0382-audio-port-changes-exchange-mapping-and-routing.md)）。
   MIDI 1.0・2.0 ではノート ID・一部の表情は未対応で、同じ音高の重なりを別 ID で扱えない。
   MPE だけを受けるポートは 16 音目から共有のチャンネルになる。共有開始時は所有ノートも表情が中立へ戻り、共有中は表情を送らない。
   曲からの表情生成・編集は未接続で、第三者の表情の解釈・聴感は UC-94（[ADR 0381](../decisions/0381-mpe-note-expression.md)）。

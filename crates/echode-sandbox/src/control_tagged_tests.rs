@@ -16,7 +16,12 @@ fn tagged_messages_and_descriptors_keep_their_own_ids() {
         .send_tagged(u64::MAX, &ControlMessage::SaveRequest)
         .unwrap();
     parent
-        .send_remap_tagged(42, layout, region.duplicate_fd().unwrap())
+        .send_remap_tagged(
+            42,
+            layout,
+            PortLayout::new(vec![], vec![1]),
+            region.duplicate_fd().unwrap(),
+        )
         .unwrap();
     parent
         .send_tagged(43, &ControlMessage::Restore(vec![128]))
@@ -27,10 +32,16 @@ fn tagged_messages_and_descriptors_keep_their_own_ids() {
     ));
     let (id, message) = child.recv_tagged(Duration::from_secs(2)).unwrap();
     assert_eq!(id, 42);
-    let ControlMessage::Remap { layout: got, fd } = message else {
+    let ControlMessage::Remap {
+        layout: got,
+        ports,
+        fd,
+    } = message
+    else {
         panic!("missing remap")
     };
     assert_eq!(got, layout);
+    assert_eq!(ports, PortLayout::new(vec![], vec![1]));
     assert_eq!(crate::MappedRegion::from_fd(fd).unwrap().layout(), layout);
     assert!(
         matches!(child.recv_tagged(Duration::from_secs(2)).unwrap(), (43, ControlMessage::Restore(bytes)) if bytes == [128])

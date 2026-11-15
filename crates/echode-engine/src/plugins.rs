@@ -16,7 +16,8 @@ use std::time::{Duration, Instant};
 
 use echode_realtime::{Event, event_cmp, sort_events};
 use echode_sandbox::{
-    BlockProgress, FanIn, PluginAudio, PluginControl, PluginHost, SessionLayout, SpawnOptions,
+    BlockProgress, FanIn, PluginAudio, PluginControl, PluginHost, PortLayout, SessionLayout,
+    SpawnOptions,
 };
 
 use crate::PlaybackError;
@@ -159,8 +160,21 @@ pub(crate) enum Progress {
 pub(crate) struct Latencies {
     /// In graph order.
     devices: Vec<DeviceLatency>,
+    /// The ports revision each device in `devices` is routed for (ADR 0382).
+    routed: Vec<Option<u64>>,
     /// `(key, from, to)` into `devices`, sorted by key.
     tracks: Vec<(u32, usize, usize)>,
+}
+
+/// What a plan was made from for one hosted device. A later difference
+/// prepares the plan again (ADR 0340, ADR 0382).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct DeviceReport {
+    device: u128,
+    latency: u32,
+    tail: u32,
+    /// The revision of the plugin's ports the device's routing follows.
+    ports: Option<u64>,
 }
 
 impl Latencies {
@@ -174,11 +188,18 @@ impl Latencies {
             .unwrap_or_default()
     }
 
-    /// Each device's latency and tail in graph order, to compare with later reports.
-    pub(crate) fn reported(&self) -> Vec<(u128, u32, u32)> {
+    /// Each device's latency, tail, and routed ports in graph order, to
+    /// compare with later reports.
+    pub(crate) fn reported(&self) -> Vec<DeviceReport> {
         self.devices
             .iter()
-            .map(|device| (device.device, device.latency, device.tail))
+            .zip(&self.routed)
+            .map(|(device, &ports)| DeviceReport {
+                device: device.device,
+                latency: device.latency,
+                tail: device.tail,
+                ports,
+            })
             .collect()
     }
 }
@@ -289,11 +310,23 @@ impl std::ops::DerefMut for HostTracks {
 
 struct TrackRestore {
     key: u32,
-    /// Device, bypass, and the dry and promoted plane counts to put back.
-    devices: Vec<(u128, bool, usize, usize)>,
+    devices: Vec<StageRestore>,
     frames: usize,
     events: usize,
     chase: usize,
+}
+
+/// What a failed reconcile puts back on a kept stage.
+struct StageRestore {
+    device: u128,
+    bypassed: bool,
+    /// Dry and promoted plane counts.
+    dry: usize,
+    promoted: usize,
+    /// The routing, which the cancelled mapping preparation returns the
+    /// helper's mapping to (ADR 0382).
+    ports: PortLayout,
+    ports_revision: Option<u64>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -331,6 +364,12 @@ struct Stage {
     host: PluginAudio,
     instance: Arc<Instance>,
     instrument: bool,
+    /// The ports `input`, `output`, and the main counts are routed for. Always
+    /// the ports of the mapping `host` uses, so both change together (ADR 0382).
+    ports: PortLayout,
+    /// The revision of the plugin's ports this routing follows. `None` when
+    /// the plugin changed its ports before the first mapping was routed.
+    ports_revision: Option<u64>,
     input: Vec<Vec<f32>>,
     output: Vec<Vec<f32>>,
     /// Channels of the first output port. Those are the track's audio.
@@ -405,6 +444,44 @@ impl Stage {
     fn main_output_mut(&mut self) -> &mut [Vec<f32>] {
         let main = self.main_outputs.min(self.output.len());
         self.output.get_mut(..main).unwrap_or_default()
+    }
+
+    /// One plane per channel of `ports`, and their first port of each side as
+    /// the track's audio. The caller prepares a mapping for the same ports
+    /// before this stage reaches the callback (ADR 0382).
+    fn route(&mut self, ports: PortLayout, revision: Option<u64>, frames: usize) {
+        let channels = |counts: &[u32]| counts.iter().map(|&count| count as usize).sum::<usize>();
+        let (inputs, outputs) = (channels(&ports.inputs), channels(&ports.outputs));
+        self.input.resize_with(inputs, Vec::new);
+        self.output.resize_with(outputs, Vec::new);
+        for plane in self.input.iter_mut().chain(&mut self.output) {
+            plane.resize(frames, 0.0);
+        }
+        self.main_inputs = ports.inputs.first().map_or(0, |&count| count as usize);
+        self.main_outputs = ports.outputs.first().map_or(0, |&count| count as usize);
+        self.ports = ports;
+        self.ports_revision = revision;
+    }
+
+    /// Routes a kept stage for the plugin's latest ports. While a mapping for
+    /// other ports waits for the callback, the routing stays with that
+    /// mapping, and a later plan follows (`can_reconcile` holds plans then).
+    fn follow_ports(&mut self, frames: usize) {
+        if self.follows_ports() {
+            return;
+        }
+        let (revision, ports) = self.instance.control.audio_ports();
+        let host = self.instance.host();
+        if host.mapping_pending() && *host.ports() != ports {
+            return;
+        }
+        drop(host);
+        self.route(ports, Some(revision), frames);
+    }
+
+    /// The routing is for the plugin's latest ports.
+    fn follows_ports(&self) -> bool {
+        self.ports_revision == Some(self.instance.control.ports_revision())
     }
 }
 
@@ -687,6 +764,13 @@ impl HostGraph {
                                     .map(|entry| entry.1)
                                     .ok_or(PlaybackError::Misaligned)?
                             };
+                            let host = stage.instance.host();
+                            // The routing and the mapping change together (ADR 0382).
+                            debug_assert_eq!(
+                                &stage.ports,
+                                host.ports(),
+                                "routing left its mapping"
+                            );
                             Ok(Stage {
                                 device: stage.device,
                                 clap_id: stage.clap_id.clone(),
@@ -700,9 +784,11 @@ impl HostGraph {
                                 cleanup: Cleanup::None,
                                 // SAFETY: only the current bank is processed; queued and
                                 // retired banks are never submitted or collected.
-                                host: unsafe { stage.instance.host().audio_handle() },
+                                host: unsafe { host.audio_handle() },
                                 instance: Arc::clone(&stage.instance),
                                 instrument: stage.instrument,
+                                ports: stage.ports.clone(),
+                                ports_revision: stage.ports_revision,
                                 input: stage.input.clone(),
                                 output: stage.output.clone(),
                                 main_outputs: stage.main_outputs,
@@ -772,9 +858,13 @@ impl HostGraph {
                 stage.needs_restart = previous.needs_restart;
                 stage.block_complete = previous.block_complete;
                 stage.host.carry(&previous.host);
-                if stage.bypassed != previous.bypassed {
-                    // The helper may still hold voices from before bypass.
-                    // Reset on its audio thread, then chase only current notes.
+                // A bypass may leave voices from before it. New ports came with
+                // a reactivation, and the helper was silent and dropped events
+                // until this mapping (ADR 0382). Either way, reset on the
+                // helper's audio thread, then chase only current notes.
+                if stage.bypassed != previous.bypassed
+                    || stage.ports_revision != previous.ports_revision
+                {
                     stage.recover_notes();
                     stage.needs_restart = false;
                 }
@@ -791,7 +881,8 @@ impl HostGraph {
     }
 
     /// A prepared bank must be adopted before another layout for that process
-    /// can be prepared. Keep rendering the current bank while control retries.
+    /// can be prepared, for more events or for the plugin's latest ports.
+    /// Keep rendering the current bank while control retries.
     pub(crate) fn can_reconcile(&self, chains: &[TrackChain]) -> bool {
         chains.iter().all(|chain| {
             self.tracks
@@ -802,9 +893,13 @@ impl HostGraph {
                         return true;
                     }
                     let host = stage.instance.host();
+                    if !host.mapping_pending() {
+                        return true;
+                    }
                     host.layout().input_events as usize
                         >= chain.events.saturating_add(chain.chase).max(1)
-                        || !host.mapping_pending()
+                        && (stage.follows_ports()
+                            || *host.ports() == stage.instance.control.audio_ports().1)
                 })
         })
     }
@@ -849,6 +944,7 @@ impl HostGraph {
     /// come from this reading, so changes during preparation are still noticed.
     pub(crate) fn latencies(&self) -> Latencies {
         let mut devices = Vec::with_capacity(self.stage_index.len());
+        let mut routed = Vec::with_capacity(self.stage_index.len());
         let mut tracks = Vec::with_capacity(self.tracks.len());
         for track in self.tracks.iter() {
             let from = devices.len();
@@ -859,10 +955,15 @@ impl HostGraph {
                 instrument: stage.instrument,
                 bypassed: stage.bypassed,
             }));
+            routed.extend(track.stages.iter().map(|stage| stage.ports_revision));
             tracks.push((track.key, from, devices.len()));
         }
         tracks.sort_unstable_by_key(|entry| entry.0);
-        Latencies { devices, tracks }
+        Latencies {
+            devices,
+            routed,
+            tracks,
+        }
     }
 
     /// Offline completion fence: no more blocks are submitted while each
@@ -878,17 +979,20 @@ impl HostGraph {
         Ok(())
     }
 
-    /// A helper reported a latency or tail other than the published plan used.
-    pub(crate) fn reports_differ(&self, reported: &[(u128, u32, u32)]) -> bool {
+    /// A helper reported a latency, tail, or ports other than the published
+    /// plan used. Bypassed devices follow ports too, so enabling one never
+    /// meets a mapping routed for old ports.
+    pub(crate) fn reports_differ(&self, reported: &[DeviceReport]) -> bool {
         let mut stages = self.tracks.iter().flat_map(|track| &track.stages);
         let mut reported = reported.iter();
         loop {
             match (stages.next(), reported.next()) {
                 (None, None) => return false,
-                (Some(stage), Some(&(device, latency, tail)))
-                    if stage.device == device
-                        && stage.instance.control.latency_samples() == latency
-                        && stage.instance.control.tail_samples() == tail => {}
+                (Some(stage), Some(report))
+                    if stage.device == report.device
+                        && stage.instance.control.latency_samples() == report.latency
+                        && stage.instance.control.tail_samples() == report.tail
+                        && Some(stage.instance.control.ports_revision()) == report.ports => {}
                 _ => return true,
             }
         }
@@ -982,13 +1086,13 @@ impl HostGraph {
                 devices: track
                     .stages
                     .iter()
-                    .map(|stage| {
-                        (
-                            stage.device,
-                            stage.bypassed,
-                            stage.bypass_output.len(),
-                            stage.promoted.len(),
-                        )
+                    .map(|stage| StageRestore {
+                        device: stage.device,
+                        bypassed: stage.bypassed,
+                        dry: stage.bypass_output.len(),
+                        promoted: stage.promoted.len(),
+                        ports: stage.ports.clone(),
+                        ports_revision: stage.ports_revision,
                     })
                     .collect(),
                 frames: track.inject.len(),
@@ -1035,6 +1139,7 @@ impl HostGraph {
                         let _ = take_route(routes, &mut used, &device.clap_id);
                         let mut stage = kept.swap_remove(index);
                         stage.bypassed = device.bypassed;
+                        stage.follow_ports(frames);
                         stages.push(stage);
                         continue;
                     }
@@ -1880,18 +1985,21 @@ fn restore_tracks(
             let stages = old
                 .devices
                 .into_iter()
-                .filter_map(|(id, bypassed, channels, promoted)| {
+                .filter_map(|restore| {
                     // A restored state may have spawned another helper with the same
                     // device id. `kept` starts with the original process in that case.
-                    let at = kept.iter().position(|stage| stage.device == id)?;
+                    let at = kept
+                        .iter()
+                        .position(|stage| stage.device == restore.device)?;
                     let mut stage = kept.remove(at);
-                    stage.bypassed = bypassed;
+                    stage.bypassed = restore.bypassed;
                     stage
                         .bypass_output
-                        .resize_with(channels, || vec![0.0; old.frames]);
+                        .resize_with(restore.dry, || vec![0.0; old.frames]);
                     stage
                         .promoted
-                        .resize_with(promoted, || vec![0.0; old.frames]);
+                        .resize_with(restore.promoted, || vec![0.0; old.frames]);
+                    stage.route(restore.ports, restore.ports_revision, old.frames);
                     Some(stage)
                 })
                 .collect();
@@ -1900,19 +2008,18 @@ fn restore_tracks(
         .collect()
 }
 
+/// Prepares the mapping the stage's routing needs: room for `delivery`
+/// events, routed for the stage's ports. The callback adopts both together.
 fn fit_stage(stage: &mut Stage, delivery: usize) -> Result<(), PlaybackError> {
     let delivery = u32::try_from(delivery).map_err(|_| PlaybackError::BufferTooSmall)?;
     reserve_to(&mut stage.routed, delivery as usize);
     let mut host = stage.instance.host();
-    let layout = host.layout();
-    if layout.input_events >= delivery {
-        return Ok(());
-    }
-    let mut next = layout;
-    next.input_events = delivery;
-    host.prepare_mapping(next)
-        .map_err(|error| PlaybackError::helper(stage.device, error))?;
-    Ok(())
+    let mut next = host.layout();
+    next.input_events = next.input_events.max(delivery);
+    let helper = |error| PlaybackError::helper(stage.device, error);
+    let next = stage.ports.fit(next).map_err(helper)?;
+    host.prepare_mapping_for(next, stage.ports.clone())
+        .map_err(helper)
 }
 
 /// Spawns one device. `Ok(None)` is an unknown id or a missing path.
@@ -2007,15 +2114,12 @@ fn spawn_stage(
             return Ok(None);
         }
     };
-    let inputs = host.layout().input_channels as usize;
-    let outputs = host.layout().output_channels as usize;
-    let main_outputs = host
-        .output_ports()
-        .first()
-        .copied()
-        .unwrap_or(outputs as u32) as usize;
-    let main_inputs = host.input_ports().first().copied().unwrap_or(inputs as u32) as usize;
-    Ok(Some(Stage {
+    // The routing follows the ports the first mapping is routed for. If the
+    // plugin has declared others since, a later plan follows those.
+    let ports = host.ports().clone();
+    let (revision, declared) = host.control_handle().audio_ports();
+    let revision = (declared == ports).then_some(revision);
+    let mut stage = Stage {
         device: device.id,
         clap_id: device.clap_id.clone(),
         bypassed: device.bypassed,
@@ -2036,15 +2140,19 @@ fn spawn_stage(
             failure: AtomicU8::new(0),
         }),
         instrument: route.instrument,
-        input: (0..inputs).map(|_| vec![0.0; frames]).collect(),
-        output: (0..outputs).map(|_| vec![0.0; frames]).collect(),
-        main_outputs: main_outputs.min(outputs),
-        main_inputs: main_inputs.min(inputs),
+        ports: PortLayout::default(),
+        ports_revision: None,
+        input: Vec::new(),
+        output: Vec::new(),
+        main_outputs: 0,
+        main_inputs: 0,
         promoted: Vec::new(),
         routed: Vec::with_capacity(event_cap.max(1)),
         input_latency: 0,
         transport: Vec::new(),
-    }))
+    };
+    stage.route(ports, revision, frames);
+    Ok(Some(stage))
 }
 
 /// A later route with the same id is a separate helper. The last matching

@@ -216,3 +216,41 @@ fn expired_parameter_and_window_replies_cannot_answer_new_calls() {
     control.close_gui().unwrap();
     drop(answer.join().unwrap());
 }
+
+/// ADR 0382: the announced ports and each change are kept with a revision
+/// that grows only when the ports differ. Change notices are not queued, and
+/// a late reply cannot replace them.
+#[test]
+fn declared_ports_keep_a_revision_of_their_changes() {
+    let (parent, _helper) = Socket::pair().unwrap();
+    let control = PluginControl::new(parent);
+    let mut state = control.lock();
+    assert_eq!(control.audio_ports(), (0, PortLayout::default()));
+    state.accept(
+        0,
+        ControlMessage::Ports {
+            inputs: vec![2],
+            outputs: vec![2],
+            tail_samples: 0,
+            latency_samples: 0,
+        },
+    );
+    let stereo = PortLayout::new(vec![2], vec![2]);
+    assert_eq!(control.audio_ports(), (1, stereo.clone()));
+    let queued = state.inbox.len();
+    let split = PortLayout::new(vec![1, 1], vec![2]);
+    state.accept(0, ControlMessage::PortsChanged(split.clone()));
+    assert_eq!(control.audio_ports(), (2, split.clone()));
+    assert_eq!(control.ports_revision(), 2);
+    state.accept(0, ControlMessage::PortsChanged(split.clone()));
+    assert_eq!(control.ports_revision(), 2, "the same ports are no change");
+    state.accept(99, ControlMessage::PortsChanged(stereo.clone()));
+    assert_eq!(control.audio_ports(), (2, split));
+    state.accept(0, ControlMessage::PortsChanged(stereo.clone()));
+    assert_eq!(
+        control.audio_ports(),
+        (3, stereo),
+        "returning to earlier ports is a change"
+    );
+    assert_eq!(state.inbox.len(), queued, "change notices are not queued");
+}

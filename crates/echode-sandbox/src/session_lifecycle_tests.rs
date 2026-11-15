@@ -34,8 +34,7 @@ fn reaped_host() -> PluginHost {
         watch: None,
         watch_stop: Arc::new(AtomicBool::new(false)),
         fan: None,
-        input_ports: Vec::new(),
-        output_ports: Vec::new(),
+        ports: PortLayout::default(),
     }
 }
 

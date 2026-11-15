@@ -43,7 +43,8 @@ use echode_realtime::Event;
 use echode_sandbox::{
     AudioPort, CMD_ADOPT_MAPPING, CMD_PROCESS, CMD_RESET_PROCESS, CMD_SHUTDOWN, ControlMessage,
     FanIn, MainReplyKind, MappedRegion, ParamChange, ParamEvent, ParamInfo, ParamRelay, ParamText,
-    ParamValue, Pending, PluginFailure, Refusal, RegionError, Socket, SyncFlags, wake_one,
+    ParamValue, Pending, PluginFailure, PortLayout, Refusal, RegionError, SessionLayout, Socket,
+    SyncFlags, wake_one,
 };
 use objc2_core_foundation::{
     CFRetained, CFRunLoop, CFRunLoopSource, CFRunLoopSourceContext, kCFRunLoopCommonModes,
@@ -93,11 +94,14 @@ impl Drop for AudioFlag {
     }
 }
 
-/// Note-port state travels with the processor through the existing ownership
-/// handoff. Main replaces its storage only while the plugin is inactive.
+/// Note-port state and the audio ports of the activation travel with the
+/// processor through the existing ownership handoff. Main replaces their
+/// storage only while the plugin is inactive.
 struct Processor<P> {
     inner: P,
     notes: NoteInputs,
+    /// Audio processes blocks only in buffers routed for these (ADR 0382).
+    ports: Box<PortLayout>,
 }
 
 type StoppedProcessor = Processor<StoppedPluginAudioProcessor<EchodeHost>>;
@@ -108,6 +112,7 @@ impl StartedProcessor {
         Processor {
             inner: self.inner.stop_processing(),
             notes: self.notes,
+            ports: self.ports,
         }
     }
 }
@@ -121,11 +126,13 @@ impl StoppedProcessor {
                 Ok(Processor {
                     inner,
                     notes: self.notes,
+                    ports: self.ports,
                 })
             }
             Err(error) => Err(Processor {
                 inner: error.into_stopped_processor(),
                 notes: self.notes,
+                ports: self.ports,
             }),
         }
     }
@@ -225,8 +232,14 @@ struct Bridge {
     /// A plugin changed its declared tail; main reads the new value.
     tail_changed: AtomicBool,
     latency_samples: AtomicU32,
-    /// Port channel counts, published before the worker threads start.
+    /// The ports the first mapping is routed for, published before the worker
+    /// threads start.
     ports: AtomicPtr<PortShape>,
+    /// The ports of the latest activation and their revision, for the parent.
+    /// Main writes them and control reads them; audio never takes this lock.
+    activated_ports: std::sync::Mutex<(u64, PortLayout)>,
+    /// The revision in `activated_ports`, read by control without the lock.
+    ports_revision: AtomicU64,
     /// Owned calls between the control and main threads; never used by audio.
     main_requests: MainRequests,
     plugin_dirty: AtomicBool,
@@ -344,18 +357,31 @@ impl Bridge {
         instance: &mut PluginInstance<EchodeHost>,
     ) -> Result<StoppedProcessor, HostError> {
         // Deactivate has returned and the audio thread has relinquished the
-        // processor. Validate every activation, even without a rescan notice.
-        // Never pair a new layout with the initial graph's buffers or routing.
-        let shape = query_audio_ports(instance)?;
-        let expected = published_ports(self).ok_or(HostError::PortsUnpublished)?;
-        if &shape != expected {
-            return Err(HostError::AudioPortLayoutChanged);
-        }
-        activate(
+        // processor. Read the ports for every activation, even without a
+        // rescan notice. The processor carries them, so a mapping routed for
+        // other ports stays silent until the parent maps these (ADR 0382).
+        let ports = query_audio_ports(instance)?;
+        let stopped = activate(
             instance,
             f64::from_bits(self.sample_bits.load(Ordering::Acquire)),
             self.activation_frames.load(Ordering::Acquire),
-        )
+            ports.clone(),
+        )?;
+        self.record_ports(ports);
+        Ok(stopped)
+    }
+
+    /// Main thread only. Control tells the parent about a change once.
+    fn record_ports(&self, ports: PortLayout) {
+        let mut activated = self
+            .activated_ports
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if activated.1 != ports {
+            activated.0 = activated.0.wrapping_add(1);
+            activated.1 = ports;
+            self.ports_revision.store(activated.0, Ordering::Release);
+        }
     }
 
     fn restart_on_main(&self) {
@@ -961,6 +987,8 @@ fn serve_region(
         tail_changed: AtomicBool::new(false),
         latency_samples: AtomicU32::new(0),
         ports: AtomicPtr::new(ptr::null_mut()),
+        activated_ports: std::sync::Mutex::new((0, PortLayout::default())),
+        ports_revision: AtomicU64::new(0),
         main_requests: MainRequests::default(),
         plugin_dirty: AtomicBool::new(false),
         params: AtomicPtr::new(ptr::null_mut()),
@@ -1020,16 +1048,17 @@ fn serve_region(
         // The plugin is still inactive. Audio ports are only valid to read here,
         // on the main thread, before activate.
         let shape = match query_audio_ports(&loaded.instance) {
-            Ok(shape) => shape,
+            Ok(layout) => PortShape {
+                layout,
+                error: None,
+            },
             Err(error) => PortShape {
-                inputs: Vec::new(),
-                outputs: Vec::new(),
-                input_ids: Vec::new(),
-                output_ids: Vec::new(),
+                layout: PortLayout::default(),
                 error: Some(error),
             },
         };
         let rejected = shape.error;
+        let announced = shape.layout.clone();
         bridge
             .ports
             .store(Box::into_raw(Box::new(shape)), Ordering::Release);
@@ -1041,7 +1070,11 @@ fn serve_region(
             }
             bridge.stop.store(true, Ordering::Release);
         } else {
-            let stopped = match activate(&mut loaded.instance, sample_rate, max_frames) {
+            *bridge
+                .activated_ports
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = (0, announced.clone());
+            let stopped = match activate(&mut loaded.instance, sample_rate, max_frames, announced) {
                 Ok(stopped) => stopped,
                 Err(HostError::Instance(error)) => {
                     let error = LoadError::Instance(error);
@@ -1245,10 +1278,12 @@ fn load_plugin(
     })
 }
 
+/// `ports` were read after the last deactivate and travel with the processor.
 fn activate(
     instance: &mut PluginInstance<EchodeHost>,
     sample_rate: f64,
     max_frames: u32,
+    ports: PortLayout,
 ) -> Result<StoppedProcessor, HostError> {
     // Descriptors may change during deactivate. Read only after it returns,
     // before activation, and move this snapshot with the stopped processor.
@@ -1263,7 +1298,11 @@ fn activate(
             },
         )
         .map_err(HostError::Instance)?;
-    Ok(Processor { inner, notes })
+    Ok(Processor {
+        inner,
+        notes,
+        ports: Box::new(ports),
+    })
 }
 
 fn audio_thread(bridge: &Bridge, workgroup: Option<&(String, u32)>) -> Result<(), HostError> {
@@ -1291,24 +1330,12 @@ fn audio_thread(bridge: &Bridge, workgroup: Option<&(String, u32)>) -> Result<()
     }
     let mut seen_alarm = bridge.root.alarm();
     let mut seen_request = 0u64;
-    // Allocated once, after the mapping matches the declared ports.
-    // Later blocks reuse this storage and do not allocate.
-    let shape = published_ports(bridge);
-    let (input_counts, output_counts, frames, event_cap) = {
-        let region = current_region(bridge);
-        (
-            shape.map(|shape| shape.inputs.clone()).unwrap_or_default(),
-            shape.map(|shape| shape.outputs.clone()).unwrap_or_default(),
-            region.layout().max_frames as usize,
-            region.layout().input_events as usize,
-        )
-    };
-    let mut buffers = Box::new(PluginBuffers::allocate(
-        &input_counts,
-        &output_counts,
-        frames.max(1),
-        event_cap.max(1),
-    ));
+    // Allocated once, after the mapping holds the announced ports, which the
+    // first mapping is routed for. Later mappings bring their own buffers.
+    let ports = published_ports(bridge)
+        .map(|shape| shape.layout.clone())
+        .unwrap_or_default();
+    let mut buffers = Box::new(buffers_for(&ports, current_region(bridge).layout()));
     bridge.buffers_live.store(true, Ordering::Release);
     current_region(bridge).mark_ready();
     // `sigaction` is a syscall. Install it before the realtime section.
@@ -1336,8 +1363,8 @@ struct PluginBuffers {
     output_ports: AudioPorts,
     input: Vec<Vec<f32>>,
     output: Vec<Vec<f32>>,
-    input_counts: Vec<u32>,
-    output_counts: Vec<u32>,
+    /// The ports the mapping these buffers belong to is routed for.
+    ports: PortLayout,
     input_offsets: Vec<usize>,
     output_offsets: Vec<usize>,
     input_ptrs: Vec<*mut f32>,
@@ -1347,8 +1374,9 @@ struct PluginBuffers {
 }
 
 impl PluginBuffers {
-    /// Sized once from the declared ports. Later blocks reuse this storage.
-    fn allocate(inputs: &[u32], outputs: &[u32], frames: usize, events: usize) -> Self {
+    /// Sized once from a mapping's ports. Later blocks reuse this storage.
+    fn allocate(ports: &PortLayout, frames: usize, events: usize) -> Self {
+        let (inputs, outputs) = (&ports.inputs, &ports.outputs);
         let input_channels = inputs.iter().map(|count| *count as usize).sum();
         let output_channels = outputs.iter().map(|count| *count as usize).sum();
         Self {
@@ -1356,10 +1384,9 @@ impl PluginBuffers {
             output_ports: AudioPorts::with_capacity(output_channels, outputs.len().max(1)),
             input: vec![vec![0.0; frames]; input_channels],
             output: vec![vec![0.0; frames]; output_channels],
-            input_counts: inputs.to_vec(),
-            output_counts: outputs.to_vec(),
             input_offsets: channel_offsets(inputs),
             output_offsets: channel_offsets(outputs),
+            ports: ports.clone(),
             input_ptrs: vec![ptr::null_mut(); input_channels],
             output_ptrs: vec![ptr::null_mut(); output_channels],
             events: EventBuffer::with_capacity(events * crate::events::MAX_INPUT_EXPANSION),
@@ -1470,7 +1497,13 @@ fn service_block(
         let stages = bridge.stages.load(Ordering::Acquire).max(1);
         let fits = buffers.fits(inputs, outputs, frames);
         if bridge.has_plugin.load(Ordering::Acquire) && fits {
-            if let Some(active) = started.as_mut() {
+            // A mapping routed for ports the plugin was not activated with is
+            // silent, with its events, until the parent maps the plugin's
+            // ports and routes the track for them (ADR 0382).
+            if let Some(active) = started
+                .as_mut()
+                .filter(|active| *active.ports == buffers.ports)
+            {
                 if command == CMD_RESET_PROCESS {
                     active.inner.reset();
                     active.notes.start_over();
@@ -1668,8 +1701,8 @@ fn control_thread(bridge: &Bridge, mut socket: Option<Socket>) -> Result<(), Hos
             ControlMessage::PortsRejected(Refusal::Plugin(*error))
         } else {
             ControlMessage::Ports {
-                inputs: shape.inputs.clone(),
-                outputs: shape.outputs.clone(),
+                inputs: shape.layout.inputs.clone(),
+                outputs: shape.layout.outputs.clone(),
                 tail_samples: sent_tail,
                 latency_samples: bridge.latency_samples.load(Ordering::Acquire),
             }
@@ -1699,6 +1732,8 @@ fn control_thread(bridge: &Bridge, mut socket: Option<Socket>) -> Result<(), Hos
     }
     let mut seen = 0u64;
     let mut restarted = 0u64;
+    // The announced ports are revision zero.
+    let mut sent_ports = 0u64;
     loop {
         bridge.plugin_log.emit();
         if bridge.stop.load(Ordering::Acquire) {
@@ -1731,12 +1766,17 @@ fn control_thread(bridge: &Bridge, mut socket: Option<Socket>) -> Result<(), Hos
                 emit_line("restart-observed");
             }
             if let Some(socket) = &mut socket {
+                // The parent learns the ports before the restart they came with.
+                send_ports(bridge, socket, &mut sent_ports)?;
                 let _ = socket.send(&ControlMessage::PluginRestarted {
                     latency_samples: bridge.latency_samples.load(Ordering::Acquire),
                 });
             }
             restarted = want;
             continue;
+        }
+        if let Some(socket) = &mut socket {
+            send_ports(bridge, socket, &mut sent_ports)?;
         }
         let tail = bridge.tail_samples.load(Ordering::Acquire);
         if tail != sent_tail {
@@ -1790,6 +1830,24 @@ fn control_thread(bridge: &Bridge, mut socket: Option<Socket>) -> Result<(), Hos
             seen = wait_control(bridge, seen);
         }
     }
+}
+
+/// Tells the parent once about ports an activation brought (ADR 0382). An
+/// activation outside a restart, such as an arm, is reported here too.
+fn send_ports(bridge: &Bridge, socket: &mut Socket, sent: &mut u64) -> Result<(), HostError> {
+    if bridge.ports_revision.load(Ordering::Acquire) == *sent {
+        return Ok(());
+    }
+    let (revision, ports) = bridge
+        .activated_ports
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .clone();
+    socket
+        .send(&ControlMessage::PortsChanged(ports))
+        .map_err(HostError::Socket)?;
+    *sent = revision;
+    Ok(())
 }
 
 fn handle_control(
@@ -1911,9 +1969,10 @@ fn handle_control(
                 .send_tagged(request_id, &ControlMessage::RemapCancelled)
                 .map_err(HostError::Socket)?;
         }
-        ControlMessage::Remap { layout, fd } => match MappedRegion::from_fd(fd) {
+        ControlMessage::Remap { layout, ports, fd } => match MappedRegion::from_fd(fd) {
             Ok(region)
                 if region.layout() == layout
+                    && routable(bridge, layout, &ports)
                     && bridge.pending.load(Ordering::Acquire).is_null() =>
             {
                 if bridge.has_plugin.load(Ordering::Acquire)
@@ -1924,8 +1983,10 @@ fn handle_control(
                         .map_err(HostError::Socket)?;
                     return Ok(());
                 }
+                // The parent routes this mapping for `ports`, so its buffers
+                // follow them, not the plugin's latest activation (ADR 0382).
                 let buffers = if bridge.buffers_live.load(Ordering::Acquire) {
-                    Box::into_raw(Box::new(buffers_for(bridge, &region)))
+                    Box::into_raw(Box::new(buffers_for(&ports, layout)))
                 } else {
                     ptr::null_mut()
                 };
@@ -2027,12 +2088,14 @@ fn render_plugin(
     let output_ptr = buffers.output_ptrs.as_ptr();
     // Standard iterators, so this builds no port or channel vector per block.
     let input_ports = buffers
-        .input_counts
+        .ports
+        .inputs
         .iter()
         .zip(buffers.input_offsets.iter())
         .map(move |(&count, &start)| port_inputs(input_ptr, start, count as usize, frames));
     let output_ports = buffers
-        .output_counts
+        .ports
+        .outputs
         .iter()
         .zip(buffers.output_offsets.iter())
         .map(move |(&count, &start)| port_outputs(output_ptr, start, count as usize, frames));
@@ -2141,17 +2204,24 @@ fn port_outputs<'a>(
     }
 }
 
-fn buffers_for(bridge: &Bridge, region: &MappedRegion) -> PluginBuffers {
-    let shape = published_ports(bridge);
-    let inputs = shape.map(|shape| shape.inputs.clone()).unwrap_or_default();
-    let outputs = shape.map(|shape| shape.outputs.clone()).unwrap_or_default();
-    let layout = region.layout();
+fn buffers_for(ports: &PortLayout, layout: SessionLayout) -> PluginBuffers {
     PluginBuffers::allocate(
-        &inputs,
-        &outputs,
+        ports,
         layout.max_frames.max(1) as usize,
         layout.input_events.max(1) as usize,
     )
+}
+
+/// With a plugin, a mapping must hold exactly the ports it is routed for.
+/// Before audio has its first buffers, which it sizes from the announced
+/// ports, a mapping can only be routed for those.
+fn routable(bridge: &Bridge, layout: SessionLayout, ports: &PortLayout) -> bool {
+    if !bridge.has_plugin.load(Ordering::Acquire) {
+        return true;
+    }
+    ports.matches(layout)
+        && (bridge.buffers_live.load(Ordering::Acquire)
+            || published_ports(bridge).is_some_and(|shape| shape.layout == *ports))
 }
 
 fn refresh_ptrs(planes: &mut [Vec<f32>], ptrs: &mut [*mut f32]) {
@@ -2160,12 +2230,9 @@ fn refresh_ptrs(planes: &mut [Vec<f32>], ptrs: &mut [*mut f32]) {
     }
 }
 
-#[derive(PartialEq, Eq)]
+/// The ports announced before activation, or why there are none.
 struct PortShape {
-    inputs: Vec<u32>,
-    outputs: Vec<u32>,
-    input_ids: Vec<u32>,
-    output_ids: Vec<u32>,
+    layout: PortLayout,
     error: Option<PluginFailure>,
 }
 
@@ -2200,21 +2267,12 @@ fn wait_for_layout(bridge: &Bridge) -> Result<(), HostError> {
             let _ = bridge.root.wait_alarm(alarm);
             continue;
         }
-        let region = current_region(bridge);
-        let inputs = sum_ports(&shape.inputs);
-        let outputs = sum_ports(&shape.outputs);
-        if region.input_channels() == inputs && region.output_channels() == outputs {
+        if shape.layout.matches(current_region(bridge).layout()) {
             return Ok(());
         }
         let alarm = bridge.root.alarm();
         let _ = bridge.root.wait_alarm(alarm);
     }
-}
-
-fn sum_ports(counts: &[u32]) -> usize {
-    counts
-        .iter()
-        .fold(0usize, |total, count| total.saturating_add(*count as usize))
 }
 
 /// Control-thread only. A timeout abandons the reply, not the owned input.
@@ -2850,26 +2908,22 @@ unsafe extern "C" fn state_read(
     take as i64
 }
 
-/// Reads `clap.audio-ports` while the plugin is inactive.
-fn query_audio_ports(instance: &PluginInstance<EchodeHost>) -> Result<PortShape, PluginFailure> {
+/// Reads `clap.audio-ports` while the plugin is inactive. Names, flags, port
+/// types, in-place pairs, and ids do not change the f32 planes or the
+/// index-based routing, so only the channel counts are kept (ADR 0382).
+fn query_audio_ports(instance: &PluginInstance<EchodeHost>) -> Result<PortLayout, PluginFailure> {
     let plugin = instance.raw_instance();
     // SAFETY: `clap_plugin_audio_ports` is the table for `CLAP_EXT_AUDIO_PORTS`.
     let ports = unsafe { table::<clap_plugin_audio_ports>(plugin, CLAP_EXT_AUDIO_PORTS) }
         .ok_or(PluginFailure::NoAudioPorts)?;
     let count = ports.count.ok_or(PluginFailure::NoPortCount)?;
     let get = ports.get.ok_or(PluginFailure::NoPortInfo)?;
-    let (inputs, input_ids) = read_port_list(plugin, count, get, true)?;
-    let (outputs, output_ids) = read_port_list(plugin, count, get, false)?;
+    let inputs = read_port_list(plugin, count, get, true)?;
+    let outputs = read_port_list(plugin, count, get, false)?;
     if inputs.is_empty() && outputs.is_empty() {
         return Err(PluginFailure::NoPorts);
     }
-    Ok(PortShape {
-        inputs,
-        outputs,
-        input_ids,
-        output_ids,
-        error: None,
-    })
+    Ok(PortLayout::new(inputs, outputs))
 }
 
 fn query_note_inputs(plugin: &clap_plugin) -> Result<NoteInputs, PluginFailure> {
@@ -2912,11 +2966,10 @@ fn read_port_list(
         info: *mut clap_audio_port_info,
     ) -> bool,
     is_input: bool,
-) -> Result<(Vec<u32>, Vec<u32>), PluginFailure> {
+) -> Result<Vec<u32>, PluginFailure> {
     // SAFETY: the plugin's own function, called on the main thread while the plugin is inactive.
     let port_count = unsafe { count(plugin, is_input) };
     let mut counts = Vec::with_capacity(port_count as usize);
-    let mut ids = Vec::with_capacity(port_count as usize);
     for index in 0..port_count {
         let mut info = clap_audio_port_info {
             id: 0,
@@ -2940,9 +2993,8 @@ fn read_port_list(
             return Err(PluginFailure::PortWithoutChannels(port));
         }
         counts.push(info.channel_count);
-        ids.push(info.id);
     }
-    Ok((counts, ids))
+    Ok(counts)
 }
 
 fn publish_stopped(handoff: &ProcessorHandoff, stopped: StoppedProcessor, realtime: bool) {

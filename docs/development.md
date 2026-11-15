@@ -403,9 +403,10 @@ CLAP の主スレッドタイマーの登録表・拡張・期限の計算と通
 時刻を引数で進める境界回帰は `plugin_timers_tests.rs`、実ヘルパーの停止中の通知と callback 中の登録・解除は `tests/isolation/timer_support.rs` を使う（[ADR 0351](decisions/0351-clap-main-thread-timers.md)）。
 CLAP の余韻の通知・再有効化後の読直しは `threads.rs`、親の最新値は `session.rs` の `PluginControl` に置く。
 確定前の問合せは `session_operations.rs::refresh_tail`、回帰は `isolation/tail.rs`・`hosted_playback/tail.rs` と `echode-cli/tests/render/tail.rs` を使う（[ADR 0352](decisions/0352-live-clap-tails-and-export-fence.md)）。
-CLAP の音声ポートの対応フラグは `echode-plugin-host/src/audio_ports.rs`、初回の寸法と ID は `threads.rs::PortShape` に置く。
-再有効化前の一致の検証は `Bridge::reactivate` に集約し、無効化後・有効化前だけに記述を読む。
-名前・寸法を変えないメタデータの通知と、寸法・ID の不正変更や記述の失敗は `tests/isolation/audio_ports.rs` を使う（[ADR 0374](decisions/0374-dimension-preserving-audio-port-rescans.md)）。
+CLAP の音声ポートの対応フラグは `echode-plugin-host/src/audio_ports.rs`、入出力のチャンネル構成は `echode-sandbox/src/ports.rs::PortLayout`、有効化ごとの記述の読込みは `threads.rs::PortShape` に置く。
+`Remap` は `SessionLayout` と `PortLayout` を運び、処理器と共有領域の構成が一致するブロックだけを処理する。
+有効化で構成が変われば `PortsChanged` で親の改訂を進め、`PluginHost::prepare_mapping_for` / `follow_ports` と `echode-engine/src/plugins.rs` が共有領域とルーティングを同じ計画で交換する。
+実ヘルパーの通知・再マップは `tests/isolation/audio_ports.rs`、再生中の切替と書出し再開・拒否は `tests/hosted_playback/audio_ports.rs` を使う（[ADR 0374](decisions/0374-dimension-preserving-audio-port-rescans.md)、[ADR 0382](decisions/0382-audio-port-changes-exchange-mapping-and-routing.md)）。
 CLAP のノート形式の対応の公開とポートごとの規則（`NoteInputs`）は `echode-plugin-host/src/note_ports.rs`、有効化前の読直しは `threads.rs::activate` に置く。
 一覧は `Processor<P>` が処理器とともに渡し、`render_plugin` が通常のイベントの前へ参照でつなぐ。
 名前の通知・無効化中のポートの増減・0 への変更・終了処理の順序は `tests/isolation/note_ports.rs` を使う（[ADR 0356](decisions/0356-clap-note-port-capabilities-and-lifecycle.md)）。

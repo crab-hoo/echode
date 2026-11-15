@@ -1795,8 +1795,9 @@ pub struct PlaybackControl {
 /// What a published plan's delay compensation was planned from (ADR 0339).
 #[derive(Default)]
 struct Compensated {
-    /// Each hosted device's latency and tail in graph order, to notice later changes.
-    reported: Vec<(u128, u32, u32)>,
+    /// Each hosted device's latency, tail, and routed ports in graph order,
+    /// to notice later changes.
+    reported: Vec<crate::plugins::DeviceReport>,
     stage_inputs: Vec<(u128, u64)>,
     latency: u64,
     tail: u32,

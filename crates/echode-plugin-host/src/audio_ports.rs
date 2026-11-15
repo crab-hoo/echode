@@ -1,8 +1,9 @@
-//! Dimension-preserving audio-port metadata can change while inactive.
+//! Audio-port rescans. A plugin may change any part of its ports while inactive.
 use crate::threads::EchodeHost;
 use clack_host::extensions::prelude::*;
 use clap_sys::ext::audio_ports::{
-    CLAP_AUDIO_PORTS_RESCAN_FLAGS, CLAP_AUDIO_PORTS_RESCAN_IN_PLACE_PAIR,
+    CLAP_AUDIO_PORTS_RESCAN_CHANNEL_COUNT, CLAP_AUDIO_PORTS_RESCAN_FLAGS,
+    CLAP_AUDIO_PORTS_RESCAN_IN_PLACE_PAIR, CLAP_AUDIO_PORTS_RESCAN_LIST,
     CLAP_AUDIO_PORTS_RESCAN_NAMES, CLAP_AUDIO_PORTS_RESCAN_PORT_TYPE, CLAP_EXT_AUDIO_PORTS,
     clap_host_audio_ports,
 };
@@ -34,19 +35,22 @@ unsafe impl ExtensionImplementation<EchodeHost> for HostAudioPorts {
 unsafe extern "C" fn is_rescan_flag_supported(_host: *const clap_host, flag: u32) -> bool {
     // CLAP asks about one flag at a time, not a set of flags. Precision hints,
     // semantic port types, and optional aliasing do not change our separate f32
-    // buffers or index-based routing. Dimensions and port lists remain fixed.
+    // buffers or index-based routing. Channel counts and port lists are read
+    // again before each activation and reach the parent's routing (ADR 0382).
     matches!(
         flag,
         CLAP_AUDIO_PORTS_RESCAN_NAMES
             | CLAP_AUDIO_PORTS_RESCAN_FLAGS
+            | CLAP_AUDIO_PORTS_RESCAN_CHANNEL_COUNT
             | CLAP_AUDIO_PORTS_RESCAN_PORT_TYPE
             | CLAP_AUDIO_PORTS_RESCAN_IN_PLACE_PAIR
+            | CLAP_AUDIO_PORTS_RESCAN_LIST
     )
 }
 
 unsafe extern "C" fn rescan(_host: *const clap_host, _flags: u32) {
-    // Names and these metadata hints are not cached. All audio uses separate
-    // f32 planes regardless of precision preferences, port type, or alias hints.
-    // Before reactivation the main thread revalidates the immutable port layout;
-    // do not reenter a plugin's descriptor callbacks from its rescan callback.
+    // Names and metadata hints are not cached. Every activation reads the
+    // ports after deactivate returns, and the processor carries what it read,
+    // so no rescan needs an action here. Do not reenter a plugin's descriptor
+    // callbacks from its rescan callback.
 }

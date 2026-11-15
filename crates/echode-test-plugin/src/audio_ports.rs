@@ -1,9 +1,15 @@
-//! Probes dimension-preserving rescans and deliberately invalid layout changes.
+//! Probes audio-port rescans: metadata, identities, channel counts, port
+//! lists, and deliberately invalid descriptions (ADR 0374, ADR 0382).
+//!
+//! The state byte selects a layout and restarts into it.
+//! `ECHODE_TEST_FAULT=audio-ports:<layout>` restarts into `<layout>` once,
+//! after the first processed block.
 use clack_plugin::extensions::prelude::*;
 use clap_sys::ext::audio_ports::{
     CLAP_AUDIO_PORT_IS_MAIN, CLAP_AUDIO_PORT_PREFERS_64BITS,
     CLAP_AUDIO_PORT_REQUIRES_COMMON_SAMPLE_SIZE, CLAP_AUDIO_PORT_SUPPORTS_64BITS,
-    CLAP_AUDIO_PORTS_RESCAN_FLAGS, CLAP_AUDIO_PORTS_RESCAN_IN_PLACE_PAIR,
+    CLAP_AUDIO_PORTS_RESCAN_CHANNEL_COUNT, CLAP_AUDIO_PORTS_RESCAN_FLAGS,
+    CLAP_AUDIO_PORTS_RESCAN_IN_PLACE_PAIR, CLAP_AUDIO_PORTS_RESCAN_LIST,
     CLAP_AUDIO_PORTS_RESCAN_NAMES, CLAP_AUDIO_PORTS_RESCAN_PORT_TYPE, CLAP_EXT_AUDIO_PORTS,
     CLAP_PORT_MONO, CLAP_PORT_STEREO, clap_audio_port_info, clap_host_audio_ports,
 };
@@ -13,14 +19,20 @@ use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 const FAILED: u8 = 0x80;
 const SUPPORTED: u32 = CLAP_AUDIO_PORTS_RESCAN_NAMES
     | CLAP_AUDIO_PORTS_RESCAN_FLAGS
+    | CLAP_AUDIO_PORTS_RESCAN_CHANNEL_COUNT
     | CLAP_AUDIO_PORTS_RESCAN_PORT_TYPE
-    | CLAP_AUDIO_PORTS_RESCAN_IN_PLACE_PAIR;
+    | CLAP_AUDIO_PORTS_RESCAN_IN_PLACE_PAIR
+    | CLAP_AUDIO_PORTS_RESCAN_LIST;
 static STAGES: AtomicU8 = AtomicU8::new(0);
 static ACTIVATIONS: AtomicU8 = AtomicU8::new(0);
 static READS: AtomicU8 = AtomicU8::new(0);
+/// Descriptors each activation should have read: one per port of its layout.
+static EXPECTED_READS: AtomicU8 = AtomicU8::new(0);
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 static LAYOUT: AtomicU8 = AtomicU8::new(0);
 static WANTED: AtomicU8 = AtomicU8::new(0);
+/// The layout `audio-ports:<layout>` restarts into. Zero when none is left.
+static SCHEDULED: AtomicU8 = AtomicU8::new(0);
 
 pub(crate) fn probe(host: HostSharedHandle<'_>, stage: u8) {
     let Some(extension) = host.get_extension::<HostAudioPorts>() else {
@@ -57,9 +69,13 @@ pub(crate) fn probe(host: HostSharedHandle<'_>, stage: u8) {
 pub(crate) fn activated() {
     let activations = ACTIVATIONS.fetch_add(1, Ordering::Relaxed) + 1;
     eprintln!("audio-port-activation {activations}");
-    // The valid modes each have one input and one output. This small counter
-    // only bounds this fixture's restart sequence, not product port counts.
-    if READS.load(Ordering::Relaxed) != activations * 2 {
+    // Each activation reads every port of its layout once, after deactivate.
+    // These small counters only bound this fixture's restart sequence, not
+    // product port counts.
+    let (inputs, outputs) = layout_ports(LAYOUT.load(Ordering::Relaxed));
+    let ports = u8::try_from(inputs.len() + outputs.len()).unwrap_or(u8::MAX);
+    let expected = EXPECTED_READS.fetch_add(ports, Ordering::Relaxed) + ports;
+    if READS.load(Ordering::Relaxed) != expected {
         STAGES.fetch_or(FAILED, Ordering::Relaxed);
     }
     ACTIVE.store(true, Ordering::Relaxed);
@@ -76,11 +92,28 @@ pub(crate) fn change(host: HostSharedHandle<'_>, layout: u8) {
     host.request_restart();
 }
 
+/// Reads `<layout>` from `audio-ports:<layout>`.
+pub(crate) fn schedule(layout: &str) {
+    SCHEDULED.store(layout.parse().unwrap_or(0), Ordering::Relaxed);
+}
+
+/// Called after each processed block; restarts into the scheduled layout once.
+pub(crate) fn processed(host: HostSharedHandle<'_>) {
+    let layout = SCHEDULED.swap(0, Ordering::Relaxed);
+    if layout != 0 {
+        change(host, layout);
+    }
+}
+
 pub(crate) fn ports() -> (&'static [u32], &'static [u32]) {
     if ACTIVE.load(Ordering::Relaxed) {
         STAGES.fetch_or(FAILED, Ordering::Relaxed);
     }
-    match LAYOUT.load(Ordering::Relaxed) {
+    layout_ports(LAYOUT.load(Ordering::Relaxed))
+}
+
+fn layout_ports(layout: u8) -> (&'static [u32], &'static [u32]) {
+    match layout {
         2 => (&[1], &[2]),
         3 => (&[1, 1], &[2]), // Same flattened size, different port boundaries.
         6 => (&[2], &[1]),
