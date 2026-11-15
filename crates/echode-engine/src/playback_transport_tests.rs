@@ -5,6 +5,7 @@ fn range(held: Option<i64>) -> RenderRange {
     RenderRange {
         loop_bounds: (None, None),
         started_before: held,
+        trajectory: None,
         source_fade: None,
         meter_release: 1.0,
     }
@@ -105,6 +106,23 @@ fn transport_density_bounds_cover_tempo_changes_and_short_loops_without_allocati
                 );
                 assert!(events.iter().all(|event| (event.time() as usize) < frames));
                 drop(guard);
+                for latency in [0, 37, 131] {
+                    let mut trajectory =
+                        Playhead::new(start, (bounds.map(|b| b.0), bounds.map(|b| b.1)));
+                    for _ in 0..3 {
+                        let guard = crate::realtime::ForbidAlloc::enter();
+                        let events = timeline.delayed(trajectory, latency, frames).unwrap();
+                        assert_eq!(events[0].time(), 0);
+                        assert!(
+                            events
+                                .windows(2)
+                                .all(|pair| pair[0].time() < pair[1].time())
+                        );
+                        assert!(events.iter().all(|event| (event.time() as usize) < frames));
+                        drop(guard);
+                        trajectory.advance(frames, 0).unwrap();
+                    }
+                }
             }
         }
     }

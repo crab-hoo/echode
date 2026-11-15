@@ -1,6 +1,35 @@
 use super::*;
 
 #[test]
+fn input_time_extrapolates_preroll_then_follows_the_source_trajectory() {
+    for origin in [-11, 10, 25, 40] {
+        let mut head = Playhead::new(origin, (Some(-5), Some(25)));
+        for elapsed in 0..180 {
+            for latency in [0, 1, 37, 131] {
+                let linear = origin + elapsed - latency as i64;
+                let expected = if origin < 25 && linear >= 25 {
+                    -5 + (linear - 25) % 30
+                } else {
+                    linear
+                };
+                assert_eq!(head.input_sample(latency).unwrap(), expected);
+            }
+            head.advance(1, 0).unwrap();
+        }
+    }
+    assert!(matches!(
+        Playhead::new(i64::MIN, (None, None)).input_sample(1),
+        Err(PlaybackError::Time)
+    ));
+    assert_eq!(
+        Playhead::new(i64::MAX, (None, None))
+            .input_sample(u64::MAX)
+            .unwrap(),
+        i64::MIN
+    );
+}
+
+#[test]
 fn playhead_follows_source_history_across_first_entry_and_many_wraps() {
     // These lengths and histories bound only the regression, not playback.
     for length in [1, 2, 13, 64] {

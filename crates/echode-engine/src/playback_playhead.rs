@@ -1,11 +1,12 @@
-//! Display position of the compensated master, without moving the render clock.
+//! Source trajectory for the display and compensated per-stage musical clocks.
 use crate::PlaybackError;
 
 /// One continuous source trajectory. Jumps and loop-range changes start a new
 /// trajectory; the display holds its origin until that source reaches master.
 /// Counting device frames, rather than subtracting from the wrapped clock,
 /// also handles the first loop entry and delays longer than a loop.
-pub(super) struct Playhead {
+#[derive(Clone, Copy)]
+pub(crate) struct Playhead {
     origin: i64,
     frames: u64,
     /// The last successfully rendered source block, not a newly prepared plan.
@@ -33,6 +34,23 @@ impl Playhead {
             .ok_or(PlaybackError::Time)?;
         self.latency = latency;
         Ok(())
+    }
+
+    /// Input clocks extrapolate before the origin while their delay line fills;
+    /// only the display holds the origin during this pre-roll.
+    pub(crate) fn input_sample(&self, latency: u64) -> Result<i64, PlaybackError> {
+        if let Some(pending) = latency.checked_sub(self.frames) {
+            return i64::try_from(i128::from(self.origin) - i128::from(pending))
+                .map_err(|_| PlaybackError::Time);
+        }
+        Ok(Self { latency, ..*self }.sample())
+    }
+
+    pub(crate) fn loop_bounds(&self) -> (Option<i64>, Option<i64>) {
+        (
+            self.loop_bounds.map(|bounds| bounds.0),
+            self.loop_bounds.map(|bounds| bounds.1),
+        )
     }
 
     pub(super) fn sample(&self) -> i64 {

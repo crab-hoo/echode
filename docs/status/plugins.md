@@ -6,6 +6,7 @@
 ## プラグイン・デバイスビュー
 
 - **CLAP の互換性**: 第三者のテンポ同期・聴感は UC-85、ほかの互換性は UC-80〜83。
+  遅延のある前段と後段・フォルダ FX のテンポ同期の聴感は UC-91（[ADR 0378](../decisions/0378-pdc-stage-transport.md)）。
   音声ポートのリスト・チャンネル数の動的変更は未対応。再有効化前の変更検出時はヘルパーを停止する（[ADR 0374](../decisions/0374-dimension-preserving-audio-port-rescans.md)）。
   MIDI 1.0 だけを受ける音源には MIDI 1.0 でノートを送る。同じ音高の重なりは最初のノートオフで止まり、MPE・MIDI 2.0 だけを受けるポートは鳴らない。
   第三者の聴感は UC-90（[ADR 0375](../decisions/0375-midi-1-notes-for-midi-only-clap-ports.md)）。

@@ -300,10 +300,13 @@ cargo test -q -p echode-plugin-host --test isolation audio_ports::
 `isolation/transport.rs` の診断用 CLAP は、左に先頭のテンポ（なしは -1）、右に transport 件数（先頭状態との不一致は -1）を出す。
 再生・停止・録音・ループのフラグ、負の位置・小節、拍子を含む全フィールドの一致を調べる。
 1・7・64・512 フレームとリセット前後を比べ、先頭の通知とブロック途中の変更を取り違えていないか確認する。
-製品の生成は `echode-engine/src/playback_transport.rs::Timeline`、配布は `plugins.rs::TrackHost::remember` と `route_events` を調べる。
+製品の生成は `echode-engine/src/playback_transport.rs::Timeline`、各段への準備は `plugins.rs::HostGraph::prepare_transport`、併合は `route_events` を調べる。
 `hosted_playback/transport.rs` の `timeline` プローブは各段の拍位置と再生・テンポを加算する。
 先頭状態の欠落・段への配布漏れは `engine transport missing or block-dependent`、容量不足は `transport render failed` で分ける。
 後者では前の計画のノート解放用の予約を加えた後も、チェインに `Timeline::capacity` 分が残るか確認する。
+遅延のある前段の後だけ同期がずれる場合は、`Compensation::stage_inputs` と段の `input_latency` を比べる。
+`PDC transport disagrees with input audio` は遅延の補正漏れを示す。折返した処理位置からの単純な引算ではなく、`Playhead::input_sample` の原点と経過を使う。
+遅延線が満ちる前は原点前へ外挿する。停止中は保持位置なので、表示位置・処理位置・段の入力位置を混同しない（[ADR 0378](../decisions/0378-pdc-stage-transport.md)、UC-91）。
 
 ```sh
 cargo test -q -p echode-plugin-host --test isolation transport::

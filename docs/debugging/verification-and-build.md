@@ -58,6 +58,9 @@ bundle のない実行ファイルでは、置かれたフォルダが主 bundle
 同じ実行ファイルを空のフォルダへ写すと 9.5 ms、`deps` の中では 8.6 秒だった。`afinfo` は 0.01 秒である。
 製品のアプリは `.app` の bundle の中で動き、CLI の `target/debug` は 51 件なので、この遅れは出ない。製品の不具合でも RTSan の検出でもない。
 試聴のテストは `warm_audio_toolbox`（`audition_tests.rs`）で最初の読込みを 1 回済ませてから、停止の期限を数え始める。
+`echode-document` の `import-off-worker` でも、段階の解放後の最初の応答が 5 秒で失敗し、単独でも再現した。
+同じ実行ファイルの小さいフォルダのコピーはテスト本体 1.05 秒で完了し、sample は `ExtAudioFileOpenURL` → `AudioAnalytics` → `_CFIterateDirectory` を示した。
+証拠は `target/focused-checks/import-timeout/`。初期化は `import_tests.rs` の応答期限の前に `AudioFileReader::open` で済ませ、段階の実行と投入順の検証は保つ。
 ほかのテストで同じ遅れが出たら、その実行ファイルを空のフォルダへ写して比べる。`deps` の古い成果物を減らすかはユーザーと決める。
 
 2026-11-03 の後続確認では `deps` が 549,820 件あり、通常の `cargo test -q --workspace` も 1,200 秒で終わらなかった。`--no-run` は 1.178 秒だった。

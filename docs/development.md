@@ -414,7 +414,8 @@ MIDI だけのポートへの MIDI 1.0 の変換は `events.rs::write_input`、�
 共有領域の時刻 0 のトランスポートを `clap_process.transport` に渡す処理は `threads.rs::render_plugin` に置く。
 `events.rs` の翻訳済みイベントを借り、別の保持状態や変換を作らない。
 実ヘルパーの先頭状態・途中の更新・通知なし・リセット・ブロック長の回帰は `tests/isolation/transport.rs`、診断用の出力は `echode-test-plugin/src/transport.rs` を使う。
-製品の生成・容量の準備は `echode-engine/src/playback_transport.rs::Timeline`、全段への併合は `plugins.rs::BlockEvents` に置く。
+製品の生成・容量の準備は `echode-engine/src/playback_transport.rs::Timeline`、各段の入力遅れは `compensation.rs::Compensation::stage_inputs` に置く。
+`plugins.rs::HostGraph::prepare_transport` が音声と同じ軌跡から各段の時刻を作り、`route_events` がノートへ併合する。
 製品経路と全段への配布は `tests/hosted_playback/transport.rs`（必須契約 `plugin-musical-transport`）、メタデータと密度は `playback_transport_tests.rs` を使う。
 
 ### ヘルパーの制御と共有領域

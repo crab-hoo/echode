@@ -98,10 +98,16 @@
       "negative_control": {"file": "crates/echode-audio-io/src/stream.rs", "old": "listener.report(Some(sample), callbacks, false);", "new": "let _ = (listener, sample, callbacks);"}
     },
     {
+      "id": "plugin-pdc-transport", "runner": "rust", "package": "echode-plugin-host", "target": ["--test", "hosted_playback"],
+      "test": "transport::downstream_transport_follows_delayed_audio_through_folders_under_rtsan", "timeout": 180,
+      "purpose": "各段の曲時刻を遅延グラフの入力へ揃え、負の開始・短いループ・テンポ境界・停止と計画交換を保つ",
+      "negative_control": {"file": "crates/echode-engine/src/plugins.rs", "old": "timeline.delayed(trajectory, stage.input_latency, frames)?", "new": "timeline.delayed(trajectory, 0, frames)?"}
+    },
+    {
       "id": "plugin-musical-transport", "runner": "rust", "package": "echode-plugin-host", "target": ["--test", "hosted_playback"],
       "test": "transport::every_stage_receives_sample_accurate_transport_across_blocks_under_rtsan", "timeout": 180,
       "purpose": "製品のテンポ・位置を全 CLAP 段とフォルダ FX へ渡し、停止・短いループ・途中のテンポ変化をブロック長によらず保つ",
-      "negative_control": {"file": "crates/echode-engine/src/playback.rs", "old": "let transport = self.timeline.fill(spans, range)?;", "new": "let transport: &[Event] = &[];"}
+      "negative_control": {"file": "crates/echode-engine/src/playback_transport.rs", "old": "self.push(span.start, span.block_offset, true)?;", "new": "let _ = (span.start, span.block_offset);"}
     },
     {
       "id": "track-mix-fault", "runner": "rust", "package": "echode-plugin-host", "target": ["--test", "hosted_playback"],

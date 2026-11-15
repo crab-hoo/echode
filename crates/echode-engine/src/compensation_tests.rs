@@ -358,6 +358,23 @@ fn delays(source: u64, instrument: u64, output: u64) -> TrackDelays {
 }
 
 #[test]
+fn device_input_times_come_from_the_audio_graph_including_bypass_and_folders() {
+    let identified = |id, mut device: DeviceLatency| {
+        device.device = id;
+        device
+    };
+    let mut bypass = identified(4, device(11));
+    bypass.bypassed = true;
+    let parent = [identified(1, instrument(7)), identified(2, device(5))];
+    let child = [identified(3, device(37)), bypass, identified(5, device(13))];
+    let plan = compensate(&[flow(None, true, &parent), flow(Some(0), false, &child)]).unwrap();
+    // The child takes 61 including bypass makeup, so the parent's instrument
+    // output waits until 61. The bypass does not delay the next active FX input.
+    assert_eq!(plan.stage_inputs, vec![(1, 0), (2, 61), (3, 0), (5, 37)]);
+    assert_eq!(plan.latency, 66);
+}
+
+#[test]
 fn top_level_tracks_wait_for_the_latest_one_at_master() {
     let chains = [[device(100)], [device(0)], [device(30)]];
     let flows: Vec<_> = chains.iter().map(|chain| flow(None, true, chain)).collect();

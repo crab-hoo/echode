@@ -22,6 +22,7 @@ use echode_sandbox::{
 use crate::PlaybackError;
 use crate::compensation::DeviceLatency;
 use crate::delay::Delay;
+use crate::playback::{Playhead, musical_time::Timeline};
 use crate::plugin_state::{PluginState, holds};
 
 /// Control-thread factory for a fresh send right on each live helper launch.
@@ -36,7 +37,6 @@ use crate::mix::Signal;
 pub(crate) struct BlockEvents<'a> {
     pub(crate) source: &'a [Event],
     pub(crate) chased: &'a [Event],
-    pub(crate) transport: &'a [Event],
 }
 
 /// Where a CLAP id lives on disk, and its instrument role.
@@ -342,6 +342,8 @@ struct Stage {
     /// Empty for every other stage.
     promoted: Vec<Vec<f32>>,
     routed: Vec<(Event, u32)>,
+    input_latency: u64,
+    transport: Vec<Event>,
 }
 
 // Process lifetime and preparation belong to control. Audio holds a lease, but
@@ -656,7 +658,14 @@ impl HostGraph {
     /// Allocate an audio-owned bank using the already prepared process endpoints.
     /// `instrument_delays` gives each hosted track's first-instrument delay by
     /// key (ADR 0339).
-    pub(crate) fn audio_snapshot(&self, mut instrument_delays: Vec<(u32, Delay)>) -> Self {
+    pub(crate) fn audio_snapshot(
+        &self,
+        mut instrument_delays: Vec<(u32, Delay)>,
+        stage_inputs: &[(u128, u64)],
+        transport_capacity: usize,
+    ) -> Result<Self, PlaybackError> {
+        let mut stage_inputs = stage_inputs.to_vec();
+        stage_inputs.sort_unstable_by_key(|entry| entry.0);
         instrument_delays.sort_unstable_by_key(|entry| entry.0);
         let mut graph = Self::empty();
         graph.fan = self.fan.clone();
@@ -667,30 +676,44 @@ impl HostGraph {
                     let stages = track
                         .stages
                         .iter()
-                        .map(|stage| Stage {
-                            device: stage.device,
-                            clap_id: stage.clap_id.clone(),
-                            bypassed: stage.bypassed,
-                            bypass_output: stage.bypass_output.clone(),
-                            awaiting_notes: true,
-                            chase_in_buffer: false,
-                            chase_pending: false,
-                            needs_restart: false,
-                            block_complete: false,
-                            cleanup: Cleanup::None,
-                            // SAFETY: only the current bank is processed; queued and
-                            // retired banks are never submitted or collected.
-                            host: unsafe { stage.instance.host().audio_handle() },
-                            instance: Arc::clone(&stage.instance),
-                            instrument: stage.instrument,
-                            input: stage.input.clone(),
-                            output: stage.output.clone(),
-                            main_outputs: stage.main_outputs,
-                            main_inputs: stage.main_inputs,
-                            promoted: stage.promoted.clone(),
-                            routed: Vec::with_capacity(stage.routed.capacity()),
+                        .map(|stage| {
+                            let input_latency = if stage.bypassed {
+                                0
+                            } else {
+                                stage_inputs
+                                    .binary_search_by_key(&stage.device, |entry| entry.0)
+                                    .ok()
+                                    .and_then(|index| stage_inputs.get(index))
+                                    .map(|entry| entry.1)
+                                    .ok_or(PlaybackError::Misaligned)?
+                            };
+                            Ok(Stage {
+                                device: stage.device,
+                                clap_id: stage.clap_id.clone(),
+                                bypassed: stage.bypassed,
+                                bypass_output: stage.bypass_output.clone(),
+                                awaiting_notes: true,
+                                chase_in_buffer: false,
+                                chase_pending: false,
+                                needs_restart: false,
+                                block_complete: false,
+                                cleanup: Cleanup::None,
+                                // SAFETY: only the current bank is processed; queued and
+                                // retired banks are never submitted or collected.
+                                host: unsafe { stage.instance.host().audio_handle() },
+                                instance: Arc::clone(&stage.instance),
+                                instrument: stage.instrument,
+                                input: stage.input.clone(),
+                                output: stage.output.clone(),
+                                main_outputs: stage.main_outputs,
+                                main_inputs: stage.main_inputs,
+                                promoted: stage.promoted.clone(),
+                                routed: Vec::with_capacity(stage.routed.capacity()),
+                                input_latency,
+                                transport: Vec::with_capacity(transport_capacity),
+                            })
                         })
-                        .collect();
+                        .collect::<Result<Vec<_>, PlaybackError>>()?;
                     let mut host = track_host(
                         track.key,
                         stages,
@@ -704,9 +727,9 @@ impl HostGraph {
                     {
                         host.instrument_delay = std::mem::take(&mut entry.1);
                     }
-                    host
+                    Ok(host)
                 })
-                .collect(),
+                .collect::<Result<Vec<_>, PlaybackError>>()?,
         );
         graph.stage_index = graph
             .tracks
@@ -722,7 +745,7 @@ impl HostGraph {
         graph.stage_index.sort_unstable_by_key(|entry| entry.0);
         // One place per stage: a stage misses a block at most once.
         graph.report.misses = Vec::with_capacity(graph.stage_index.len());
-        graph
+        Ok(graph)
     }
 
     /// Callback boundary only. Preserve DSP ownership and chase/reset receipts,
@@ -1069,14 +1092,38 @@ impl HostGraph {
         Ok(())
     }
 
-    /// Copies this track's input and publishes the first stage. Does not wait.
-    ///
-    /// `source` contains placed audio. `clips` is the placed audio alone,
-    /// with the children's bus on a parent. The first instrument ignores
-    /// `source` and receives notes; `clips` is added to that instrument's
-    /// output. `own`, when given, scales that instrument's output first. A track
-    /// with no helper is left idle so the caller keeps `source`. `events` and
-    /// `chased_ons` are this track's alone; the caller groups them once.
+    /// Build bounded per-stage musical clocks using the audio graph's input lags.
+    pub(crate) fn prepare_transport(
+        &mut self,
+        timeline: &mut Timeline,
+        trajectory: Playhead,
+        frames: usize,
+    ) -> Result<(), PlaybackError> {
+        for stage in self.tracks.iter_mut().flat_map(|track| &mut track.stages) {
+            if !stage.bypassed {
+                let events = timeline.delayed(trajectory, stage.input_latency, frames)?;
+                stage.transport.clear();
+                if copy_events(&mut stage.transport, events, |_| true) {
+                    return Err(PlaybackError::BufferTooSmall);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn set_transport(&mut self, events: &[Event]) -> Result<(), PlaybackError> {
+        for stage in self.tracks.iter_mut().flat_map(|track| &mut track.stages) {
+            stage.transport.clear();
+            if !stage.bypassed && copy_events(&mut stage.transport, events, |_| true) {
+                return Err(PlaybackError::BufferTooSmall);
+            }
+        }
+        Ok(())
+    }
+
+    /// Copies this track's input and publishes the first stage without waiting.
+    /// `clips` includes the children's bus and is added after a first instrument.
+    /// `own` scales that instrument alone. Events have already been grouped by track.
     pub(crate) fn submit(
         &mut self,
         key: u32,
@@ -1383,26 +1430,8 @@ impl TrackHost {
 
     fn remember(&mut self, report: &mut BlockReport, events: BlockEvents<'_>) {
         let key = self.key;
-        let mut source = events.source.iter().peekable();
-        let mut transport = events.transport.iter().peekable();
         self.source_events.clear();
-        let mut dropped = false;
-        loop {
-            let next = match (source.peek(), transport.peek()) {
-                (None, None) => break,
-                (Some(_), None) => source.next(),
-                (None, Some(_)) => transport.next(),
-                (Some(event), Some(time)) if event_cmp(time, event).is_le() => transport.next(),
-                _ => source.next(),
-            };
-            if self.source_events.len() == self.source_events.capacity() {
-                dropped = true;
-                break;
-            }
-            if let Some(event) = next {
-                self.source_events.push(*event);
-            }
-        }
+        let mut dropped = copy_events(&mut self.source_events, events.source, |_| true);
         let chased_ons = events.chased;
         self.chased_ons.clear();
         dropped |= copy_events(&mut self.chased_ons, chased_ons, |event| {
@@ -1489,28 +1518,23 @@ impl TrackHost {
         } else {
             &[]
         };
-        let mut dropped = source_events.len() + chase.len() > stage.routed.capacity();
-        let mut sources = source_events.iter().peekable();
-        let mut chased = chase.iter().peekable();
+        let mut dropped =
+            source_events.len() + chase.len() + stage.transport.len() > stage.routed.capacity();
+        let mut inputs = [chase.iter(), source_events.iter(), stage.transport.iter()];
         loop {
-            let take_chase = match (sources.peek(), chased.peek()) {
-                (None, None) => break,
-                (None, Some(_)) => true,
-                (Some(_), None) => false,
-                (Some(source), Some(chased)) => {
-                    event_cmp(chased, source) != std::cmp::Ordering::Greater
-                }
-            };
+            let next = inputs
+                .iter()
+                .enumerate()
+                .filter_map(|(index, input)| input.as_slice().first().map(|event| (index, event)))
+                .min_by(|(_, left), (_, right)| event_cmp(left, right))
+                .map(|(index, _)| index);
+            let Some(index) = next else { break };
             if stage.routed.len() == stage.routed.capacity() {
                 dropped = true;
                 break;
             }
-            let next = if take_chase {
-                chased.next()
-            } else {
-                sources.next()
-            };
-            let Some(event) = next else {
+            let Some(event) = inputs.get_mut(index).and_then(Iterator::next) else {
+                dropped = true;
                 break;
             };
             stage.routed.push((*event, 0));
@@ -2018,6 +2042,8 @@ fn spawn_stage(
         main_inputs: main_inputs.min(inputs),
         promoted: Vec::new(),
         routed: Vec::with_capacity(event_cap.max(1)),
+        input_latency: 0,
+        transport: Vec::new(),
     }))
 }
 

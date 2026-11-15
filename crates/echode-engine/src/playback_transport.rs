@@ -1,5 +1,5 @@
 //! Control-prepared musical time, shared by every track in one audio block.
-use super::{PlaybackError, RenderRange};
+use super::{PlaybackError, Playhead, RenderRange, split_loop};
 use echode_model::{Meter, Project, TICKS_PER_QUARTER};
 use echode_realtime::{Event, Span, TempoIndex, Transport};
 use echode_time::{FLICKS_PER_SECOND, sample_to_flick};
@@ -11,13 +11,14 @@ struct Point {
     bpm: f64,
 }
 
-pub(super) struct Timeline {
+pub(crate) struct Timeline {
     points: Vec<Point>,
     rate: u32,
     meter: Meter,
     loop_bounds: Option<(i64, i64)>,
     loop_beats: (f64, f64),
     events: Vec<Event>,
+    spans: Vec<Span>,
 }
 
 impl Timeline {
@@ -107,6 +108,15 @@ impl Timeline {
             loop_bounds: bounds,
             loop_beats: (0.0, 0.0),
             events: Vec::with_capacity(capacity),
+            spans: vec![
+                Span {
+                    start: 0,
+                    frames: 0,
+                    block_offset: 0,
+                    release_at: None
+                };
+                spans
+            ],
         };
         if let Some((start, end)) = bounds {
             timeline.loop_beats = (timeline.position(start)?.0, timeline.position(end)?.0);
@@ -175,6 +185,55 @@ impl Timeline {
         self.push(position, 0, false)?;
         Ok(&self.events)
     }
+    pub(crate) fn delayed(
+        &mut self,
+        trajectory: Playhead,
+        latency: u64,
+        frames: usize,
+    ) -> Result<&[Event], PlaybackError> {
+        let (start, end) = trajectory.loop_bounds();
+        let (count, _) = split_loop(
+            trajectory.input_sample(latency)?,
+            frames,
+            start,
+            end,
+            &mut self.spans,
+        )?;
+        self.events.clear();
+        for index in 0..count {
+            let span = *self.spans.get(index).ok_or(PlaybackError::BufferTooSmall)?;
+            self.push_span(span)?;
+        }
+        Ok(&self.events)
+    }
+
+    fn push_span(&mut self, span: Span) -> Result<(), PlaybackError> {
+        if span.frames == 0 {
+            return Ok(());
+        }
+        self.push(span.start, span.block_offset, true)?;
+        let end = span
+            .start
+            .checked_add(i64::from(span.frames))
+            .ok_or(PlaybackError::Time)?;
+        let mut next = self.point_at(span.start) + 1;
+        while let Some(point) = self.points.get(next) {
+            if point.sample >= end {
+                break;
+            }
+            let at = point.sample;
+            let offset = u32::try_from(at - span.start).map_err(|_| PlaybackError::Time)?;
+            self.push(
+                at,
+                span.block_offset
+                    .checked_add(offset)
+                    .ok_or(PlaybackError::Time)?,
+                true,
+            )?;
+            next += 1;
+        }
+        Ok(())
+    }
     pub(super) fn fill(
         &mut self,
         spans: &[Span],
@@ -186,30 +245,7 @@ impl Timeline {
             return self.stopped(held);
         } else {
             for span in spans {
-                if span.frames == 0 {
-                    continue;
-                }
-                self.push(span.start, span.block_offset, true)?;
-                let end = span
-                    .start
-                    .checked_add(i64::from(span.frames))
-                    .ok_or(PlaybackError::Time)?;
-                let mut next = self.point_at(span.start) + 1;
-                while let Some(point) = self.points.get(next) {
-                    if point.sample >= end {
-                        break;
-                    }
-                    let at = point.sample;
-                    let offset = u32::try_from(at - span.start).map_err(|_| PlaybackError::Time)?;
-                    self.push(
-                        at,
-                        span.block_offset
-                            .checked_add(offset)
-                            .ok_or(PlaybackError::Time)?,
-                        true,
-                    )?;
-                    next += 1;
-                }
+                self.push_span(*span)?;
             }
         }
         Ok(&self.events)

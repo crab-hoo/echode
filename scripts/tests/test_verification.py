@@ -2644,6 +2644,7 @@ class PolicyTests(unittest.TestCase):
                 "output-inventory-fault-isolation",
                 "hal-overload-log",
                 "plugin-musical-transport",
+                "plugin-pdc-transport",
                 "track-mix-fault",
                 "track-mix-export",
                 "track-mix-fault-ui",

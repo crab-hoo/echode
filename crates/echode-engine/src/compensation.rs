@@ -299,6 +299,8 @@ pub(crate) struct TrackDelays {
 pub(crate) struct Compensation {
     /// In the order of the tracks given.
     pub(crate) tracks: Vec<TrackDelays>,
+    /// Each active device's input lag, from the same solved graph as the audio.
+    pub(crate) stage_inputs: Vec<(u128, u64)>,
     /// The metronome's clicks, to meet the music at master.
     pub(crate) clicks: u64,
     /// How far master lags the timeline.
@@ -330,6 +332,7 @@ pub(crate) fn compensate(tracks: &[TrackFlow<'_>]) -> Result<Compensation, Playb
     let clicks = graph.link(metronome, master);
     let mut inputs = Vec::with_capacity(tracks.len());
     let mut lines = Vec::with_capacity(tracks.len());
+    let mut stage_inputs = Vec::new();
     for (position, track) in tracks.iter().enumerate() {
         let input = graph.node(0, 0);
         inputs.push(input);
@@ -346,6 +349,9 @@ pub(crate) fn compensate(tracks: &[TrackFlow<'_>]) -> Result<Compensation, Playb
             // bypassed one is silent and keeps its place.
             let tail = if first.bypassed { 0 } else { first.tail };
             let node = graph.node(u64::from(first.latency), tail);
+            if !first.bypassed {
+                stage_inputs.push((first.device, node));
+            }
             instrument = Some(graph.link(node, input));
             devices = later;
         }
@@ -360,6 +366,7 @@ pub(crate) fn compensate(tracks: &[TrackFlow<'_>]) -> Result<Compensation, Playb
                 continue;
             }
             let node = graph.node(frames, device.tail);
+            stage_inputs.push((device.device, node));
             graph.link(output, node);
             output = node;
         }
@@ -384,6 +391,17 @@ pub(crate) fn compensate(tracks: &[TrackFlow<'_>]) -> Result<Compensation, Playb
     }
     let solution = graph.solve(master)?;
     solution.verify(&graph, master)?;
+    let stage_inputs = stage_inputs
+        .into_iter()
+        .map(|(device, node)| {
+            solution
+                .lags
+                .get(node.0)
+                .copied()
+                .map(|lag| (device, lag))
+                .ok_or(PlaybackError::Misaligned)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let delay = |link: Option<LinkId>| link.map_or(Ok(0), |link| solution.delay(link));
     let tracks = lines
         .iter()
@@ -400,6 +418,7 @@ pub(crate) fn compensate(tracks: &[TrackFlow<'_>]) -> Result<Compensation, Playb
         .collect::<Result<Vec<_>, PlaybackError>>()?;
     Ok(Compensation {
         tracks,
+        stage_inputs,
         clicks: solution.delay(clicks)?,
         latency: solution.latency(),
         tail: solution.tail(),

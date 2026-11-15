@@ -43,11 +43,11 @@ use crate::compensation::{TrackFlow, compensate};
 use crate::delay::Delay;
 use bus::Bus;
 #[path = "playback_transport.rs"]
-mod musical_time;
+pub(crate) mod musical_time;
 use musical_time::Timeline;
 #[path = "playback_playhead.rs"]
 mod playhead;
-use playhead::Playhead;
+pub(crate) use playhead::Playhead;
 /// Clock providers consume device frames. External synchronization may supply
 /// another provider without making the UI timer advance the transport.
 pub trait ClockSource: Send {
@@ -352,6 +352,7 @@ struct Prepared {
 struct RenderRange {
     loop_bounds: (Option<i64>, Option<i64>),
     started_before: Option<i64>,
+    trajectory: Option<Playhead>,
     /// Fade only the score's audio source, before plugins. Their own release,
     /// delay and autonomous output remain audible after the transport stops.
     source_fade: Option<u32>,
@@ -786,7 +787,11 @@ impl Prepared {
         // One store after the block, including plugin completion. A decay written
         // before this point is what the UI samples for the whole callback.
         self.meters_committed = true;
-        let transport = self.timeline.fill(spans, range)?;
+        if let Some(trajectory) = range.trajectory {
+            hosts.prepare_transport(&mut self.timeline, trajectory, frames)?;
+        } else {
+            hosts.set_transport(self.timeline.fill(spans, range)?)?;
+        }
         let Prepared {
             tracks,
             bus,
@@ -812,7 +817,6 @@ impl Prepared {
             bus_left,
             bus_right,
             spans,
-            transport,
             range,
             frames,
             late: false,
@@ -885,7 +889,7 @@ impl Prepared {
         ) {
             return Err(PlaybackError::BufferTooSmall);
         }
-        let transport = self.timeline.stopped(position)?;
+        hosts.set_transport(self.timeline.stopped(position)?)?;
         for (position, track) in self.tracks.iter_mut().enumerate() {
             let plane = track
                 .plane
@@ -907,7 +911,6 @@ impl Prepared {
                 BlockEvents {
                     source: filtered,
                     chased: &[],
-                    transport,
                 },
                 None,
             );
@@ -1069,7 +1072,6 @@ struct Block<'a> {
     bus_left: &'a mut [f64],
     bus_right: &'a mut [f64],
     spans: &'a [Span],
-    transport: &'a [Event],
     range: RenderRange,
     frames: usize,
     late: bool,
@@ -1190,7 +1192,6 @@ impl Block<'_> {
                 BlockEvents {
                     source: events,
                     chased,
-                    transport: self.transport,
                 },
                 own,
             );
@@ -1687,6 +1688,7 @@ fn compensate_plan(
         instruments,
         Compensated {
             reported: reported.reported(),
+            stage_inputs: plan.stage_inputs,
             latency: plan.latency,
             tail: plan.tail,
         },
@@ -1795,6 +1797,7 @@ pub struct PlaybackControl {
 struct Compensated {
     /// Each hosted device's latency and tail in graph order, to notice later changes.
     reported: Vec<(u128, u32, u32)>,
+    stage_inputs: Vec<(u128, u64)>,
     latency: u64,
     tail: u32,
 }
@@ -1953,7 +1956,11 @@ pub fn playback(
         )?;
         control.save_controls = control.hosts.save_controls();
         let (delays, compensated) = compensate_plan(&mut audio.current, &control.hosts, frames)?;
-        audio.hosts = Box::new(control.hosts.audio_snapshot(delays));
+        audio.hosts = Box::new(control.hosts.audio_snapshot(
+            delays,
+            &compensated.stage_inputs,
+            audio.current.timeline.capacity(),
+        )?);
         audio
             .status
             .latency
@@ -2601,8 +2608,12 @@ impl PlaybackControl {
             self.published_tempo = pending.prepared.tempo.clone();
         }
         let update = Update {
+            hosts: Box::new(self.hosts.audio_snapshot(
+                delays,
+                &compensated.stage_inputs,
+                pending.prepared.timeline.capacity(),
+            )?),
             prepared: pending.prepared,
-            hosts: Box::new(self.hosts.audio_snapshot(delays)),
             revision: pending.revision,
             retime,
         };
@@ -3230,6 +3241,7 @@ impl PlaybackAudio {
                     RenderRange {
                         loop_bounds,
                         started_before: Some(self.clock.position()),
+                        trajectory: None,
                         source_fade: None,
                         meter_release,
                     },
@@ -3269,6 +3281,7 @@ impl PlaybackAudio {
             RenderRange {
                 loop_bounds,
                 started_before: None,
+                trajectory: Some(self.playhead),
                 source_fade: None,
                 meter_release,
             },
@@ -3450,6 +3463,7 @@ impl PlaybackAudio {
             RenderRange {
                 loop_bounds: tail.loop_bounds,
                 started_before: Some(tail.cutoff),
+                trajectory: None,
                 source_fade: self.stop_fade_offset,
                 meter_release,
             },
@@ -3495,7 +3509,9 @@ fn split_loop(
             position = start;
         }
         let until = match loop_end {
-            Some(end) if end > position => u32::try_from(end - position).unwrap_or(u32::MAX),
+            Some(end) if end > position => {
+                u32::try_from(i128::from(end) - i128::from(position)).unwrap_or(u32::MAX)
+            }
             Some(_) => 0,
             None => u32::MAX,
         };

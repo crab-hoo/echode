@@ -187,6 +187,10 @@ fn contract_an_import_stages_off_the_worker_and_later_edits_follow_it() {
     let wav = scratch("source").with_extension("wav");
     write_package(&path, &Project::new()).unwrap();
     write_wav(&wav);
+    // Initialize AudioToolbox before the worker-response deadline. macOS can
+    // enumerate the executable's entire deps directory on its first open;
+    // that process-wide setup is not an import scheduling delay.
+    drop(echode_history::AudioFileReader::open(&wav).unwrap());
     let gate = Gate::default();
     let service = open(&path, &gate);
     let _release = Release(gate.clone());
