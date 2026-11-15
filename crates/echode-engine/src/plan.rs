@@ -86,15 +86,14 @@ struct CachedDemand {
 /// Lookups a prepared plan reads, shared while a track's notes are unchanged.
 #[derive(Clone, Debug)]
 pub(crate) struct TrackDerived {
-    /// The cursor's note lookups for this track. Sharing it tells the cursor
-    /// the notes are unchanged, so it takes over that track's voices (R1).
-    pub(crate) index: Arc<NoteIndex>,
+    pub(crate) score: crate::plugin_notes::Score,
 }
 
 impl TrackDerived {
     fn new(plan: &TrackPlan) -> Self {
+        let index = Arc::new(NoteIndex::new(plan));
         Self {
-            index: Arc::new(NoteIndex::new(plan)),
+            score: crate::plugin_notes::Score::new(plan, index),
         }
     }
 }

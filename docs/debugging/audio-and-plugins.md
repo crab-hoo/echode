@@ -314,6 +314,23 @@ cargo test -q -p echode-plugin-host --test hosted_playback transport::
 cargo test -q -p echode-engine musical_time
 ```
 
+### 後段 FX のノート応答が音声より早い・遅延オフの取りこぼしで音が残る
+
+`Compensation::stage_inputs` と段の `input_latency` を確認する。ノートも `plugin_notes.rs::Notes` がその入力遅れで生成する。
+プリロール中は音源側のノートも追いかけも送らず、原点が届くフレームで発音する。トランスポートの負の外挿とは異なる。
+折返しちょうどは `Playhead::note_sample` が終端を保ち、`split_loop` が解放を付ける。折返し済みの先頭からでは前の声を解放できない。
+停止・位置移動での終了通知は各段の保持集合から作る。音源側で既に終わったノートにも後段の解放が必要なことがある。
+取りこぼしの判定も `TrackHost::miss` が各段のイベントを見る。処理先頭にノートがなくても遅延したオフがあるブロックを見落とさない。
+
+`hosted_playback/pdc_notes.rs` の `PDC notes disagree with input audio` は音声とノートの時刻の不一致である。
+`a delayed note-off lost without a source event left a stuck voice` は段ごとの復帰の不足である。
+レート・ブロック長・申告遅延・開始位置・ループ範囲と、プラグインの応答設定を残す。第三者の解釈・聴感は UC-96（[ADR 0383](../decisions/0383-pdc-stage-notes.md)）。
+
+```sh
+cargo test -q -p echode-plugin-host --test hosted_playback pdc_notes::
+cargo test -q -p echode-engine --lib plugin_notes::
+```
+
 ### CLAP のノート形式が選ばれない・ポート変更後に発音が残る
 
 ホストの `clap.note-ports.supported_dialects` は CLAP・MIDI 1.0・MIDI 2.0・MPE を返す。

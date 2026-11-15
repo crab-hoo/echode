@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use echode_realtime::{Event, event_cmp, sort_events};
+use echode_realtime::{Event, event_cmp};
 use echode_sandbox::{
     BlockProgress, FanIn, PluginAudio, PluginControl, PluginHost, PortLayout, SessionLayout,
     SpawnOptions,
@@ -34,11 +34,6 @@ pub type PluginWorkgroup = Arc<
         + Sync,
 >;
 use crate::mix::Signal;
-
-pub(crate) struct BlockEvents<'a> {
-    pub(crate) source: &'a [Event],
-    pub(crate) chased: &'a [Event],
-}
 
 /// Where a CLAP id lives on disk, and its instrument role.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -225,12 +220,8 @@ struct TrackHost {
     /// its own audio (ADR 0338).
     own: Vec<f32>,
     own_live: bool,
-    /// This block's events, copied once so each stage can keep or skip note-ons.
-    source_events: Vec<Event>,
-    /// Note-ons retained helpers already hold. Only a new helper receives them.
-    chased_ons: Vec<Event>,
-    chase_order: Vec<usize>,
-    chase_scratch: Vec<Event>,
+    event_capacity: usize,
+    chase_capacity: usize,
     /// Set by the first device output or host mix with a non-finite sample.
     fault: Option<StageFault>,
     /// The first instrument's output, delayed to meet the track's placed
@@ -383,6 +374,7 @@ struct Stage {
     routed: Vec<(Event, u32)>,
     input_latency: u64,
     transport: Vec<Event>,
+    notes: Option<crate::plugin_notes::Notes>,
 }
 
 // Process lifetime and preparation belong to control. Audio holds a lease, but
@@ -560,22 +552,13 @@ impl HostGraph {
             .is_some_and(|mut host| host.has_exited())
     }
 
-    /// Returns whether a processor needs the cursor's current sounding notes.
-    pub(crate) fn begin_block(&mut self) -> bool {
-        let mut needs_notes = false;
+    /// Clear per-block diagnostics before preparing the stages' event clocks.
+    pub(crate) fn begin_block(&mut self) {
         for stage in self.tracks.iter().flat_map(|track| &track.stages) {
             stage.instance.failure.store(0, Ordering::Release);
-            needs_notes |= stage.needs_notes();
         }
         self.report.export_reason = 0;
         self.report.misses.clear();
-        needs_notes
-    }
-
-    pub(crate) fn needs_notes(&self, key: u32) -> bool {
-        self.tracks
-            .by_key(key)
-            .is_some_and(|track| track.stages.iter().any(Stage::needs_notes))
     }
 
     /// Mark every live processor, including downstream effects. Each helper
@@ -584,17 +567,26 @@ impl HostGraph {
         for track in self.tracks.iter_mut() {
             for stage in &mut track.stages {
                 stage.host.request_reset();
+                if let Some(notes) = &mut stage.notes {
+                    notes.reset();
+                }
             }
         }
     }
 
+    pub(crate) fn holds_notes(&self) -> bool {
+        self.tracks
+            .iter()
+            .flat_map(|track| &track.stages)
+            .any(|stage| stage.notes.as_ref().is_some_and(|notes| notes.active()))
+    }
     pub(crate) fn cleanup_pending(&self) -> bool {
         self.cleanup_remaining != 0
     }
 
     /// Discarded lifecycle processing has no audio dependency between stages.
     /// Reset every helper independently, retaining note-offs until publication.
-    pub(crate) fn queue_cleanup(&mut self, events: &[Event]) -> bool {
+    pub(crate) fn queue_cleanup(&mut self) -> bool {
         // No score bank or audible block can run until this batch completes.
         // A later pause/locate therefore asks to clear the same processing state.
         if self.cleanup_pending() {
@@ -602,25 +594,6 @@ impl HostGraph {
         }
         let started = Instant::now();
         let mut fits = true;
-        for track in self.tracks.iter_mut() {
-            track.source_events.clear();
-        }
-        // One pass over the events, so a stop with many held notes does not
-        // scan them once per track (XCA-13).
-        for event in events {
-            let Some(track) = event
-                .track_key()
-                .and_then(|key| self.tracks.by_key_mut(key))
-            else {
-                continue;
-            };
-            let held = &mut track.source_events;
-            if held.len() == held.capacity() {
-                fits = false;
-                continue;
-            }
-            held.push(*event);
-        }
         for track in self.tracks.iter_mut() {
             for stage in &mut track.stages {
                 if stage.bypassed {
@@ -634,7 +607,20 @@ impl HostGraph {
                     continue;
                 }
                 stage.routed.clear();
-                for event in &track.source_events {
+                if let Some(notes) = &mut stage.notes
+                    && notes.stop().is_err()
+                {
+                    fits = false;
+                }
+                let Some(notes) = &stage.notes else {
+                    fits = false;
+                    continue;
+                };
+                let Ok(events) = notes.events() else {
+                    fits = false;
+                    continue;
+                };
+                for event in events {
                     if stage.routed.len() == stage.routed.capacity() {
                         fits = false;
                         break;
@@ -740,6 +726,7 @@ impl HostGraph {
         mut instrument_delays: Vec<(u32, Delay)>,
         stage_inputs: &[(u128, u64)],
         transport_capacity: usize,
+        scores: &[(u32, crate::plugin_notes::Score)],
     ) -> Result<Self, PlaybackError> {
         let mut stage_inputs = stage_inputs.to_vec();
         stage_inputs.sort_unstable_by_key(|entry| entry.0);
@@ -750,6 +737,11 @@ impl HostGraph {
             self.tracks
                 .iter()
                 .map(|track| {
+                    let score = scores
+                        .iter()
+                        .find(|entry| entry.0 == track.key)
+                        .map(|entry| &entry.1)
+                        .ok_or(PlaybackError::Misaligned)?;
                     let stages = track
                         .stages
                         .iter()
@@ -797,6 +789,11 @@ impl HostGraph {
                                 routed: Vec::with_capacity(stage.routed.capacity()),
                                 input_latency,
                                 transport: Vec::with_capacity(transport_capacity),
+                                notes: Some(crate::plugin_notes::Notes::new(
+                                    score.clone(),
+                                    track.inject.len(),
+                                    stage.routed.capacity(),
+                                )?),
                             })
                         })
                         .collect::<Result<Vec<_>, PlaybackError>>()?;
@@ -804,8 +801,8 @@ impl HostGraph {
                         track.key,
                         stages,
                         track.inject.len(),
-                        track.source_events.capacity(),
-                        track.chased_ons.capacity(),
+                        track.event_capacity,
+                        track.chase_capacity,
                     );
                     if let Ok(index) =
                         instrument_delays.binary_search_by_key(&track.key, |entry| entry.0)
@@ -836,7 +833,11 @@ impl HostGraph {
 
     /// Callback boundary only. Preserve DSP ownership and chase/reset receipts,
     /// and continue each track's compensation (ADR 0339).
-    pub(crate) fn carry(&mut self, old: &mut Self) {
+    pub(crate) fn carry(
+        &mut self,
+        old: &mut Self,
+        trajectory: Playhead,
+    ) -> Result<(), PlaybackError> {
         for track in self.tracks.iter_mut() {
             if let Some(previous) = old.tracks.by_key_mut(track.key) {
                 track.instrument_delay.carry(&mut previous.instrument_delay);
@@ -848,10 +849,13 @@ impl HostGraph {
                 .binary_search_by_key(&stage.device, |entry| entry.0)
                 .ok()
                 .and_then(|index| old.stage_index.get(index))
-                .and_then(|(_, track, index)| old.tracks.get(*track)?.stages.get(*index));
+                .and_then(|(_, track, index)| old.tracks.get_mut(*track)?.stages.get_mut(*index));
             if let Some(previous) =
                 previous.filter(|previous| Arc::ptr_eq(&previous.instance, &stage.instance))
             {
+                if let (Some(notes), Some(old_notes)) = (&mut stage.notes, &mut previous.notes) {
+                    notes.carry(old_notes, trajectory, stage.input_latency)?;
+                }
                 stage.awaiting_notes = previous.awaiting_notes;
                 stage.chase_in_buffer = previous.chase_in_buffer;
                 stage.chase_pending = previous.chase_pending;
@@ -870,6 +874,7 @@ impl HostGraph {
                 }
             }
         }
+        Ok(())
     }
 
     pub(crate) fn activate_prepared(&mut self) {
@@ -1096,8 +1101,8 @@ impl HostGraph {
                     })
                     .collect(),
                 frames: track.inject.len(),
-                events: track.source_events.capacity(),
-                chase: track.chased_ons.capacity(),
+                events: track.event_capacity,
+                chase: track.chase_capacity,
             })
             .collect();
         let deliveries = chains
@@ -1205,6 +1210,10 @@ impl HostGraph {
         frames: usize,
     ) -> Result<(), PlaybackError> {
         for stage in self.tracks.iter_mut().flat_map(|track| &mut track.stages) {
+            let recover = stage.needs_notes();
+            if let Some(notes) = &mut stage.notes {
+                notes.prepare(trajectory, stage.input_latency, frames, recover)?;
+            }
             if !stage.bypassed {
                 let events = timeline.delayed(trajectory, stage.input_latency, frames)?;
                 stage.transport.clear();
@@ -1219,6 +1228,9 @@ impl HostGraph {
     pub(crate) fn set_transport(&mut self, events: &[Event]) -> Result<(), PlaybackError> {
         for stage in self.tracks.iter_mut().flat_map(|track| &mut track.stages) {
             stage.transport.clear();
+            if let Some(notes) = &mut stage.notes {
+                notes.stop()?;
+            }
             if !stage.bypassed && copy_events(&mut stage.transport, events, |_| true) {
                 return Err(PlaybackError::BufferTooSmall);
             }
@@ -1228,13 +1240,12 @@ impl HostGraph {
 
     /// Copies this track's input and publishes the first stage without waiting.
     /// `clips` includes the children's bus and is added after a first instrument.
-    /// `own` scales that instrument alone. Events have already been grouped by track.
+    /// `own` scales that instrument alone. Each stage prepared its own note clock.
     pub(crate) fn submit(
         &mut self,
         key: u32,
         source: Signal<'_>,
         clips: Signal<'_>,
-        events: BlockEvents<'_>,
         own: Option<&[f32]>,
     ) -> Submitted {
         let Some(track) = self.tracks.by_key_mut(key) else {
@@ -1249,7 +1260,6 @@ impl HostGraph {
         }
         let frames = source.left.len();
         let report = &mut self.report;
-        track.remember(report, events);
         track.arm_inject(clips, frames);
         track.arm_own(own, frames);
         track.prepare_input(report, 0, source, frames);
@@ -1482,15 +1492,17 @@ impl TrackHost {
     /// Marks this block missed at the current stage and names it for export.
     fn miss(&mut self, report: &mut BlockReport, reason: u8) {
         report.note_miss(self.stages.get(self.stage), reason);
-        if !self.source_events.is_empty() {
-            // A late, published block still reaches this helper. Stages after
-            // it did not receive the block at all; a failed submission includes
-            // the current stage too. Neither may retain the old voice state.
-            let first = self.stage + usize::from(reason == MISS_DEADLINE);
-            for stage in self.stages.iter_mut().skip(first) {
-                if !stage.bypassed {
-                    stage.recover_notes();
-                }
+        // Each stage has a different input clock. A downstream off may be in
+        // this block even when the source cursor has no event at all.
+        let first = self.stage + usize::from(reason == MISS_DEADLINE);
+        for stage in self.stages.iter_mut().skip(first) {
+            if !stage.bypassed
+                && stage
+                    .notes
+                    .as_ref()
+                    .is_some_and(|notes| notes.events().map_or(true, |events| !events.is_empty()))
+            {
+                stage.recover_notes();
             }
         }
         self.run = Run::Missed;
@@ -1531,27 +1543,6 @@ impl TrackHost {
             Some(stage) => poll_stage(stage, generation, frames),
             None => Poll::Failed(MISS_SUBMIT),
         }
-    }
-
-    fn remember(&mut self, report: &mut BlockReport, events: BlockEvents<'_>) {
-        let key = self.key;
-        self.source_events.clear();
-        let mut dropped = copy_events(&mut self.source_events, events.source, |_| true);
-        let chased_ons = events.chased;
-        self.chased_ons.clear();
-        dropped |= copy_events(&mut self.chased_ons, chased_ons, |event| {
-            event.track_key() == Some(key)
-        });
-        if !self.chased_ons.is_empty()
-            && !sort_events(
-                &mut self.chased_ons,
-                &mut self.chase_order,
-                &mut self.chase_scratch,
-            )
-        {
-            dropped = true;
-        }
-        report.dropped_events |= dropped;
     }
 
     fn prepare_input(
@@ -1604,25 +1595,23 @@ impl TrackHost {
     /// A helper that already received a sounding note does not get that note-on
     /// again. A helper spawned while the note is held still does.
     fn route_events(&mut self, report: &mut BlockReport, stage_index: usize) {
-        let TrackHost {
-            source_events,
-            chased_ons,
-            stages,
-            ..
-        } = self;
-        let Some(stage) = stages.get_mut(stage_index) else {
+        let Some(stage) = self.stages.get_mut(stage_index) else {
             return;
         };
         if stage.bypassed {
             return;
         }
         let include_chase = stage.needs_notes();
-        stage.routed.clear();
-        let chase = if include_chase {
-            chased_ons.as_slice()
-        } else {
-            &[]
+        let Some(notes) = &stage.notes else {
+            report.dropped_events = true;
+            return;
         };
+        let (Ok(source_events), Ok(chased_ons)) = (notes.events(), notes.chased()) else {
+            report.dropped_events = true;
+            return;
+        };
+        stage.routed.clear();
+        let chase = if include_chase { chased_ons } else { &[] };
         let mut dropped =
             source_events.len() + chase.len() + stage.transport.len() > stage.routed.capacity();
         let mut inputs = [chase.iter(), source_events.iter(), stage.transport.iter()];
@@ -1962,10 +1951,8 @@ fn track_host(
         inject_live: false,
         own: vec![1.0; frames],
         own_live: false,
-        source_events: Vec::with_capacity(events.max(1)),
-        chased_ons: Vec::with_capacity(chase.max(1)),
-        chase_order: vec![0; chase.max(1)],
-        chase_scratch: vec![Event::note_off(0, 0, 0, 0); chase.max(1)],
+        event_capacity: events.max(1),
+        chase_capacity: chase.max(1),
         fault: None,
         instrument_delay: Delay::default(),
     }
@@ -2150,6 +2137,7 @@ fn spawn_stage(
         routed: Vec::with_capacity(event_cap.max(1)),
         input_latency: 0,
         transport: Vec::new(),
+        notes: None,
     };
     stage.route(ports, revision, frames);
     Ok(Some(stage))

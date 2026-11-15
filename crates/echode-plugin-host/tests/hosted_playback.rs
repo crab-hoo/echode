@@ -37,6 +37,8 @@ mod midi_notes;
 mod note_edges;
 #[path = "hosted_playback/overflow.rs"]
 mod overflow;
+#[path = "hosted_playback/pdc_notes.rs"]
+mod pdc_notes;
 #[path = "hosted_playback/plugin_gui.rs"]
 mod plugin_gui;
 #[path = "hosted_playback/recorded_states.rs"]

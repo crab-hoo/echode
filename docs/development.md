@@ -423,6 +423,8 @@ MPE の表情の宛先判定は `MpeZone::exclusive_channel`、値の変換と�
 製品の生成・容量の準備は `echode-engine/src/playback_transport.rs::Timeline`、各段の入力遅れは `compensation.rs::Compensation::stage_inputs` に置く。
 `plugins.rs::HostGraph::prepare_transport` が音声と同じ軌跡から各段の時刻を作り、`route_events` がノートへ併合する。
 製品経路と全段への配布は `tests/hosted_playback/transport.rs`（必須契約 `plugin-musical-transport`）、メタデータと密度は `playback_transport_tests.rs` を使う。
+ノートの生成・保持・追いかけ・停止と計画交換は `plugin_notes.rs::Notes`、トラック単位で共有する楽譜は同じファイルの `Score` に置く。
+`tests/hosted_playback/pdc_notes.rs` が後段とフォルダの補正・停止・計画交換・取りこぼしからの復帰を通す（[ADR 0383](decisions/0383-pdc-stage-notes.md)）。
 
 ### ヘルパーの制御と共有領域
 
@@ -458,7 +460,7 @@ MPE の表情の宛先判定は `MpeZone::exclusive_channel`、値の変換と�
 実際の `waitpid` の `ECHILD` と、共有領域を ready にしない子で、監視の join と子の回収を区別して検査する。
 
 コールバックの費用がトラック数とともにどう増えるかの release 計測は `crates/echode-plugin-host/tests/track_scale.rs` に置き、`make spike-plugin-tracks` で動かす。
-ブロックのイベントの振り分けは `playback.rs` の `group_events`、ヘルパーのトラックのキーの索引は `plugins.rs` の `HostTracks` である（[ADR 0236](decisions/0236-callback-work-per-track.md)）。
+ブロックのノートは `plugin_notes.rs` の段ごとの `Cursor` が自分のトラックだけを読み、`plugins.rs` の `HostTracks` がキーの索引を持つ（[ADR 0383](decisions/0383-pdc-stage-notes.md)）。
 楽譜の大きさに比例する処理（ループの折り返し、再生中の編集、制御側の作り直し、モデルの探索）の release 計測は `crates/echode-engine/tests/scale.rs` に置き、`make spike-scale` で動かす（[実行指示](reviews/2026-11-03-fix-instructions.md)）。
 イベントの局所的な容量上界は `playback_capacity.rs`、通常の境界回帰は `playback_capacity_tests.rs` と `tests/audit_scale_and_mix.rs` に置く。
 共有領域の密度・拡張・旧発音の解放は `hosted_playback/event_capacity.rs` で製品バッファへ通す（[ADR 0240](decisions/0240-block-local-event-capacity.md)）。

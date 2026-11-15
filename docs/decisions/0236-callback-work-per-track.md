@@ -1,7 +1,7 @@
 # ADR 0236: コールバックでトラックごとに全体を走査しない
 
 - 日付: 2026-11-03
-- 状態: 現行
+- 状態: 一部置換（全体カーソルからの配布と終了通知は [ADR 0383](0383-pdc-stage-notes.md)。トラックの索引と反復走査を避ける規則は現行）
 - 領域: 音声エンジン・書き出し
 - 関連: [ADR 0035](0035-playback-plan.md)、[ADR 0102](0102-exclusive-audio-graph.md)、[横断監査](../reviews/2026-11-02-cross-cutting-audit.md)の XCA-13
 

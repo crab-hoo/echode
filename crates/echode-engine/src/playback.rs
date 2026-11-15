@@ -10,15 +10,15 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::time::Instant;
 
 use echode_model::{Meter, Project};
-use echode_realtime::{Cursor, Event, Plan, Span, TempoIndex, sort_events};
+use echode_realtime::{Plan, Span, TempoIndex};
 use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::mix::{FaderState, GateRamp, Signal};
 pub use crate::planes::ClipWindow;
 use crate::planes::{FinitePlanes, PlacedPlanes};
 use crate::plugins::{
-    BlockEvents, ChainDevice, HostGraph, PluginRoute, PluginWorkgroup, Progress, StageFault,
-    Submitted, TrackChain, collect_deadline,
+    ChainDevice, HostGraph, PluginRoute, PluginWorkgroup, Progress, StageFault, Submitted,
+    TrackChain, collect_deadline,
 };
 use crate::realtime::ForbidAlloc;
 use crate::sequence::render_metronome_index_before;
@@ -159,9 +159,6 @@ struct Status {
     generation: AtomicU32,
     playing: AtomicBool,
     sample: AtomicI64,
-    /// The current cursor's `chase_from`, `i64::MIN` for `None`. With `sample`
-    /// it places the next plan in advance; a stale pair is only slower.
-    chase_from: AtomicI64,
     tick: AtomicI64,
     playhead_tick: AtomicI64,
     failed: AtomicBool,
@@ -298,35 +295,16 @@ fn empty_clips(_project: &Project, _rate: u32) -> Result<Vec<LoadedClip>, Playba
 
 struct Prepared {
     plan: Plan,
-    cursor: Cursor,
     tempo: TempoIndex,
     timeline: Timeline,
+    note_scores: Vec<(u32, crate::plugin_notes::Score)>,
     tracks: Vec<Track>,
     track_indices: Vec<(u32, usize)>,
     mixer_indices: Vec<(u128, usize)>,
-    events: Vec<Event>,
-    /// Sort workspace, then the block's events grouped by track position.
-    filtered: Vec<Event>,
-    /// One more entry than `tracks`. See [`group_events`].
-    event_ends: Vec<usize>,
-    /// Index workspace for `sort_events`. Same length as `events`.
-    sort_order: Vec<usize>,
-    /// Note-offs already written at the front of `events`, not yet submitted.
-    released: usize,
+    reserved_events: usize,
     previous_releases: usize,
     sample_rate: u32,
     meter: Meter,
-    chase: bool,
-    /// The plugin has been told about the cursor's sounding notes.
-    plugin_holds: bool,
-    /// Note-ons chased from the previous plan. Retained helpers hold these voices.
-    /// A plugin that was just spawned still needs them. Timeline note-ons stay in `events`.
-    /// Fixed length; the block's are `chased_ons[..chased_len]`.
-    chased_ons: Vec<Event>,
-    chased_len: usize,
-    /// `chased_ons` grouped by track position, like `filtered` and `event_ends`.
-    chased_grouped: Vec<Event>,
-    chased_ends: Vec<usize>,
     /// Installed with the event buffers. The callback does not change these alone.
     loop_start: Option<i64>,
     loop_end: Option<i64>,
@@ -404,16 +382,14 @@ impl Prepared {
         // Unchanged tracks keep their plan, cursor lookups and demand (FCA-04).
         let crate::plan::Built { plan, derived } =
             crate::plan::build(project, project.tempo(), rate, ids)?;
-        let cursor = plan
-            .cursor_with(
-                derived
-                    .iter()
-                    .map(|lookups| Arc::clone(&lookups.index))
-                    .collect(),
-            )
-            .ok_or(PlaybackError::Time)?;
         let tempo = crate::plan::tempo_index(project.tempo())?;
         let timeline = Timeline::new(project, &tempo, rate, frames, loop_bounds)?;
+        let note_scores = plan
+            .tracks
+            .iter()
+            .zip(&derived)
+            .map(|(track, derived)| (track.track_key, derived.score.clone()))
+            .collect();
         let Routing { gates, parents } = track_routing(project, &plan)?;
         let bus = Bus::new(parents);
         // Group the clips once, in loaded order, rather than filtering per track.
@@ -495,7 +471,6 @@ impl Prepared {
             .checked_add(chase_count)
             .ok_or(PlaybackError::Time)?
             .max(1);
-        let plan_tracks = tracks.len();
         let mut track_indices: Vec<_> = tracks
             .iter()
             .enumerate()
@@ -510,26 +485,16 @@ impl Prepared {
         mixer_indices.sort_unstable_by_key(|entry| entry.0);
         Ok(Self {
             plan,
-            cursor,
             tempo,
             timeline,
+            note_scores,
             tracks,
             track_indices,
             mixer_indices,
-            events: vec![Event::note_off(0, 0, 0, 0); event_count],
-            filtered: vec![Event::note_off(0, 0, 0, 0); event_count],
-            event_ends: vec![0; plan_tracks + 1],
-            sort_order: vec![0; event_count],
-            released: 0,
+            reserved_events: event_count,
             previous_releases: 0,
             sample_rate: rate,
             meter: project.meter(),
-            chase: true,
-            plugin_holds: false,
-            chased_ons: vec![Event::note_off(0, 0, 0, 0); chase_count.max(1)],
-            chased_len: 0,
-            chased_grouped: vec![Event::note_off(0, 0, 0, 0); chase_count.max(1)],
-            chased_ends: vec![0; plan_tracks + 1],
             loop_start: loop_bounds.map(|(start, _)| start),
             loop_end: loop_bounds.map(|(_, end)| end),
             demands,
@@ -580,16 +545,6 @@ impl Prepared {
             .ok_or(PlaybackError::Time)
     }
 
-    fn place(&mut self, sample: i64, silence: bool) -> Result<(), PlaybackError> {
-        if silence && self.plugin_holds {
-            self.queue_all_offs()?;
-            self.plugin_holds = false;
-        }
-        self.cursor.catch_up(&self.plan, sample);
-        self.chase = true;
-        Ok(())
-    }
-
     /// The preceding published plan may release more voices than the new score
     /// can hold. Size this transition only after any background plan published.
     fn reserve_previous_releases(
@@ -608,42 +563,15 @@ impl Prepared {
                 demand.previous_chase = demand.previous_chase.max(chase);
             }
         }
-        let size = self
-            .events
-            .len()
+        self.reserved_events = self
+            .reserved_events
             .checked_add(extra.saturating_sub(self.previous_releases))
             .ok_or(PlaybackError::Time)?;
         self.previous_releases = self.previous_releases.max(extra);
-        self.events.resize(size, Event::note_off(0, 0, 0, 0));
-        self.filtered.resize(size, Event::note_off(0, 0, 0, 0));
-        self.sort_order.resize(size, 0);
         Ok(())
     }
 
-    /// Note-offs for every note this cursor has already sent to the plugin.
-    fn queue_all_offs(&mut self) -> Result<(), PlaybackError> {
-        let start = self.released;
-        let Prepared {
-            events,
-            cursor,
-            plan,
-            released,
-            ..
-        } = self;
-        let rest = events
-            .get_mut(start..)
-            .ok_or(PlaybackError::BufferTooSmall)?;
-        let count = cursor.release_all(plan, 0, rest).map_err(play_error)?;
-        *released = start + count;
-        Ok(())
-    }
-
-    fn carry(
-        &mut self,
-        previous: &mut Self,
-        sample: i64,
-        playing: bool,
-    ) -> Result<(), PlaybackError> {
+    fn carry(&mut self, previous: &mut Self, playing: bool) {
         for track in &mut self.tracks {
             let old_index = previous
                 .track_indices
@@ -663,33 +591,6 @@ impl Prepared {
             }
         }
         self.clicks_delay.carry(&mut previous.clicks_delay);
-        // Unchanged tracks take the previous cursor's voices without a search.
-        // Retained helpers hold the inherited chase; only new helpers strike it.
-        let start = self.released;
-        let Prepared {
-            events,
-            cursor,
-            plan,
-            released,
-            ..
-        } = self;
-        let rest = events
-            .get_mut(start..)
-            .ok_or(PlaybackError::BufferTooSmall)?;
-        let count = cursor
-            .take_over(
-                plan,
-                &mut previous.cursor,
-                &previous.plan,
-                sample,
-                previous.plugin_holds,
-                rest,
-            )
-            .map_err(play_error)?;
-        *released = start + count;
-        self.chase = true;
-        self.plugin_holds = previous.plugin_holds;
-        Ok(())
     }
 
     fn render(
@@ -701,84 +602,7 @@ impl Prepared {
         deadline: Instant,
         range: RenderRange,
     ) -> Result<(), PlaybackError> {
-        let recover_notes = hosts.begin_block();
-        let mut count = self.released;
-        self.released = 0;
-        let count = if range.started_before.is_some() {
-            count
-        } else {
-            self.chased_len = 0;
-            if self.chase {
-                self.chase = false;
-                let rest = self
-                    .events
-                    .get_mut(count..)
-                    .ok_or(PlaybackError::BufferTooSmall)?;
-                let (fresh, inherited) = self
-                    .cursor
-                    .chase_events(&self.plan, rest, &mut self.chased_ons)
-                    .map_err(play_error)?;
-                count += fresh;
-                self.chased_len = inherited;
-            } else if recover_notes && spans.first().is_some_and(|span| span.release_at.is_none()) {
-                // A loop-head span releases the old live set at offset zero.
-                // Chasing it as well would sort an on after its own off.
-                self.chased_len = self
-                    .cursor
-                    .held_events(&self.plan, &mut self.chased_ons, |key| {
-                        hosts.needs_notes(key)
-                    })
-                    .map_err(play_error)?;
-            }
-            let rest = self
-                .events
-                .get_mut(count..)
-                .ok_or(PlaybackError::BufferTooSmall)?;
-            count += self
-                .cursor
-                .play(
-                    &self.plan,
-                    spans,
-                    rest,
-                    &mut self.sort_order,
-                    &mut self.filtered,
-                )
-                .map_err(play_error)?;
-            if !sort_events(
-                self.events
-                    .get_mut(..count)
-                    .ok_or(PlaybackError::BufferTooSmall)?,
-                &mut self.sort_order,
-                &mut self.filtered,
-            ) {
-                return Err(PlaybackError::BufferTooSmall);
-            }
-            count
-        };
-        let events = self
-            .events
-            .get(..count)
-            .ok_or(PlaybackError::BufferTooSmall)?;
-        let chased: &[Event] = if range.started_before.is_none() {
-            self.chased_ons
-                .get(..self.chased_len)
-                .ok_or(PlaybackError::BufferTooSmall)?
-        } else {
-            &[]
-        };
-        if !group_events(
-            events,
-            &self.track_indices,
-            &mut self.filtered,
-            &mut self.event_ends,
-        ) || !group_events(
-            chased,
-            &self.track_indices,
-            &mut self.chased_grouped,
-            &mut self.chased_ends,
-        ) {
-            return Err(PlaybackError::BufferTooSmall);
-        }
+        hosts.begin_block();
         let frames = left.len();
         let rate = self.sample_rate;
         for track in &mut self.tracks {
@@ -795,10 +619,6 @@ impl Prepared {
         let Prepared {
             tracks,
             bus,
-            filtered,
-            event_ends,
-            chased_grouped,
-            chased_ends,
             track_indices,
             bus_left,
             bus_right,
@@ -810,10 +630,6 @@ impl Prepared {
             tracks,
             bus,
             hosts: &mut *hosts,
-            events: filtered,
-            event_ends,
-            chased: chased_grouped,
-            chased_ends,
             bus_left,
             bus_right,
             spans,
@@ -853,7 +669,6 @@ impl Prepared {
             *left = *l as f32;
             *right = *r as f32;
         }
-        self.plugin_holds |= range.started_before.is_none();
         Ok(())
     }
 
@@ -866,38 +681,22 @@ impl Prepared {
         deadline: Instant,
         position: i64,
     ) -> Result<(), PlaybackError> {
-        if self.released == 0 {
+        if !hosts.holds_notes() {
             return Ok(());
         }
         hosts.begin_block();
-        let count = self.released;
-        self.released = 0;
         let frames = self
             .tracks
             .first()
             .map(|track| track.plane.len())
             .unwrap_or(0);
-        let events = self
-            .events
-            .get(..count)
-            .ok_or(PlaybackError::BufferTooSmall)?;
-        if !group_events(
-            events,
-            &self.track_indices,
-            &mut self.filtered,
-            &mut self.event_ends,
-        ) {
-            return Err(PlaybackError::BufferTooSmall);
-        }
         hosts.set_transport(self.timeline.stopped(position)?)?;
-        for (position, track) in self.tracks.iter_mut().enumerate() {
+        for track in &mut self.tracks {
             let plane = track
                 .plane
                 .get_mut(..frames)
                 .ok_or(PlaybackError::BufferTooSmall)?;
             plane.fill(0.0);
-            let filtered = track_events(&self.filtered, &self.event_ends, position)
-                .ok_or(PlaybackError::BufferTooSmall)?;
             hosts.submit(
                 track.key,
                 Signal {
@@ -907,10 +706,6 @@ impl Prepared {
                 Signal {
                     left: &[],
                     right: None,
-                },
-                BlockEvents {
-                    source: filtered,
-                    chased: &[],
                 },
                 None,
             );
@@ -930,14 +725,9 @@ impl Prepared {
     }
 
     fn queue_cleanup(&mut self, hosts: &mut HostGraph) -> Result<(), PlaybackError> {
-        let events = self
-            .events
-            .get(..self.released)
-            .ok_or(PlaybackError::BufferTooSmall)?;
-        if !hosts.queue_cleanup(events) {
+        if !hosts.queue_cleanup() {
             return Err(PlaybackError::BufferTooSmall);
         }
-        self.released = 0;
         Ok(())
     }
 }
@@ -1065,10 +855,6 @@ struct Block<'a> {
     tracks: &'a mut [Track],
     bus: &'a mut Bus,
     hosts: &'a mut HostGraph,
-    events: &'a [Event],
-    event_ends: &'a [usize],
-    chased: &'a [Event],
-    chased_ends: &'a [usize],
     bus_left: &'a mut [f64],
     bus_right: &'a mut [f64],
     spans: &'a [Span],
@@ -1170,10 +956,6 @@ impl Block<'_> {
             plane.copy_from_slice(clip_plane);
             right.copy_from_slice(clip_right);
             *stereo = *clip_stereo;
-            let events = track_events(self.events, self.event_ends, position)
-                .ok_or(PlaybackError::BufferTooSmall)?;
-            let chased = track_events(self.chased, self.chased_ends, position)
-                .ok_or(PlaybackError::BufferTooSmall)?;
             let own = if *own_gated {
                 own_gain.get(..frames)
             } else {
@@ -1188,10 +970,6 @@ impl Block<'_> {
                 Signal {
                     left: clip_plane,
                     right: clip_stereo.then_some(clip_right),
-                },
-                BlockEvents {
-                    source: events,
-                    chased,
                 },
                 own,
             );
@@ -1324,53 +1102,6 @@ impl Block<'_> {
     }
 }
 
-/// Groups one block's events by track position in one counting pass and one
-/// placing pass, so the work grows with the events plus the tracks rather than
-/// their product (XCA-13). Each track keeps its events in the block's order.
-/// Afterwards track `i` owns `grouped[ends[i - 1]..ends[i]]`, from 0 for the
-/// first track. Events of no listed track, such as transport, are left out.
-fn group_events(
-    events: &[Event],
-    tracks: &[(u32, usize)],
-    grouped: &mut [Event],
-    ends: &mut [usize],
-) -> bool {
-    let position = |event: &Event| {
-        let key = event.track_key()?;
-        let index = tracks.binary_search_by_key(&key, |entry| entry.0).ok()?;
-        tracks.get(index).map(|entry| entry.1)
-    };
-    ends.fill(0);
-    for event in events {
-        if let Some(slot) = position(event) {
-            let Some(count) = ends.get_mut(slot) else {
-                return false;
-            };
-            *count += 1;
-        }
-    }
-    // Counts become starts. Placing advances each start to that track's end.
-    let mut start = 0usize;
-    for entry in ends.iter_mut() {
-        let count = *entry;
-        *entry = start;
-        start += count;
-    }
-    for event in events {
-        if let Some(slot) = position(event) {
-            let Some(end) = ends.get_mut(slot) else {
-                return false;
-            };
-            let Some(target) = grouped.get_mut(*end) else {
-                return false;
-            };
-            *target = *event;
-            *end += 1;
-        }
-    }
-    true
-}
-
 /// The first of a helper's fault and a bus's in the same block. A tie keeps
 /// the helper's, which can name a device.
 fn earliest(helper: Option<StageFault>, bus: Option<StageFault>) -> Option<StageFault> {
@@ -1393,14 +1124,6 @@ fn block_sample(spans: &[Span], held: Option<i64>, frame: usize) -> i64 {
         .map(|span| span.start + frame - i64::from(span.block_offset))
         .or(held)
         .unwrap_or(0)
-}
-
-fn track_events<'a>(grouped: &'a [Event], ends: &[usize], position: usize) -> Option<&'a [Event]> {
-    let start = match position.checked_sub(1) {
-        Some(previous) => *ends.get(previous)?,
-        None => 0,
-    };
-    grouped.get(start..*ends.get(position)?)
 }
 
 fn fade_stopped_source(left: &mut [f32], right: &mut [f32], offset: Option<u32>, rate: u32) {
@@ -1695,13 +1418,6 @@ fn compensate_plan(
     ))
 }
 
-fn play_error(error: echode_realtime::PlayError) -> PlaybackError {
-    match error {
-        echode_realtime::PlayError::Time => PlaybackError::Time,
-        echode_realtime::PlayError::BufferTooSmall => PlaybackError::BufferTooSmall,
-    }
-}
-
 /// A score and its compatible audio bank are published as one ownership unit.
 struct Update {
     prepared: Box<Prepared>,
@@ -1961,6 +1677,7 @@ pub fn playback(
             delays,
             &compensated.stage_inputs,
             audio.current.timeline.capacity(),
+            &audio.current.note_scores,
         )?);
         audio
             .status
@@ -1989,7 +1706,7 @@ fn transport_pair(
     let mut ids = PlaybackIds::new();
     let mut meters = BTreeMap::new();
     let caches = BTreeMap::new();
-    let mut current = Box::new(Prepared::new(
+    let current = Box::new(Prepared::new(
         project,
         rate,
         frames,
@@ -2001,13 +1718,11 @@ fn transport_pair(
         None,
         &mut meters,
     )?);
-    current.place(clock.position(), false)?;
-    let reserved_events = current.events.len();
+    let reserved_events = current.reserved_events;
     let status = Arc::new(Status {
         generation: AtomicU32::new(0),
         playing: AtomicBool::new(false),
         sample: AtomicI64::new(clock.position()),
-        chase_from: AtomicI64::new(i64::MIN),
         tick: AtomicI64::new(
             current
                 .tempo
@@ -2472,7 +2187,7 @@ impl PlaybackControl {
             .fetch_add(1, Ordering::AcqRel)
             .wrapping_add(1);
         let previous_events = self.reserved_events;
-        self.reserved_events = prepared.events.len();
+        self.reserved_events = prepared.reserved_events;
         // Coalescing a loop change must not discard a pending project edit.
         let restore_states = restore_states
             || self
@@ -2534,7 +2249,7 @@ impl PlaybackControl {
                 chain.events = events.saturating_add(pending.prepared.timeline.capacity());
             }
         }
-        self.reserved_events = pending.prepared.events.len();
+        self.reserved_events = pending.prepared.reserved_events;
         if !self.hosts.can_reconcile(&pending.chain) {
             self.held = Some(pending);
             return Ok(());
@@ -2590,13 +2305,6 @@ impl PlaybackControl {
                     return Err(error);
                 }
             };
-        // Place the cursor where the callback last stood, so adopting it only
-        // advances over the notes since (R1). The callback checks the rule.
-        let sample = self.status.sample.load(Ordering::SeqCst);
-        let from =
-            Some(self.status.chase_from.load(Ordering::SeqCst)).filter(|from| *from != i64::MIN);
-        let Prepared { plan, cursor, .. } = &mut *pending.prepared;
-        cursor.catch_up_from(plan, sample, from);
         self.previous_chases = pending
             .prepared
             .demands
@@ -2613,6 +2321,7 @@ impl PlaybackControl {
                 delays,
                 &compensated.stage_inputs,
                 pending.prepared.timeline.capacity(),
+                &pending.prepared.note_scores,
             )?),
             prepared: pending.prepared,
             revision: pending.revision,
@@ -3007,10 +2716,6 @@ impl PlaybackAudio {
         self.status
             .sample
             .store(self.clock.position(), Ordering::SeqCst);
-        self.status.chase_from.store(
-            self.current.cursor.chase_from().unwrap_or(i64::MIN),
-            Ordering::SeqCst,
-        );
         self.status.tick.store(
             self.current
                 .tempo
@@ -3084,11 +2789,11 @@ impl PlaybackAudio {
             && let Ok(mut next) = self.plans.pop()
         {
             let position = self.clock.position();
-            let carried = next.prepared.carry(
+            next.prepared.carry(
                 &mut self.current,
-                position,
                 self.playing || (live && self.live_processed),
             );
+            let carried = next.hosts.carry(&mut self.hosts, self.playhead);
             // The clock's tick under the replaced plan's tempo, read before
             // that plan returns to the control thread.
             let mut retimed = None;
@@ -3101,7 +2806,6 @@ impl PlaybackAudio {
                             .ok_or(PlaybackError::Time),
                     );
                 }
-                next.hosts.carry(&mut self.hosts);
                 next.hosts.activate_prepared();
                 std::mem::swap(&mut next.prepared, &mut self.current);
                 std::mem::swap(&mut next.hosts, &mut self.hosts);
@@ -3139,7 +2843,6 @@ impl PlaybackAudio {
                     self.playing = true;
                     self.failed = false;
                     self.release_auto_mutes();
-                    self.current.place(self.clock.position(), false)?;
                 }
                 QueuedCommand::Pause | QueuedCommand::Stop => {
                     if !live {
@@ -3252,7 +2955,7 @@ impl PlaybackAudio {
                     flush_clicks(self, left, right)?;
                 }
             } else {
-                let flushed = self.current.released != 0;
+                let flushed = self.hosts.holds_notes();
                 self.current
                     .flush_releases(&mut self.hosts, deadline, self.clock.position())?;
                 if flushed {
@@ -3378,7 +3081,6 @@ impl PlaybackAudio {
         self.output_revision = self.output_revision.wrapping_add(1);
         self.clock.locate(sample);
         self.arm_loop();
-        self.current.place(sample, true)?;
         self.reset_plugins = true;
         Ok(())
     }
@@ -3394,7 +3096,6 @@ impl PlaybackAudio {
         // the clock does not cut it or reset any plugin.
         self.clock.locate(sample);
         self.arm_loop();
-        self.current.place(sample, true)?;
         Ok(())
     }
 
@@ -3414,9 +3115,6 @@ impl PlaybackAudio {
             });
         }
         if live {
-            if self.playing {
-                self.current.place(self.clock.position(), true)?;
-            }
             self.playing = false;
             self.live_output = false;
             return Ok(());
@@ -3431,7 +3129,6 @@ impl PlaybackAudio {
     fn finish_stop(&mut self) -> Result<(), PlaybackError> {
         self.stop_tail = None;
         self.live_output = false;
-        self.current.place(self.clock.position(), true)?;
         self.reset_plugins = true;
         for track in &mut self.current.tracks {
             track.fader.settle();
@@ -3491,7 +3188,7 @@ impl PlaybackAudio {
     }
 }
 
-fn split_loop(
+pub(crate) fn split_loop(
     mut position: i64,
     frames: usize,
     loop_start: Option<i64>,

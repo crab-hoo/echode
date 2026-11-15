@@ -39,6 +39,7 @@ mod plan;
 mod planes;
 mod playback;
 mod plugin_declick;
+mod plugin_notes;
 mod plugin_state;
 mod plugins;
 mod realtime;

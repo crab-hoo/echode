@@ -15,7 +15,7 @@ pub(crate) struct Playhead {
 }
 
 impl Playhead {
-    pub(super) fn new(origin: i64, bounds: (Option<i64>, Option<i64>)) -> Self {
+    pub(crate) fn new(origin: i64, bounds: (Option<i64>, Option<i64>)) -> Self {
         Self {
             origin,
             frames: 0,
@@ -27,7 +27,7 @@ impl Playhead {
         }
     }
 
-    pub(super) fn advance(&mut self, frames: usize, latency: u64) -> Result<(), PlaybackError> {
+    pub(crate) fn advance(&mut self, frames: usize, latency: u64) -> Result<(), PlaybackError> {
         self.frames = self
             .frames
             .checked_add(frames as u64)
@@ -46,6 +46,25 @@ impl Playhead {
         Ok(Self { latency, ..*self }.sample())
     }
 
+    /// Frames before this trajectory's source reaches an input.
+    pub(crate) fn note_offset(&self, latency: u64, frames: usize) -> usize {
+        latency.saturating_sub(self.frames).min(frames as u64) as usize
+    }
+
+    pub(crate) fn note_origin(&self) -> i64 {
+        self.origin
+    }
+    /// Preserve an exact loop-end landing for note release before wrapping.
+    pub(crate) fn note_sample(&self, latency: u64) -> Result<i64, PlaybackError> {
+        let sample = self.input_sample(latency)?;
+        if let Some((start, end)) = self.loop_bounds {
+            let elapsed = i128::from(self.frames) - i128::from(latency);
+            if sample == start && elapsed >= i128::from(end) - i128::from(self.origin) {
+                return Ok(end);
+            }
+        }
+        Ok(sample)
+    }
     pub(crate) fn loop_bounds(&self) -> (Option<i64>, Option<i64>) {
         (
             self.loop_bounds.map(|bounds| bounds.0),
