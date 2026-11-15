@@ -1162,3 +1162,42 @@ fn a_master_overflow_is_reported_as_the_largest_level_not_as_a_nan() {
     let json = serde_json::to_value(at(f32::INFINITY)).unwrap();
     assert_eq!(json["peak"].as_f64(), Some(f64::from(f32::MAX)));
 }
+
+/// DIA-12: a failing Pause or Stop still clears the playing activity token once
+/// `playing` becomes false.
+#[test]
+fn audit_dia12_failed_pause_and_stop_still_clear_playing_activity() {
+    let (project, _) = Project::new().add_track("audio");
+    let mut stop_session = Session::new(Arc::new(project.clone()));
+    stop_session.use_headless_output(crate::HeadlessOutput::default());
+    stop_session.perform(AudioCommand::Play).unwrap();
+    until_opened(&mut stop_session);
+    assert!(stop_session.playing && stop_session.activity.is_some());
+    stop_session.start = i64::MAX;
+    stop_session.perform(AudioCommand::Stop).unwrap_err();
+    assert!(!stop_session.state().playing);
+    assert!(
+        stop_session.activity.is_none(),
+        "activity stayed active after a failed Stop"
+    );
+
+    let mut pause_session = Session::new(Arc::new(project));
+    pause_session.use_headless_output(crate::HeadlessOutput::default());
+    pause_session.perform(AudioCommand::Play).unwrap();
+    until_opened(&mut pause_session);
+    assert!(pause_session.playing && pause_session.activity.is_some());
+    for _ in 0..1024 {
+        if pause_session
+            .perform(AudioCommand::Locate { tick: 0 })
+            .is_err()
+        {
+            break;
+        }
+    }
+    pause_session.perform(AudioCommand::Pause).unwrap_err();
+    assert!(!pause_session.state().playing);
+    assert!(
+        pause_session.activity.is_none(),
+        "activity stayed active after a failed Pause"
+    );
+}

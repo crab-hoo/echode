@@ -76,7 +76,6 @@ impl Drop for WorkgroupHandoff {
 pub enum PluginNotice {
     Dirty,
     PluginRestarted { latency_samples: u32 },
-    RequestProcess,
 }
 
 struct HelperProcess {
@@ -160,6 +159,14 @@ pub struct PluginControl {
     tail_samples: Arc<AtomicU32>,
 }
 
+/// Maximum pending replies or startup handshake messages retained in `inbox`.
+const MAX_INBOX: usize = 64;
+/// Maximum restart notices retained when a test drains `poll_notice`.
+const MAX_RESTART_NOTICES: usize = 64;
+/// Maximum control frames accepted in one `drain` call, preserving
+/// `try_recv_tagged`'s single-frame bound when a peer sends without pausing.
+const DRAIN_LIMIT: usize = 64;
+
 struct ControlState {
     control: Socket,
     inbox: VecDeque<(u64, ControlMessage)>,
@@ -172,7 +179,9 @@ struct ControlState {
     activity: Arc<Mutex<PluginActivity>>,
     /// The helper showed the window and has not reported it closed.
     window_open: bool,
+    dirty_notice: bool,
     dirty_again: bool,
+    restart_notices: VecDeque<u32>,
     save_requested: Option<u64>,
     save_retry_after: Option<Instant>,
     save_failure_reported: bool,
@@ -196,7 +205,9 @@ impl PluginControl {
                 applied: Arc::clone(&applied),
                 activity: Arc::clone(&activity),
                 window_open: false,
+                dirty_notice: false,
                 dirty_again: false,
+                restart_notices: VecDeque::new(),
                 save_requested: None,
                 save_retry_after: None,
                 save_failure_reported: false,
@@ -265,7 +276,8 @@ impl PluginControl {
             Err(std::sync::TryLockError::Poisoned(error)) => error.into_inner(),
             Err(std::sync::TryLockError::WouldBlock) => return None,
         };
-        if matches!(state.poll_notice(), Ok(Some(PluginNotice::Dirty))) {
+        let _ = state.drain();
+        if std::mem::take(&mut state.dirty_notice) {
             state.dirty_again = true;
         }
         if state.dirty_again
@@ -374,8 +386,19 @@ impl ControlState {
             }
             _ => {}
         }
-        if id == 0 && matches!(message, ControlMessage::TailChanged(_)) {
-            return; // Metadata is coalesced, not queued without bound.
+        if id == 0
+            && matches!(
+                message,
+                ControlMessage::TailChanged(_) | ControlMessage::RequestProcess
+            )
+        {
+            return; // Metadata is coalesced and unused wakeup notices are dropped.
+        }
+        if let ControlMessage::PluginRestarted { latency_samples } = message
+            && id == 0
+        {
+            self.push_restart_notice(latency_samples);
+            return;
         }
         let note = match message {
             ControlMessage::GuiCommand(command) => PluginActivity {
@@ -395,8 +418,11 @@ impl ControlState {
                     ..PluginActivity::default()
                 }
             }
-            ControlMessage::Dirty if self.window_open => {
-                self.inbox.push_back((0, ControlMessage::Dirty));
+            ControlMessage::Dirty => {
+                self.dirty_notice = true;
+                if !self.window_open {
+                    return;
+                }
                 PluginActivity {
                     dirty: true,
                     window_open: true,
@@ -404,7 +430,7 @@ impl ControlState {
                 }
             }
             other => {
-                self.inbox.push_back((id, other));
+                self.push_inbox(id, other);
                 return;
             }
         };
@@ -412,6 +438,41 @@ impl ControlState {
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .merge(note);
+    }
+
+    fn push_restart_notice(&mut self, latency_samples: u32) {
+        if self.restart_notices.len() >= MAX_RESTART_NOTICES {
+            self.restart_notices.pop_front();
+        }
+        self.restart_notices.push_back(latency_samples);
+    }
+
+    fn push_inbox(&mut self, id: u64, message: ControlMessage) {
+        if id == 0 {
+            if !matches!(
+                message,
+                ControlMessage::Hello
+                    | ControlMessage::Ports { .. }
+                    | ControlMessage::PortsRejected(_)
+            ) {
+                return;
+            }
+            if matches!(message, ControlMessage::Hello)
+                && self.inbox.iter().any(|(entry_id, entry)| {
+                    *entry_id == 0 && matches!(entry, ControlMessage::Hello)
+                })
+            {
+                return;
+            }
+        }
+        if self.inbox.len() >= MAX_INBOX {
+            if let Some(unsolicited) = self.inbox.iter().position(|(entry_id, _)| *entry_id == 0) {
+                self.inbox.remove(unsolicited);
+            } else {
+                self.inbox.pop_front();
+            }
+        }
+        self.inbox.push_back((id, message));
     }
 
     fn remember(&mut self, id: u64, state: AppliedState) {
@@ -490,45 +551,35 @@ impl ControlState {
 
     pub fn poll_notice(&mut self) -> Result<Option<PluginNotice>, SessionError> {
         self.drain()?;
-        let index = self.inbox.iter().position(|(_, message)| {
-            matches!(
-                message,
-                ControlMessage::Dirty
-                    | ControlMessage::PluginRestarted { .. }
-                    | ControlMessage::RequestProcess
-            )
-        });
-        let Some(index) = index else {
-            return Ok(None);
-        };
-        Ok(Some(match self.inbox.remove(index) {
-            Some((_, ControlMessage::Dirty)) => PluginNotice::Dirty,
-            Some((_, ControlMessage::PluginRestarted { latency_samples })) => {
-                PluginNotice::PluginRestarted { latency_samples }
-            }
-            Some((_, ControlMessage::RequestProcess)) => PluginNotice::RequestProcess,
-            _ => {
-                return Err(ProtocolError::QueueLost.into());
-            }
-        }))
+        if std::mem::take(&mut self.dirty_notice) {
+            return Ok(Some(PluginNotice::Dirty));
+        }
+        if let Some(latency_samples) = self.restart_notices.pop_front() {
+            return Ok(Some(PluginNotice::PluginRestarted { latency_samples }));
+        }
+        Ok(None)
     }
 
     fn drain(&mut self) -> Result<(), SessionError> {
-        loop {
+        for _ in 0..DRAIN_LIMIT {
             match self.control.try_recv_tagged() {
                 Ok(Some((id, message))) => self.accept(id, message),
                 Ok(None) => return Ok(()),
                 // The helper can close after a complete message. That EOF must
-                // not discard a reason already sitting in the inbox.
+                // not discard a reason or notice already collected in memory.
                 Err(error) => {
                     self.set_window_state(false);
-                    if !self.inbox.is_empty() {
+                    if !self.inbox.is_empty()
+                        || self.dirty_notice
+                        || !self.restart_notices.is_empty()
+                    {
                         return Ok(());
                     }
                     return Err(error.into());
                 }
             }
         }
+        Ok(())
     }
 
     /// Sends a request that must be on its way by `deadline`, the same one
@@ -696,6 +747,8 @@ impl PluginHost {
             control.inbox.clear();
             control.pending.clear();
             control.remembered_request = 0;
+            control.dirty_notice = false;
+            control.restart_notices.clear();
             control.save_requested = None;
             control.dirty_again = false;
             control.save_retry_after = None;

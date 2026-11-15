@@ -16,8 +16,8 @@ use serde::Serialize;
 use crate::ScannedPlugin;
 use crate::catalog::{PluginCatalog, SCAN_QUIET, list_bundles_including_clap_path};
 use crate::scan::{
-    CatalogError, SCAN_BUDGET, SLOW_SCAN_BUDGET, ScanError, cached_plugins, load_scan_cache,
-    scan_with_budget, store_scan_cache,
+    CatalogError, SCAN_BUDGET, SLOW_SCAN_BUDGET, ScanError, cached_plugins,
+    load_existing_scan_cache, scan_with_budget, store_scan_cache,
 };
 use crate::watch::FolderWatch;
 
@@ -295,9 +295,7 @@ fn bundles_in(roots: &[PathBuf]) -> Vec<crate::BundleFound> {
 }
 
 fn restore_cached(catalog: &mut PluginCatalog, cache: &Path, found: &[crate::BundleFound]) {
-    let Ok(entries) = load_scan_cache(cache) else {
-        return;
-    };
+    let entries = load_existing_scan_cache(cache);
     for bundle in found {
         let Some(plugins) = cached_plugins(&entries, &bundle.path, &bundle.revision) else {
             continue;

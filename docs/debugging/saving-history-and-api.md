@@ -386,7 +386,7 @@ Undo 後と同じ編集の再保存、全 JSON のバイト・余剰ファイル
 Git の内側の型は合成フレームでなく、`gix::Error::downcast_any_ref::<io::Error>()` で読む。
 `objects/pack` がファイルになっている場合は、パックの書込みでなく、最初の `FindObject` の Git エラーになることがある。
 元の参照とオブジェクトを保全し、原因の I/O を調べる。失敗時の参照の巻戻しを仮定しない。
-`tests/thin_errors.rs` は文面・原因・失敗前の原本を照合し、`thin.rs` の単体テストは参照なしを区別する（[ADR 0300](../decisions/0300-typed-thinning-errors.md)）。
+`--features thinning` を付けて `tests/thin_errors.rs`（文面・原因・失敗前の原本の照合）と `tests/thin.rs`、参照なし単体テストを実行する（[ADR 0300](../decisions/0300-typed-thinning-errors.md)、[ADR 0368](../decisions/0368-opt-in-history-thinning-feature.md)）。
 
 ### 履歴スパイクの失敗が分からない・初期化失敗後に終了しない
 
@@ -429,6 +429,7 @@ ID の省略は通知として応答せず、`tools/call` を装っても接続�
 `initialize` の成功だけでは編集可能にならない。続く ID なしの `notifications/initialized` が必要である。
 初期化前の通知、null・配列等の params、ID を持つ同名の要求は準備完了へ遷移させない。
 使用済み ID は型も照合し、数値 `1` と文字列 `"1"` を混同しない。dispatch 済みの失敗にも新しい ID を使う。
+保持上限は `MAX_LEGACY_IDS`（`4096` 件 FIFO）で、`audit_dia12_legacy_ids_stay_bounded_across_many_requests` で確認する（[ADR 0367](../decisions/0367-helper-notice-bounds-and-audit-diagnostics.md)）。
 `mcp_lifecycle.rs` と必須契約 `mcp-legacy-lifecycle` は同じ stdio と実ソケットで、未送信・履歴・再オープンを検査する。
 ここでの拒否は接続先 API の版エラーや、編集後の結果不明とは異なる
 （[ADR 0115 の初期化回帰](../decisions/0115-phase2-mcp.md#旧-mcp-の初期化と-id-再使用の回帰補強2026-10-29)）。

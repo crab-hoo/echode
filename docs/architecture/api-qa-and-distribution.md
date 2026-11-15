@@ -43,6 +43,7 @@
   接続先の error はオブジェクト・整数 code・文字列 message を検証し、不正なら結果不明として案内する。
   確定済みの編集は巻き戻さず再送せず、正当な error の data と result の値は保持する
   （[ADR 0115 の応答検証](../decisions/0115-phase2-mcp.md#接続先のエラー応答の形の検証2026-10-29)）。
+  旧版接続の使用済み要求 ID は `LegacyIds` が挿入順 FIFO で最新 `4096` 件に上限を保つ（[ADR 0367](../decisions/0367-helper-notice-bounds-and-audit-diagnostics.md)）。
 - **自然言語コマンド**: コマンドパレットから Foundation Models のオンデバイスモデルで関連アクション検索・文脈取得・構造化計画を作成し、利用者確認後に 1 つの Undo 単位として実行する（Apple Intelligence 非対応環境では通常パレットとして動作）
 
 ## 16. 品質保証

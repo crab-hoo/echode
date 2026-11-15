@@ -142,7 +142,7 @@ fn typed_errors_session_connect_is_kept_until_the_resource_reply() {
     let mut session = McpSession {
         socket: &path,
         lifecycle: Lifecycle::Fresh,
-        legacy_ids: BTreeSet::new(),
+        legacy_ids: LegacyIds::default(),
     };
     let problem = session
         .dispatch("resources/read", &json!({"uri": SUMMARY_URI}), true)
@@ -239,4 +239,38 @@ fn session_handshake_bounds_io_but_does_not_deadline_pending_operations() {
         read_timeout, None,
         "a validated session must not time out a pending operation"
     );
+}
+
+#[test]
+fn audit_dia12_legacy_ids_stay_bounded_across_many_requests() {
+    let path = std::path::PathBuf::from("/tmp/echode-mcp-unused.sock");
+    let mut session = McpSession {
+        socket: &path,
+        lifecycle: Lifecycle::Ready,
+        legacy_ids: LegacyIds::default(),
+    };
+    let overflow = 25usize;
+    for index in 0..(MAX_LEGACY_IDS + overflow) {
+        let reply = session
+            .legacy(&json!(index), "tools/list", &json!({}))
+            .unwrap();
+        assert!(reply["tools"].is_array());
+    }
+    assert_eq!(session.legacy_ids.len(), MAX_LEGACY_IDS);
+    assert!(!session.legacy_ids.contains(&json!(0).to_string()));
+    assert!(
+        session
+            .legacy_ids
+            .contains(&json!(MAX_LEGACY_IDS + overflow - 1).to_string())
+    );
+    let err = session
+        .legacy(
+            &json!(MAX_LEGACY_IDS + overflow - 1),
+            "tools/list",
+            &json!({}),
+        )
+        .unwrap_err();
+    assert_eq!(err.code, -32600);
+    session.legacy_ids.clear();
+    assert_eq!(session.legacy_ids.len(), 0);
 }

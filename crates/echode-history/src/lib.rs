@@ -23,6 +23,7 @@ mod project;
 pub mod retry;
 #[cfg(feature = "spike")]
 mod store;
+#[cfg(feature = "thinning")]
 mod thin;
 mod transport;
 
@@ -36,10 +37,11 @@ pub use document::{
     recover, write_package,
 };
 pub use echode_actions::HistoryUsage;
+#[cfg(feature = "thinning")]
+pub use error::ThinningError;
 pub use error::{
     AutosaveError, DocumentError, EntryKind, GitOperation, JournalError, MediaError,
     MigrationError, PackageEntryError, PackageKind, PackageValidationError, SettingsError,
-    ThinningError,
 };
 pub use export::freeze_export;
 pub use export_settings::{read_export_settings, write_export_settings};
@@ -51,6 +53,7 @@ pub use media::{
 };
 pub use objects::{PluginState, hash_bytes as object_hash, read_object, write_object};
 pub use peaks::{PeakColumn, Waveforms, cache_peaks};
+#[cfg(feature = "thinning")]
 pub use thin::{
     DAY, HOUR, HOURLY_SPAN, RECENT, SavePoint, StoreSize, git_store_size, kept_indexes,
     pack_and_thin, seed_autosaves, tip_text, write_bundle,

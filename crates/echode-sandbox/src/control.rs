@@ -426,9 +426,7 @@ impl Socket {
                     "control message was not received before the deadline",
                 ));
             }
-            if !poll_read(self.fd.as_raw_fd(), remaining)? && self.incoming.len() < 4 {
-                continue;
-            }
+            let _ = poll_read(self.fd.as_raw_fd(), remaining)?;
         }
     }
 

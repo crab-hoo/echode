@@ -15,8 +15,10 @@ pub use validation::{MigrationError, PackageKind, PackageValidationError};
 #[path = "error_entry.rs"]
 mod entry;
 pub use entry::{EntryKind, PackageEntryError};
+#[cfg(feature = "thinning")]
 #[path = "error_thin.rs"]
 mod thin;
+#[cfg(feature = "thinning")]
 pub use thin::ThinningError;
 #[cfg(feature = "spike")]
 #[path = "error_spike.rs"]
@@ -44,6 +46,7 @@ pub enum PackageError {
     Document(DocumentError),
     Journal(JournalError),
     Settings(SettingsError),
+    #[cfg(feature = "thinning")]
     Thinning(ThinningError),
     #[cfg(feature = "spike")]
     Spike(SpikeError),
@@ -118,6 +121,7 @@ impl fmt::Display for PackageError {
             Self::Document(error) => write!(f, "{error}"),
             Self::Journal(error) => write!(f, "{error}"),
             Self::Settings(error) => write!(f, "{error}"),
+            #[cfg(feature = "thinning")]
             Self::Thinning(error) => write!(f, "{error}"),
             #[cfg(feature = "spike")]
             Self::Spike(error) => write!(f, "{error}"),
@@ -158,6 +162,7 @@ impl std::error::Error for PackageError {
             Self::Document(error) => Some(error),
             Self::Journal(error) => Some(error),
             Self::Settings(error) => Some(error),
+            #[cfg(feature = "thinning")]
             Self::Thinning(error) => Some(error),
             #[cfg(feature = "spike")]
             Self::Spike(error) => Some(error),
@@ -202,13 +207,20 @@ pub enum GitOperation {
     FindReference,
     UpdateReference,
     ReadCommitTime,
+    #[cfg(feature = "thinning")]
     DecodeCommit,
     /// Object conversion with Display output; ObjectKind retains legacy Debug output.
+    #[cfg(feature = "thinning")]
     ConvertObject,
+    #[cfg(feature = "thinning")]
     References,
+    #[cfg(feature = "thinning")]
     IterateReferences,
+    #[cfg(feature = "thinning")]
     ReadReference,
+    #[cfg(feature = "thinning")]
     WritePack,
+    #[cfg(feature = "thinning")]
     HashPack,
 }
 

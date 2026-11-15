@@ -201,6 +201,7 @@ OS の数学ライブラリを使う実装では `sw_vers` のプロダクト版
   位置移動・未発音の準備取消とオフライン停止では、次のイベントより前に DSP リセットと全発音停止を送る。
   ライブの破棄する後片付けは完了を待たず、保留中の停止で素材の継続処理を始めない
   （[ADR 0099](../decisions/0099-transport-plugin-state.md)、[ADR 0105](../decisions/0105-nonblocking-stop-cleanup.md)）
+  `Session::perform_requested` は `Pause`・`Stop` が失敗しても戻る直前に `sync_activity` を呼び、`playing` に合わせて `NSProcessInfo` の活動トークンを同期する（[ADR 0367](../decisions/0367-helper-notice-bounds-and-audit-diagnostics.md)）。
 - **P2 の開始位置**: プロジェクトに保存する再生開始位置と進行中の位置を分け、停止は開始位置へ戻し、一時停止はその場から再開する
   （[操作要件](../interaction-design.md#再生の開始位置)、[ADR 0117](../decisions/0117-workflow-interactions.md)）。
   セッションが開始位置を持ち、停止は `Rewind` で時計だけを戻してプラグインのリセットと余韻の打ち切りをしない。

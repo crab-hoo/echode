@@ -296,6 +296,12 @@ impl Session {
         command: AudioCommand,
         revision: u64,
     ) -> Result<(), AudioError> {
+        let result = self.run_command(command, revision);
+        self.sync_activity();
+        result
+    }
+
+    fn run_command(&mut self, command: AudioCommand, revision: u64) -> Result<(), AudioError> {
         match command {
             AudioCommand::PreviewFader { track, gain, pan } => {
                 self.preview_faders(&[FaderValue { track, gain, pan }])?;
@@ -422,7 +428,6 @@ impl Session {
                 }
             }
         }
-        self.sync_activity();
         Ok(())
     }
 

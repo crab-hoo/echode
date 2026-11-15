@@ -59,12 +59,14 @@ fn window_activity_is_kept_apart_from_replies() {
     let helper = answer.join().unwrap();
     let mut state = control.lock();
     state.drain().unwrap();
-    let dirty = state
-        .inbox
-        .iter()
-        .filter(|(_, message)| matches!(message, ControlMessage::Dirty))
-        .count();
-    assert_eq!(dirty, 3, "every dirty notice stays for the background save");
+    assert!(
+        state.dirty_notice,
+        "coalesced dirty notice stays for the background save"
+    );
+    assert!(
+        state.inbox.is_empty(),
+        "dirty notices do not stack in the reply inbox"
+    );
     drop(state);
     let activity = control.take_activity().unwrap();
     assert!(activity.relay.is_empty());
@@ -229,4 +231,136 @@ fn audit_dia04_a_busy_refusal_keeps_the_plugins_change_waiting_for_a_save() {
             .is_none()
     );
     assert!(helper.try_recv_tagged().unwrap().is_none());
+}
+
+/// DIA-10: unused process wakeups drop on arrival, pending restart notices
+/// stay intact without stalling dirty captures behind them, and duplicate
+/// dirty notices coalesce to one background save on the first poll.
+#[test]
+fn audit_dia10_dirty_notices_coalesce_ahead_of_unused_and_restart_notices() {
+    let (parent, mut helper) = Socket::pair().unwrap();
+    let mut control = PluginControl::new(parent);
+    let now = std::time::Instant::now();
+    for _ in 0..4 {
+        helper.send(&ControlMessage::RequestProcess).unwrap();
+    }
+    for latency in [32, 64] {
+        helper
+            .send(&ControlMessage::PluginRestarted {
+                latency_samples: latency,
+            })
+            .unwrap();
+    }
+    for _ in 0..5 {
+        helper.send(&ControlMessage::Dirty).unwrap();
+    }
+
+    // One poll coalesces every queued Dirty immediately, even behind restarts.
+    assert!(control.poll_state_save_at(now).is_none());
+    let Some((id, ControlMessage::SaveRequest)) = helper.try_recv_tagged().unwrap() else {
+        panic!("expected immediate SaveRequest coalesced ahead of restart notices");
+    };
+    assert!(helper.try_recv_tagged().unwrap().is_none());
+
+    // Restart notices remain available in order and RequestProcess was dropped.
+    {
+        let mut state = control.lock();
+        assert!(state.inbox.is_empty());
+        assert_eq!(
+            state.poll_notice().unwrap(),
+            Some(super::PluginNotice::PluginRestarted {
+                latency_samples: 32
+            })
+        );
+        assert_eq!(
+            state.poll_notice().unwrap(),
+            Some(super::PluginNotice::PluginRestarted {
+                latency_samples: 64
+            })
+        );
+        assert_eq!(state.poll_notice().unwrap(), None);
+    }
+
+    helper
+        .send_tagged(id, &ControlMessage::State(vec![7]))
+        .unwrap();
+    assert_eq!(control.poll_state_save_at(now), Some(vec![7]));
+    // No duplicate dirty notices remain queued to trigger a second save.
+    assert!(control.poll_state_save_at(now).is_none());
+    assert!(helper.try_recv_tagged().unwrap().is_none());
+}
+
+/// DIA-10: inbox, restart notices, and each `drain()` call stay bounded even
+/// when a helper sends unsolicited notices without pause.
+#[test]
+fn audit_dia10_control_drain_and_queues_stay_bounded_under_continuous_notices() {
+    let (parent, helper) = Socket::pair().unwrap();
+    let control = PluginControl::new(parent);
+    {
+        let mut state = control.lock();
+        for index in 0..200 {
+            state.accept(
+                0,
+                ControlMessage::PluginRestarted {
+                    latency_samples: index,
+                },
+            );
+            state.accept(
+                0,
+                ControlMessage::Ports {
+                    inputs: vec![2],
+                    outputs: vec![2],
+                    tail_samples: 0,
+                    latency_samples: index,
+                },
+            );
+        }
+        assert_eq!(state.restart_notices.len(), super::MAX_RESTART_NOTICES);
+        assert_eq!(state.inbox.len(), super::MAX_INBOX);
+    }
+
+    let (parent, mut helper_flood) = Socket::pair().unwrap();
+    drop(helper);
+    let mut flooding_control = PluginControl::new(parent);
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    let writer = {
+        let stop = std::sync::Arc::clone(&stop);
+        std::thread::spawn(move || {
+            let mut sent = 0usize;
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                if helper_flood.send(&ControlMessage::Dirty).is_err() {
+                    break;
+                }
+                sent += 1;
+                if sent == super::DRAIN_LIMIT * 2 {
+                    let _ = ready_tx.send(());
+                }
+            }
+        })
+    };
+    ready_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+
+    // Even under continuous traffic, one poll finishes cleanly and wait_reply
+    // reaches its deadline instead of spinning indefinitely inside drain().
+    assert!(
+        flooding_control
+            .poll_state_save_at(std::time::Instant::now())
+            .is_none()
+    );
+    let mut state = flooding_control.lock();
+    let reply_id = state
+        .request(
+            ControlMessage::SaveRequest,
+            std::time::Instant::now() + Duration::from_secs(1),
+        )
+        .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_millis(20);
+    let err = state.wait_reply(reply_id, deadline, |_| true).unwrap_err();
+    assert!(matches!(err, super::SessionError::Timeout), "{err:?}");
+
+    stop.store(true, std::sync::atomic::Ordering::Release);
+    drop(state);
+    drop(flooding_control);
+    let _ = writer.join();
 }

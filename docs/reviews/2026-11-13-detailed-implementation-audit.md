@@ -65,9 +65,9 @@ MCP は、セッションの応答を要求と同じ 1 MiB で読む。応答は
 | DIA-07 | 堅牢性 | 保管庫の「既にある」の近道と取下げの間に、素材を失い得る狭い窓がある | 対応済み（ADR 0362） |
 | DIA-08 | 堅牢性 | ヘルパーの終了監視が、待ちの失敗で join されない経路と、再起動の失敗で残るヘルパー | 対応済み（ADR 0362） |
 | DIA-09 | 判断の確認 | 無関係な編集の Undo が、背景で保存したプラグインの状態も巻き戻す | 設計どおり・制約に未記載 |
-| DIA-10 | 保守性 | ヘルパーの通知を 1 回に 1 件だけ取り出し、使わない通知を同じ列に積む | 未対応 |
-| DIA-11 | 保守性 | 製品に接続していない間引き（`thin.rs`）が、接続すると ADR 0230 のチェーンを壊す形で既定のビルドにある | 未対応 |
-| DIA-12 | 保守性 | 小さい指摘 4 件（走査キャッシュの畳み込み、停止の失敗の後の印、MCP の ID の集合、空の条件） | 未対応 |
+| DIA-10 | 保守性 | ヘルパーの通知を 1 回に 1 件だけ取り出し、使わない通知を同じ列に積む | 対応済み（[ADR 0367](../decisions/0367-helper-notice-bounds-and-audit-diagnostics.md)） |
+| DIA-11 | 保守性 | 製品に接続していない間引き（`thin.rs`）が、接続すると ADR 0230 のチェーンを壊す形で既定のビルドにある | 対応済み（[ADR 0368](../decisions/0368-opt-in-history-thinning-feature.md)） |
+| DIA-12 | 保守性 | 小さい指摘 4 件（走査キャッシュの畳み込み、停止の失敗の後の印、MCP の ID の集合、空の条件） | 対応済み（[ADR 0367](../decisions/0367-helper-notice-bounds-and-audit-diagnostics.md)） |
 
 DIA-13 は指摘ではなく、確かめて問題がなかった項目の一覧である。
 
@@ -292,6 +292,11 @@ DIA-13 は指摘ではなく、確かめて問題がなかった項目の一覧�
 - **影響**: 今のヘルパーは通知を 20 ms に 1 回へまとめるので、実害は小さい。
   通知の種類を足す時と、ヘルパーの送る速さを変える時に、遅れと列の伸びが出る形である。
 - **案**: 使わない通知は `accept` で受けた時に落とす。`poll_state_save` は、列の中の `Dirty` を全部まとめて 1 回にする。
+- **対応（2026-11-15、[ADR 0367](../decisions/0367-helper-notice-bounds-and-audit-diagnostics.md)）**:
+  ヘルパーからの `RequestProcess` 送信を外し、`ControlState::accept` でも落とす（wire 列挙子は互換のため保持）。
+  `Dirty` は `dirty_notice`（`bool`）へ畳み込み、`PluginRestarted` は最大 64 件の `restart_notices` へ分けた。
+  `poll_state_save_at` は `drain`（1 回 64 件上限）の後に `dirty_notice` を直接引き取り、`inbox` も最大 64 件へ制限した。
+  回帰は `session_tests.rs` の `audit_dia10_*` である。
 
 ### DIA-11 接続していない間引き
 
@@ -303,6 +308,10 @@ DIA-13 は指摘ではなく、確かめて問題がなかった項目の一覧�
   - パックは全体をメモリに組み立て、件数を `u32` へ切り詰める。
 - **影響**: 今は無い。履歴の間引き（PLAN の §6.4）を接続する時に、このまま呼ぶと保存の耐久性の前提を壊す。
 - **案**: SPG-10 の Phase 0 のコードと同じく、非既定の feature へ移す。接続の時は、チェーンと自動保存との排他を先に設計する。
+- **対応（2026-11-15、[ADR 0368](../decisions/0368-opt-in-history-thinning-feature.md)）**:
+  `thin.rs`・`error_thin.rs`・`ThinningError`・間引き専用の `GitOperation`・`tests/thin.rs`・`tests/thin_errors.rs` を非既定の `thinning` feature へ閉じた。
+  `flate2` と `gix-pack`（`streaming-input`）も `optional = true` とし、既定ビルドから外した。
+  `Makefile` の `check-spikes`・`check-portable` と `scripts/tests/test_history_thinning.py` で継続検査する。
 
 ### DIA-12 小さい指摘
 
@@ -314,6 +323,11 @@ DIA-13 は指摘ではなく、確かめて問題がなかった項目の一覧�
 - **MCP の ID の集合**: 旧い版の接続は、使った要求 ID を `legacy_ids` に全て持つ。接続が続く限り増える。
 - **空の条件**: `Socket::recv_tagged` の `if !poll_read(..)? && self.incoming.len() < 4 { continue; }` は、
   どちらの枝も輪の先頭へ戻る。意図が読めない。
+- **対応（2026-11-15、[ADR 0367](../decisions/0367-helper-notice-bounds-and-audit-diagnostics.md)）**:
+  `load_existing_scan_cache` で `NotFound` 以外の走査キャッシュ失敗（破損 JSON や権限・種別不正）を `echode_plugin_host::scan` に警告記録し、
+  `Session::perform_requested` は `run_command` 後に成否を問わず `sync_activity()` を呼び、
+  `McpSession::legacy_ids` は最新 `4096` 件を FIFO で保つ `LegacyIds` にし、`Socket::recv_tagged` の空の `if` を外した。
+  回帰は `scan.rs::tests`・`session_tests.rs::audit_dia12_*`・`mcp_tests.rs::audit_dia12_*`・`control_wait_tests.rs` に追加した。
 
 ### DIA-13 確かめて問題がなかった項目
 

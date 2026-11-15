@@ -111,6 +111,8 @@ check-spikes:
 	cargo test -q -p echode-bridge-spike
 	cargo clippy -q -p echode-history --features spike --all-targets -- -D warnings
 	cargo test -q -p echode-history --features spike --lib --test roundtrip
+	cargo clippy -q -p echode-history --features thinning --all-targets -- -D warnings
+	cargo test -q -p echode-history --features thinning --lib --test thin --test thin_errors
 	cargo build -q -p echode-engine --features spike --bin echode-engine-spike
 	cargo clippy -q -p echode-engine --features spike --all-targets -- -D warnings
 	cargo test -q -p echode-engine --features spike --lib
@@ -189,6 +191,7 @@ check-portable:
 	cargo deny -L error check licenses bans sources
 	cargo clippy -q --locked --workspace --all-targets $(PORTABLE_BUILD) -- -D warnings
 	cargo clippy -q --locked -p echode-history --features spike --all-targets $(PORTABLE_BUILD) -- -D warnings
+	cargo clippy -q --locked -p echode-history --features thinning --all-targets $(PORTABLE_BUILD) -- -D warnings
 	cargo clippy -q --locked -p echode-engine --features spike --all-targets $(PORTABLE_BUILD) -- -D warnings
 
 # Appended after .cargo/config.toml's target-cpu, so rustc uses this last value.

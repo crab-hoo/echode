@@ -419,6 +419,7 @@ Git・I/O・欠落・UTF-8 と表示は共用し、初期化の失敗は後続�
   JSON・アクション・保存の原因を `Error::source` へつなぎ、文へ変えるのは RPC 応答と表示の境界だけにする（[ADR 0299](../decisions/0299-typed-document-journal-and-settings-errors.md)）。
 - **Cmd+S と間引き**: `refs/heads/<オルタネイト>` の保存ポイントは間引かず、自動保存だけを `gix-pack` で間引く
   （[ADR 0046](../decisions/0046-history-thin.md)）。
+  `thin.rs`・`error_thin.rs` と任意の `flate2`・`gix-pack`（`streaming-input`）は、排他設計前のため非既定の `thinning` feature へ閉じた（[ADR 0368](../decisions/0368-opt-in-history-thinning-feature.md)）。
   `gix-pack` は `streaming-input` 機能を入れるための直接の依存で、gix が解決する版と完全一致で固定する
   （[ADR 0270](../decisions/0270-gix-0-90-and-github-advisories.md)）
   間引きとバンドルの失敗も `PackageError` を返す。Git・パック・ハッシュは操作と元の `gix::Error`、I/O は元の errno を保持する。

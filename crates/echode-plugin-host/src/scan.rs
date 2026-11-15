@@ -344,6 +344,23 @@ pub fn load_scan_cache(path: &Path) -> std::io::Result<Vec<ScanCacheEntry>> {
     Ok(entries)
 }
 
+pub(crate) fn load_existing_scan_cache(path: &Path) -> Vec<ScanCacheEntry> {
+    match load_scan_cache(path) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => {
+            log::warn!(
+                target: "echode_plugin_host::scan",
+                cache:% = path.display(),
+                error:% = error,
+                cause:? = error;
+                "could not read the plugin scan cache"
+            );
+            Vec::new()
+        }
+    }
+}
+
 /// Ends this scan helper once the process that started it is gone.
 ///
 /// The helper runs in its own process group, so nothing stops it when the app
@@ -685,7 +702,7 @@ pub fn refresh_catalog_within(
     if !host_bin.is_file() {
         return Err(CatalogError::MissingHost(host_bin.to_path_buf()));
     }
-    let cached = load_scan_cache(cache_path).unwrap_or_default();
+    let cached = load_existing_scan_cache(cache_path);
     let mut listed = Vec::new();
     let mut next = Vec::with_capacity(bundles.len());
     for bundle in bundles {
@@ -810,9 +827,7 @@ pub fn resolve_installed(ids: &[impl AsRef<str>]) -> Vec<ResolvedPlugin> {
 /// Resolve the same cache format from an explicit location. Callers can test
 /// scan-to-playback without replacing the process-wide user cache/environment.
 pub fn resolve_cached(cache: &Path, ids: &[impl AsRef<str>]) -> Vec<ResolvedPlugin> {
-    let Ok(entries) = load_scan_cache(cache) else {
-        return Vec::new();
-    };
+    let entries = load_existing_scan_cache(cache);
     let mut resolved = Vec::new();
     for id in ids {
         let id = id.as_ref();
@@ -1076,5 +1091,36 @@ mod tests {
             started.elapsed() < Duration::from_secs(50),
             "the scan ran to its deadline"
         );
+    }
+
+    /// DIA-12: an unreadable or malformed scan cache must warn with its path
+    /// and failure cause instead of silently folding into an absent cache.
+    #[test]
+    fn resolve_cached_logs_corrupt_or_unreadable_cache_but_not_absent() {
+        let root =
+            std::env::temp_dir().join(format!("echode-resolve-cache-log-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let capture = echode_log::testing::capture();
+        assert!(resolve_cached(&root.join("missing.jsonl"), &["dev.echode.sine-pad"]).is_empty());
+        assert!(
+            capture.records().is_empty(),
+            "absent scan cache must not emit a warning"
+        );
+
+        let corrupt = root.join("corrupt.jsonl");
+        std::fs::write(&corrupt, "{not-valid-json\n").unwrap();
+        assert!(resolve_cached(&corrupt, &["dev.echode.sine-pad"]).is_empty());
+        let records = capture.records();
+        assert_eq!(records.len(), 1, "{records:?}");
+        assert_eq!(records[0]["level"], "warn");
+        assert_eq!(records[0]["target"], "echode_plugin_host::scan");
+        assert_eq!(records[0]["fields"]["cache"], corrupt.display().to_string());
+
+        assert!(resolve_cached(&root, &["dev.echode.sine-pad"]).is_empty());
+        assert_eq!(capture.records().len(), 2);
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

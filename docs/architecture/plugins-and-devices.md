@@ -156,6 +156,8 @@ MIDI の全発音停止は互換用の終了処理であり、MIDI・MPE・MIDI 
 - 制御専用の `PluginControl` は、`session_operations.rs` に型付きの操作と通信の実装を直接持つ。
   `ControlState` は要求番号・通知・保存の管理を共用し、ホスト経由の保存・復元の別経路は持たない。
   再起動と回帰も同じハンドルへつなぐ（[ADR 0227](../decisions/0227-control-only-plugin-operations.md)、SPG-06）。
+  `Dirty` 通知は `dirty_notice` へ畳み込み、未使用の `RequestProcess` は送受で落とす。
+  `PluginRestarted`（最大 64）と `inbox`（最大 64）・1 回の `drain`（最大 64 件）を区切り、`poll_state_save` は再開通知の前に溜まった変更も 1 回で引き取る（[ADR 0367](../decisions/0367-helper-notice-bounds-and-audit-diagnostics.md)）。
 
 ### 9.5 GUI とデバイスビュー
 
@@ -244,6 +246,7 @@ MIDI の全発音停止は互換用の終了処理であり、MIDI・MPE・MIDI 
   常駐のカタログは 5 秒で全部を走査して一覧を出した後、時間切れだけを 120 秒で走査し直す。
   走査のヘルパーは親を失ったら終わる（[ADR 0285](../decisions/0285-scan-timeouts-are-not-verdicts.md)）。
   `ScanError` の段（判定・時間切れ・読めない）は中身も型で、終了状態・stderr・管の量・`io::Error` を持つ（[ADR 0295](../decisions/0295-typed-plugin-host-errors.md)）
+  既存の走査キャッシュ読込み（`load_existing_scan_cache`）は、`NotFound` を未作成として静かに空へ返しつつ、破損 JSON や権限・種別不正は `echode_plugin_host::scan` へパスと原因を警告記録する（[ADR 0367](../decisions/0367-helper-notice-bounds-and-audit-diagnostics.md)）。
   FFI の目録も `CatalogError` で、ヘルパーの未検出（指定パスを保持）・元の目録エラー・JSON を分ける。
   C ABI では従来の成功・容量不足・失敗の数値だけを返し、内部で文へ戻さない（[ADR 0302](../decisions/0302-typed-ffi-catalog-errors.md)）。
 - **ブラウザとチェイン操作（P2）**: ダブルクリック追加時のみ自動で閉じ、ドラッグや Return 追加時は開いたままにする。

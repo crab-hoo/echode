@@ -249,3 +249,12 @@ fn an_error_read_during_a_send_follows_the_messages_before_it() {
     );
     assert_eq!(reader.join().unwrap(), (5, true));
 }
+
+#[test]
+fn partial_header_before_timeout_times_out_cleanly() {
+    let (mut receiver, peer) = Socket::pair().unwrap();
+    send_bytes(peer.as_raw_fd(), &[1, 2], None).unwrap();
+    let error = receiver.recv_tagged(Duration::from_millis(20)).unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::TimedOut);
+    drop(peer);
+}

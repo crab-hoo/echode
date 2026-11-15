@@ -214,7 +214,6 @@ struct Bridge {
     processor: ProcessorHandoff,
     callback_gen: AtomicU64,
     callback_seen: AtomicU64,
-    process_note: AtomicBool,
     stages: AtomicU32,
     fan: AtomicPtr<FanIn>,
     sample_bits: AtomicU64,
@@ -453,9 +452,7 @@ impl SharedHandler<'_> for HostShared {
             return;
         };
         bridge.want_process.store(true, Ordering::Release);
-        bridge.process_note.store(true, Ordering::Release);
         bridge.bump_audio();
-        bridge.bump_control();
     }
 
     fn request_callback(&self) {
@@ -942,7 +939,6 @@ fn serve_region(
         processor: ProcessorHandoff::empty(),
         callback_gen: AtomicU64::new(0),
         callback_seen: AtomicU64::new(0),
-        process_note: AtomicBool::new(false),
         stages: AtomicU32::new(1),
         fan: AtomicPtr::new(fan.unwrap_or(ptr::null_mut())),
         sample_bits: AtomicU64::new(sample_rate.to_bits()),
@@ -1726,11 +1722,6 @@ fn control_thread(bridge: &Bridge, mut socket: Option<Socket>) -> Result<(), Hos
             && let Some(socket) = &mut socket
         {
             let _ = socket.send(&ControlMessage::Dirty);
-        }
-        if bridge.process_note.swap(false, Ordering::AcqRel)
-            && let Some(socket) = &mut socket
-        {
-            let _ = socket.send(&ControlMessage::RequestProcess);
         }
         if let Some(socket) = &mut socket {
             send_relay(bridge, socket);

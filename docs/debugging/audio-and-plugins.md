@@ -193,6 +193,7 @@ busy・時間切れ・通信失敗は変更の印を保ち、1 秒以上空け�
 背景取得の回収待ちの時間切れと、回収後の同期取得の拒否を分け、元の型付きエラー・再試行の期限・古い応答の破棄を確認する。
 確定自体や Undo は再送せず、引き取った未保存の変更だけを背景取得へ戻す。
 取得済みの状態を記録できない場合（DIA-05）とは区別し、文書ワーカー・保管庫・ジャーナル側の警告も確認する。
+通知列の滞留や連続通知での無応答を疑う時は `session_tests.rs` の `audit_dia10_*` で、`Dirty` 統合・`RequestProcess` 破棄・`inbox`/`drain` 上限を確認する（[ADR 0367](../decisions/0367-helper-notice-bounds-and-audit-diagnostics.md)）。
 
 ### トラックやマスターが急に無音になり、再生し直すと戻る
 
@@ -334,6 +335,7 @@ C ABI は診断の文を返さず従来の `-1` に畳むので、内部の回�
 実行中のソケット・共有領域の失敗を起動拒否へ変換する入口はない。
 未分類の拒否の旧種類 `0` は `InvalidData` で拒否するので、アプリとヘルパーの版も照合する（[ADR 0310](../decisions/0310-typed-plugin-load-boundary.md)）。
 走査先は子プロセスの `ECHODE_CLAP_ROOTS` に閉じ、実際の機器・インストール済みのプラグインを使わない。
+既存の走査キャッシュファイルが破損 JSON や権限・種別不正で読めない時は、空を返す前に `echode_plugin_host::scan` がパスと原因を警告する（`NotFound` は除外、`scan::tests::resolve_cached_logs_corrupt_or_unreadable_cache_but_not_absent`、[ADR 0367](../decisions/0367-helper-notice-bounds-and-audit-diagnostics.md)）。
 2026-10-28 の ⌘D 変更の通常検査では、`audit_rea08_descendant_pipe_does_not_extend_deadline` の最初の JSON 出力が 2 秒の期限切れとなった。
 失敗は子孫のパイプ保持ケースではなく、最初の短い shell の起動・完了待ちで、単独実行では再現しなかった。原因は未確定である。
 個別のログは `target/focused-checks/clip-duplicate-scan/`。期限・対象を変更せず、正式な `make verify` の結果と区別する。
@@ -795,6 +797,7 @@ HAL 自身の周期超過は上の「音切れがあるのにエンジンの期�
 ### 停止中にプラグインの時間・鍵盤の発音が止まる、または余韻が切れる
 
 `playing = false` とライブ処理の停止を混同しない。保持した出力は無音入力の処理を続ける。
+`Pause`・`Stop` が失敗した後に「再生中」の省電力抑止だけが残るかを調べる時は、`session_tests.rs` の `audit_dia12_failed_pause_and_stop_still_clear_playing_activity` で `sync_activity` を確認する。
 `stopped-plugin-output` で実ヘルパーと後段 FX の出力、`stopped-plugin-tails` でノートオフと自然な余韻の終端を確認する。
 音源・FX の `bypassed` / `offline`、出力が既に開いているか、位置移動・準備取消でリセットが要求されていないかを分ける。
 停止だけで `cleanup_pending` が立つなら旧仕様か不具合を疑う。位置移動の後片付け中なら正常である。

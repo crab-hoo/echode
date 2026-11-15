@@ -141,10 +141,10 @@ lint の固定版（ruff・shellcheck・shfmt）は `make setup-lint` が `targe
 | スパイク（検証用） | `spikes/` | `draw`（S1）、`bridge`（UI-2）、`input`（S5）。スパイクの型を製品へ流用しない |
 | 検査・診断・配布スクリプト | `scripts/` | `verify.py`、`verification.json`、`check_product_contracts.py`、`check_real_hal.py`、`diagnose.py`、`distribution.py`、`tests/` |
 
-間引き・パック・バンドルは `echode-history/src/thin.rs`、意味上の拒否と UTF-8 の原因は `error_thin.rs` に置く。
+間引き・パック・バンドルは `echode-history/src/thin.rs`、意味上の拒否と UTF-8 の原因は `error_thin.rs` に置き、非既定の `thinning` feature（任意依存の `flate2`・`gix-pack`）へ閉じる（[ADR 0368](decisions/0368-opt-in-history-thinning-feature.md)）。
 パッケージの項目を保持した記述子から開くのは `package_io.rs` の `Directory`、拒否の原因 `PackageEntryError`・`EntryKind` は `error_entry.rs` に置く。
 `io::Error` の内側の型で、公開の入口の回帰は `tests/package_entries.rs` にある（[ADR 0320](decisions/0320-typed-package-entry-errors-and-workspace-check.md)）。
-`tests/thin_errors.rs` で公開入口から原因・文面・原本の保持を、`tests/thin.rs` で先端の保持と間引き後の読込みを検査する。
+`--features thinning` で `tests/thin_errors.rs`（公開入口から原因・文面・原本の保持）と `tests/thin.rs`（先端の保持と間引き後の読込み）を検査し、境界は `scripts/tests/test_history_thinning.py`・`make check-spikes`・`make check-portable` で守る。
 
 ### Phase 0 の検証コード
 

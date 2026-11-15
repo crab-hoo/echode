@@ -1,6 +1,6 @@
 //! Local stdio MCP adapter. Only the existing document session performs edits.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
@@ -66,10 +66,52 @@ impl ProtocolError {
     }
 }
 
+/// Recent legacy request IDs remembered for replay detection. Bounded so a
+/// long-lived stdio session cannot grow without limit.
+const MAX_LEGACY_IDS: usize = 4096;
+
+#[derive(Default)]
+struct LegacyIds {
+    seen: BTreeSet<String>,
+    order: VecDeque<String>,
+}
+
+impl LegacyIds {
+    fn contains(&self, id: &str) -> bool {
+        self.seen.contains(id)
+    }
+
+    fn insert(&mut self, id: String) -> bool {
+        if self.seen.contains(&id) {
+            return false;
+        }
+        if self.order.len() >= MAX_LEGACY_IDS
+            && let Some(oldest) = self.order.pop_front()
+        {
+            self.seen.remove(&oldest);
+        }
+        self.seen.insert(id.clone());
+        self.order.push_back(id);
+        true
+    }
+
+    // Exercised by unit tests and the mcp-legacy-lifecycle negative control.
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn clear(&mut self) {
+        self.seen.clear();
+        self.order.clear();
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.seen.len()
+    }
+}
+
 struct McpSession<'a> {
     socket: &'a Path,
     lifecycle: Lifecycle,
-    legacy_ids: BTreeSet<String>,
+    legacy_ids: LegacyIds,
 }
 
 /// One newline-delimited MCP stream. EOF closes only this adapter, not the
@@ -82,7 +124,7 @@ pub fn serve_mcp(
     let mut session = McpSession {
         socket,
         lifecycle: Lifecycle::Fresh,
-        legacy_ids: BTreeSet::new(),
+        legacy_ids: LegacyIds::default(),
     };
     while let Some(line) = read_line(&mut input, MAX_REQUEST_LINE as u64)? {
         if let Some(response) = session.reply(&line) {

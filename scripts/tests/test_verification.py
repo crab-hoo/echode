@@ -3104,7 +3104,8 @@ class PolicyTests(unittest.TestCase):
         for native in ("cargo test", "cargo build", "check_build_host", "verify.py"):
             self.assertNotIn(native, recipe)
         clippy = [line for line in recipe.splitlines() if line.startswith("cargo clippy")]
-        self.assertEqual(len(clippy), 3)
+        # Default workspace + opt-in echode-history (spike, thinning) and echode-engine (spike).
+        self.assertEqual(len(clippy), 4)
         for line in clippy:
             self.assertIn("target-cpu=apple-m1", line)
             self.assertIn("--target-dir target/portable", line)

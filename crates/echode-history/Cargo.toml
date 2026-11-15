@@ -9,20 +9,29 @@ description = "Plain-text project files with background git history"
 
 [features]
 spike = []
+thinning = ["dep:flate2", "dep:gix-pack"]
 
 [[test]]
 name = "roundtrip"
 required-features = ["spike"]
 
+[[test]]
+name = "thin"
+required-features = ["thinning"]
+
+[[test]]
+name = "thin_errors"
+required-features = ["thinning"]
+
 [dependencies]
 echode-actions = { path = "../echode-actions" }
 echode-model = { path = "../echode-model" }
-flate2 = "1"
+flate2 = { version = "1", optional = true }
 gix = { workspace = true }
 # gix enables gix-pack without default features; thinning needs
 # `streaming-input` for `Bundle::write_to_directory`. Keep this the exact
 # version gix resolves, so both share one gix-pack (ADR 0046, ADR 0270).
-gix-pack = "=0.77.0"
+gix-pack = { version = "=0.77.0", optional = true }
 libc = "=0.2.190"
 log.workspace = true
 memmap2 = { workspace = true }
