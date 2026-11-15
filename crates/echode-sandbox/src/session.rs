@@ -276,7 +276,7 @@ impl PluginControl {
                 Ok(()) => state.dirty_again = false,
                 Err(error) => {
                     let request = state.next_request;
-                    state.save_failed(now, request, true, error);
+                    state.save_failed(now, request, &error);
                     return None;
                 }
             }
@@ -289,14 +289,11 @@ impl PluginControl {
                 Some(bytes)
             }
             Ok(Some(Err(refusal))) => {
-                // Capturing state only reads the plugin. A later capture is safe
-                // after an unknown outcome; never retry a mutating operation here.
-                let retry = matches!(refusal, Refusal::Busy | Refusal::TimedOut(_));
-                state.save_failed(now, request, retry, refusal.into());
+                state.save_failed(now, request, &refusal.into());
                 None
             }
             Err(error) => {
-                state.save_failed(now, request, true, error);
+                state.save_failed(now, request, &error);
                 None
             }
             Ok(None) => None,
@@ -305,7 +302,13 @@ impl PluginControl {
 }
 
 impl ControlState {
-    fn save_failed(&mut self, now: Instant, request: u64, retry: bool, error: SessionError) {
+    fn save_failed(&mut self, now: Instant, request: u64, error: &SessionError) {
+        let retry = match error {
+            SessionError::Refused(refusal) => {
+                matches!(refusal, Refusal::Busy | Refusal::TimedOut(_))
+            }
+            _ => true,
+        };
         self.save_requested = None;
         // A terminal refusal consumes only the change that prompted its request,
         // never a newer dirty notice received while that request was in flight.
@@ -1726,6 +1729,10 @@ mod correlation_tests;
 #[cfg(test)]
 #[path = "session_save_tests.rs"]
 mod save_tests;
+
+#[cfg(test)]
+#[path = "session_capture_tests.rs"]
+mod capture_tests;
 
 #[cfg(test)]
 #[path = "session_operations_tests.rs"]

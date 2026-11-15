@@ -128,15 +128,27 @@ impl PluginControl {
         let mut state = self.lock();
         // A background save already in flight answers first on this socket.
         // Collect it before requesting the state after the edits.
-        if let Some(id) = state.save_requested.take() {
-            state.wait_reply(id, Instant::now() + STATE_REPLY, |message| {
-                matches!(
-                    message,
-                    ControlMessage::State(_) | ControlMessage::StateRejected(_)
-                )
-            })?;
+        let background = state.save_requested.take();
+        let captured = (|| {
+            if let Some(id) = background {
+                state.wait_reply(id, Instant::now() + STATE_REPLY, |message| {
+                    matches!(
+                        message,
+                        ControlMessage::State(_) | ControlMessage::StateRejected(_)
+                    )
+                })?;
+            }
+            state.save_state()
+        })();
+        if background.is_some()
+            && let Err(error) = &captured
+        {
+            // The foreground read took ownership of an unrecorded background
+            // change. Return that change to the poller, not the failed commit.
+            let request = state.next_request;
+            state.save_failed(Instant::now(), request, error);
         }
-        state.save_state()
+        captured
     }
 
     /// Loads recorded bytes into the running plugin.

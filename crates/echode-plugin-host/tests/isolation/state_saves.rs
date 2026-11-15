@@ -5,6 +5,15 @@ use super::*;
 /// must reach the parent without a second change in the plugin.
 #[test]
 fn a_background_capture_recovers_after_a_helper_timeout_without_another_dirty_notice() {
+    recovers_after_timeout(false);
+}
+
+#[test]
+fn a_failed_foreground_capture_keeps_the_background_change_it_took_over() {
+    recovers_after_timeout(true);
+}
+
+fn recovers_after_timeout(foreground: bool) {
     let capture = echode_log::testing::capture();
     let mut host = PluginHost::spawn(SpawnOptions {
         cancel: None,
@@ -23,6 +32,17 @@ fn a_background_capture_recovers_after_a_helper_timeout_without_another_dirty_no
     // The helper publishes the load's dirty notice before this next reply.
     let _ = control.parameters();
     let deadline = Instant::now() + Duration::from_secs(12);
+    let expected_cause = if foreground {
+        assert!(control.poll_state_save().is_none());
+        let error = control.capture_state().unwrap_err();
+        assert!(matches!(
+            error,
+            SessionError::Timeout | SessionError::Refused(Refusal::Busy | Refusal::TimedOut(_))
+        ));
+        Some(format!("{error:?}"))
+    } else {
+        None
+    };
     let saved = loop {
         if let Some(bytes) = control.poll_state_save() {
             break bytes;
@@ -41,9 +61,12 @@ fn a_background_capture_recovers_after_a_helper_timeout_without_another_dirty_no
                 && record["fields"]["retry"] == true
                 && record["fields"]["cause"]
                     .as_str()
-                    .is_some_and(|cause| cause.contains("TimedOut(MainCall("))
+                    .is_some_and(|cause| match &expected_cause {
+                        Some(expected) => cause == expected,
+                        None => cause.contains("TimedOut(MainCall("),
+                    })
         }),
-        "the fixture must actually cross the helper's timeout"
+        "the fixture must cross the timeout and report the failed background change"
     );
 
     // The fixture's 64-frame buffers do not limit product block sizes.

@@ -426,6 +426,7 @@ CLAP のノート形式の対応の公開は `echode-plugin-host/src/note_ports.
 公開操作と通信の対応・拒否・背景保存の順序は `session_operations_tests.rs`、
 要求番号・古い応答と保存の世代は `session_correlation_tests.rs` を使う
 （[ADR 0227](decisions/0227-control-only-plugin-operations.md)）。
+確定が背景取得を引き取った後の失敗と再試行は `session_capture_tests.rs`、実ヘルパーとの組合せは `tests/isolation/state_saves.rs` に置く。
 
 コールバックの費用がトラック数とともにどう増えるかの release 計測は `crates/echode-plugin-host/tests/track_scale.rs` に置き、`make spike-plugin-tracks` で動かす。
 ブロックのイベントの振り分けは `playback.rs` の `group_events`、ヘルパーのトラックのキーの索引は `plugins.rs` の `HostTracks` である（[ADR 0236](decisions/0236-callback-work-per-track.md)）。
