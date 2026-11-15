@@ -413,6 +413,8 @@ MIDI だけのポートへの変換は `events.rs::write_input` と `NoteDialect
 MIDI 2.0 はグループ 0 の UMP と 16 bit のベロシティを使い、終了処理は `NoteInputs::midi2_resets` に置く（[ADR 0379](decisions/0379-midi2-notes-for-clap-ports.md)）。
 MPE のメンバーの割当とゾーンの設定は `mpe.rs::MpeZone`、性質の回帰は `mpe_tests.rs` に置く。
 開始とリセットでの消去は `NoteInputs::start_over`、1 ブロック 1 回の変換は `threads.rs::translate_events` が行う（[ADR 0380](decisions/0380-mpe-member-channels-for-clap-ports.md)）。
+MPE の表情の宛先判定は `MpeZone::exclusive_channel`、値の変換とノートオン前の初期値は `events.rs::write_mpe` に置く。
+`mpe_expression_tests.rs` が共有・値の範囲・高密度の展開と確保禁止を通す（[ADR 0381](decisions/0381-mpe-note-expression.md)）。
 実ヘルパーの各形式・入替え・終了処理は `tests/isolation/midi_notes.rs`、エンジン経路の native との一致は `tests/hosted_playback/midi_notes.rs` を使う。
 共有領域の時刻 0 のトランスポートを `clap_process.transport` に渡す処理は `threads.rs::render_plugin` に置く。
 `events.rs` の翻訳済みイベントを借り、別の保持状態や変換を作らない。

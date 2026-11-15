@@ -596,6 +596,10 @@ impl Onset {
             (0xB0, 101, 0) if channel == 0 => self.zone_rpn |= 2,
             (0xB0, 6, 15) if channel == 0 && self.zone_rpn == 3 => self.zoned = true,
             (0xB0, 120, _) => self.held = false,
+            (0xB0, 100 | 101, 0) | (0xB0, 6, 48) if self.zoned && channel == 1 => {}
+            // Neutral expression values precede every member note-on. This
+            // onset-only fixture rejects non-neutral expression it cannot model.
+            (0xE0, 0, 64) | (0xD0, 0, 0) | (0xB0, 74, 64) if self.zoned && channel != 0 => {}
             (0x90, _, 1..) if self.zoned && channel != 0 => {
                 self.held = true;
                 self.age = 0;

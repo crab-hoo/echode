@@ -1362,7 +1362,7 @@ impl PluginBuffers {
             output_offsets: channel_offsets(outputs),
             input_ptrs: vec![ptr::null_mut(); input_channels],
             output_ptrs: vec![ptr::null_mut(); output_channels],
-            events: EventBuffer::with_capacity(events),
+            events: EventBuffer::with_capacity(events * crate::events::MAX_INPUT_EXPANSION),
             decoded: Vec::with_capacity(events),
         }
     }
@@ -1989,8 +1989,7 @@ fn translate_events(
 ) {
     buffers.events.clear();
     region.copy_input_events(generation, &mut buffers.decoded);
-    // Notes for a MIDI-only port become one MIDI message each, never more,
-    // so the native-sized event storage still holds them.
+    // Storage was prepared for the worst case: four MIDI messages per MPE on.
     write_input(
         &buffers.decoded,
         &started.notes.dialects,
@@ -2728,6 +2727,9 @@ fn prepare_event_capacity(
     events: u32,
 ) -> Result<(), PluginFailure> {
     use echode_realtime::plugin_capacity::{PLUGIN_EVENT_CAPACITY, PluginEventCapacity};
+    let events = events
+        .checked_mul(crate::events::MAX_INPUT_EXPANSION as u32)
+        .ok_or(PluginFailure::CapacityRefused)?;
     let plugin = instance.raw_instance();
     // SAFETY: `PluginEventCapacity` is the table for `PLUGIN_EVENT_CAPACITY`.
     let Some(extension) = (unsafe { table::<PluginEventCapacity>(plugin, PLUGIN_EVENT_CAPACITY) })

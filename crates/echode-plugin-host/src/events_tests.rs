@@ -391,9 +391,9 @@ fn mpe_ports_play_each_held_note_on_its_own_member_channel_without_allocating() 
         on(1, aimed(Some(0), Some(0), Some(60)), 1.0),
         // A plain MIDI port keeps the event's own channel.
         on(1, aimed(Some(2), Some(3), Some(62)), 1.0),
-        // Expressions would leak into a shared channel's other notes.
+        // Expression follows the owning note id, not the event's channel.
         expression(2, note(61, 10), ExpressionKind::Pressure, 0.5),
-        expression(2, note(61, 10), ExpressionKind::Pitch, 2.0),
+        expression(2, note(61, 10), ExpressionKind::Pitch, 24.0),
         off(2, note(61, 10), 0.25),
         on(3, note(64, 12), 1.0),
         Event::NoteChoke(ChokeEvent {
@@ -413,7 +413,7 @@ fn mpe_ports_play_each_held_note_on_its_own_member_channel_without_allocating() 
         off(7, aimed(None, Some(0), Some(60)), 0.0),
     ];
     let mut zones = [MpeZone::new(1)];
-    let mut buffer = EventBuffer::with_capacity(events.len());
+    let mut buffer = EventBuffer::with_capacity(events.len() * super::MAX_INPUT_EXPANSION);
     {
         let _guard = crate::realtime::ForbidAlloc::enter();
         write_input(&events, &[Clap, Mpe, Midi], &mut zones, &mut buffer);
@@ -421,14 +421,28 @@ fn mpe_ports_play_each_held_note_on_its_own_member_channel_without_allocating() 
     assert_eq!(
         delivered(&buffer),
         [
+            (0, 1, [0xE1, 0, 64]),
+            (0, 1, [0xD1, 0, 0]),
+            (0, 1, [0xB1, 74, 64]),
             (0, 1, [0x91, 61, 127]),
+            (1, 1, [0xE2, 0, 64]),
+            (1, 1, [0xD2, 0, 0]),
+            (1, 1, [0xB2, 74, 64]),
             (1, 1, [0x92, 61, 1]),
             (1, 0, [0xFF, 60, 0]),
             (1, 2, [0x93, 62, 127]),
+            (2, 1, [0xD1, 64, 0]),
+            (2, 1, [0xE1, 0, 96]),
             (2, 1, [0x81, 61, 32]),
+            (3, 1, [0xE3, 0, 64]),
+            (3, 1, [0xD3, 0, 0]),
+            (3, 1, [0xB3, 74, 64]),
             (3, 1, [0x93, 64, 127]),
             (4, 1, [0x82, 61, 0]),
             (5, 1, [0x83, 64, 0]),
+            (6, 1, [0xE4, 0, 64]),
+            (6, 1, [0xD4, 0, 0]),
+            (6, 1, [0xB4, 74, 64]),
             (6, 1, [0x94, 65, 127]),
             (7, u16::MAX, [0xFF, 60, 0]),
         ]
@@ -448,3 +462,6 @@ fn an_mpe_port_without_a_zone_sends_no_notes() {
     );
     assert!(delivered(&buffer).is_empty());
 }
+
+#[path = "mpe_expression_tests.rs"]
+mod mpe_expressions;

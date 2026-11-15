@@ -106,6 +106,7 @@ make debug-report
   - CLAP の音声ポートの変更が反映されない
   - CLAP がテンポ・再生位置を取得できない
   - CLAP のノート形式が選ばれない・ポート変更後に発音が残る
+  - MPE の表情が届かない・前の音の表情が残る
   - CLAP が鳴らない・走査失敗
   - ヘルパーの応答が `window title is not text` / `parameter text is not UTF-8` で切れる
   - ヘルパーの応答が `launch failure is malformed` で切れる

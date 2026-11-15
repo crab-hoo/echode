@@ -336,6 +336,17 @@ cargo test -q -p echode-plugin-host --test isolation -- note_ports:: midi_notes:
 cargo test -q -p echode-plugin-host --test hosted_playback midi_notes::
 ```
 
+### MPE の表情が届かない・前の音の表情が残る
+
+曲からの表情生成・編集は未接続である。まず表情のイベントが共有領域へ届いているかを分ける。
+届いている場合は MPE だけを受けるポートか、ノート ID が保持中でチャンネルを単独所有しているかを確認する。
+共有開始時は中立へ戻し、共有中の表情は送らない。未保持・ID なし・非有限値の表情も送らない。
+処理開始・リセットごとに RPN 0 の `B1 64 00`・`B1 65 00`・`B1 06 30` がゾーン設定へ続く。
+各ノートオンの直前に、同じ時刻・メンバーのピッチベンド中央・圧力 0・CC74 中央が並ぶ。
+`PluginBuffers` と任意の容量準備拡張は入力数の 4 倍を準備する。ノートオンだけの密なブロックでの確保失敗はこの展開の上界を確認する。
+`mpe_expression_tests.rs` と `isolation/midi_notes.rs` の `mpe_expressions_` で、変換・初期値・共有中の抑止を区別する。
+第三者の設定・解釈・余韻と聴感は UC-94 に残す（[ADR 0381](../decisions/0381-mpe-note-expression.md)）。
+
 ### CLAP が鳴らない・走査失敗
 
 プラグイン ID、バンドル走査（macOS の `.clap` ディレクトリを含む）、キャッシュ、ヘルパー起動、入出力バスを追う。走査失敗時は子の終了コードとシグナルを確認する。本体プロセスにプラグインをロードして切り分けてはいけない。

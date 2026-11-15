@@ -18,11 +18,15 @@ use clack_host::events::{Event as _, UnknownEvent};
 /// Member channels of a Lower Zone that uses every channel after the manager.
 pub(crate) const MEMBERS: usize = 15;
 const KEYS: usize = 128;
+const CONFIG_MESSAGES: usize = 6;
+
+/// Semitones, explicitly configured on the first member for the whole zone.
+pub(crate) const MEMBER_PITCH_RANGE: u8 = 48;
 
 pub struct MpeZone {
     port: u16,
     /// The MPE Configuration Message for this port, sent at time zero.
-    configuration: [MidiEvent; 3],
+    configuration: [MidiEvent; CONFIG_MESSAGES],
     /// The note id that took each member channel while it was free.
     owners: [Option<u32>; MEMBERS],
     /// Notes placed on each channel after all fifteen were taken, by key.
@@ -45,6 +49,10 @@ impl MpeZone {
                 MidiEvent::new(0, port, [0xB0, 100, 6]),
                 MidiEvent::new(0, port, [0xB0, 101, 0]),
                 MidiEvent::new(0, port, [0xB0, 6, members]),
+                // RPN 0 on the first member sets every member's bend range.
+                MidiEvent::new(0, port, [0xB1, 100, 0]),
+                MidiEvent::new(0, port, [0xB1, 101, 0]),
+                MidiEvent::new(0, port, [0xB1, 6, MEMBER_PITCH_RANGE]),
             ],
             owners: [None; MEMBERS],
             shared: [[0; KEYS]; MEMBERS],
@@ -132,6 +140,13 @@ impl MpeZone {
         Some(channel(member))
     }
 
+    /// Expression must not affect any other held note. Shared notes have no
+    /// exclusive identity; even an owner is ineligible while its channel is shared.
+    pub(crate) fn exclusive_channel(&self, note_id: u32) -> Option<u8> {
+        let member = self.owner(note_id)?;
+        (self.shared_total.get(member) == Some(&0)).then(|| channel(member))
+    }
+
     fn occupancy(&self, member: usize) -> u32 {
         let owned = self.owners.get(member).is_some_and(Option::is_some);
         let shared = self.shared_total.get(member).copied().unwrap_or(u32::MAX);
@@ -150,14 +165,15 @@ pub(crate) struct ZoneConfigs<'a>(pub(crate) &'a [MpeZone]);
 impl InputEventBuffer for ZoneConfigs<'_> {
     fn len(&self) -> u32 {
         // Ports are addressed by u16, so this product stays far below u32::MAX.
-        u32::try_from(self.0.len().saturating_mul(3)).unwrap_or(u32::MAX)
+        u32::try_from(self.0.len().saturating_mul(CONFIG_MESSAGES)).unwrap_or(u32::MAX)
     }
 
     fn get(&self, index: u32) -> Option<&UnknownEvent> {
         let index = index as usize;
-        let zone = self.0.get(index / 3)?;
+        let zone = self.0.get(index / CONFIG_MESSAGES)?;
         // The slice's own `get`, not the array's `InputEventBuffer::get`.
-        <[MidiEvent]>::get(&zone.configuration, index % 3).map(|event| event.as_unknown())
+        <[MidiEvent]>::get(&zone.configuration, index % CONFIG_MESSAGES)
+            .map(|event| event.as_unknown())
     }
 }
 

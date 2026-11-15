@@ -34,10 +34,13 @@ fn the_configuration_selects_a_fifteen_member_lower_zone_on_each_manager() {
             (0, port, [0xB0, 100, 6]),
             (0, port, [0xB0, 101, 0]),
             (0, port, [0xB0, 6, 15]),
+            (0, port, [0xB1, 100, 0]),
+            (0, port, [0xB1, 101, 0]),
+            (0, port, [0xB1, 6, 48]),
         ]
     };
     assert_eq!(messages, [zone(3), zone(9)].concat());
-    assert!(events.get(6).is_none());
+    assert!(events.get(12).is_none());
 }
 
 #[test]

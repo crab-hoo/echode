@@ -274,12 +274,24 @@ fn mpe_ports_configure_a_zone_per_run_and_keep_each_note_on_its_member_channel_u
                     expected.push((MIDI, port, 0, midi(0xB0, 100, 6)));
                     expected.push((MIDI, port, 0, midi(0xB0, 101, 0)));
                     expected.push((MIDI, port, 0, midi(0xB0, 6, 15)));
+                    expected.push((MIDI, port, 0, midi(0xB1, 100, 0)));
+                    expected.push((MIDI, port, 0, midi(0xB1, 101, 0)));
+                    expected.push((MIDI, port, 0, midi(0xB1, 6, 48)));
+                }
+                for (time, offset, key) in [(1, 0, 61), (2, 1, 61)] {
+                    if mpe {
+                        expected.extend(initial_values(port, time, member(offset)));
+                    }
+                    expected.push((MIDI, port, time, midi(0x90 | member(offset), key, 127)));
                 }
                 expected.extend([
-                    (MIDI, port, 1, midi(0x90 | member(0), 61, 127)),
-                    (MIDI, port, 2, midi(0x90 | member(1), 61, 127)),
                     (NATIVE_ON, 1 - port, 2, [60, 0, 0, 0]),
                     (MIDI, port, 3, midi(0x80 | member(0), 61, 0)),
+                ]);
+                if mpe {
+                    expected.extend(initial_values(port, 4, member(2)));
+                }
+                expected.extend([
                     (MIDI, port, 4, midi(0x90 | member(2), 62, 127)),
                     (MIDI, port, 5, midi(0x80 | member(1), 61, 0)),
                     (MIDI, port, 6, midi(0x80 | member(2), 62, 0)),
@@ -294,4 +306,137 @@ fn mpe_ports_configure_a_zone_per_run_and_keep_each_note_on_its_member_channel_u
             }
         }
     }
+}
+
+fn expression(time: u32, id: u32, kind: echode_realtime::ExpressionKind, value: f64) -> Event {
+    Event::Expression(echode_realtime::ExpressionEvent {
+        time,
+        track: 1,
+        target: Target {
+            port: Some(1),
+            channel: None,
+            key: None,
+            note_id: Some(id),
+        },
+        kind,
+        value,
+    })
+}
+
+fn initial_values(port: u16, time: u32, member: u8) -> [Seen; 3] {
+    [
+        (MIDI, port, time, midi(0xE0 | member, 0, 64)),
+        (MIDI, port, time, midi(0xD0 | member, 0, 0)),
+        (MIDI, port, time, midi(0xB0 | member, 74, 64)),
+    ]
+}
+
+#[test]
+fn mpe_expressions_follow_note_ids_and_reset_before_reusing_channels_under_rtsan() {
+    use echode_realtime::ExpressionKind::{Pitch, Pressure, Timbre};
+    // Eight input slots and sixteen frames bound this regression only.
+    let layout = SessionLayout {
+        input_events: 8,
+        ..SessionLayout::stereo()
+    };
+    let mut host = spawn_plugin(Some("midi-notes"), layout);
+    host.control_handle().restore_state(&[0x42]).unwrap();
+    wait_for(&host, [0b1111, 2, 0x42]);
+    for reset in [false, true] {
+        if reset {
+            host.request_reset();
+        }
+        for id in 0..16 {
+            let member = id as u8 % 15 + 1;
+            let events = [
+                numbered(true, 1, 1, 61, id),
+                expression(2, id, Pitch, 24.0),
+                expression(3, id, Pressure, 0.5),
+                expression(4, id, Timbre, 1.0),
+                expression(5, id + 100, Pressure, 1.0),
+                numbered(false, 6, 1, 61, id),
+                expression(7, id, Pitch, -48.0),
+            ];
+            let input = stereo(16, 0.0);
+            let mut output = stereo(16, 0.0);
+            host.process_block(
+                16,
+                &[&input[0], &input[1]],
+                &mut outs(&mut output),
+                &events,
+                &mut [],
+                Duration::from_secs(2),
+            )
+            .unwrap();
+            let seen = snapshot(&host).1;
+            let notes: Vec<_> = seen.into_iter().filter(|event| event.2 != 0).collect();
+            let mut expected = initial_values(1, 1, member).to_vec();
+            expected.extend([
+                (MIDI, 1, 1, midi(0x90 | member, 61, 127)),
+                (MIDI, 1, 2, midi(0xE0 | member, 0, 96)),
+                (MIDI, 1, 3, midi(0xD0 | member, 64, 0)),
+                (MIDI, 1, 4, midi(0xB0 | member, 74, 127)),
+                (MIDI, 1, 6, midi(0x80 | member, 61, 0)),
+            ]);
+            assert_eq!(
+                notes, expected,
+                "MPE expression/default stream: id={id}, reset={reset}"
+            );
+        }
+    }
+    host.request_reset();
+    for id in 0..16 {
+        let input = stereo(16, 0.0);
+        let mut output = stereo(16, 0.0);
+        host.process_block(
+            16,
+            &[&input[0], &input[1]],
+            &mut outs(&mut output),
+            &[numbered(true, 1, 1, 61, id)],
+            &mut [],
+            Duration::from_secs(2),
+        )
+        .unwrap();
+    }
+    let input = stereo(16, 0.0);
+    let mut output = stereo(16, 0.0);
+    host.process_block(
+        16,
+        &[&input[0], &input[1]],
+        &mut outs(&mut output),
+        &[
+            expression(1, 0, Pitch, 24.0),
+            expression(2, 15, Pressure, 1.0),
+            expression(3, 1, Timbre, 0.0),
+        ],
+        &mut [],
+        Duration::from_secs(2),
+    )
+    .unwrap();
+    assert_eq!(
+        snapshot(&host).1,
+        [(MIDI, 1, 3, midi(0xB2, 74, 0))],
+        "MPE shared channel leaked expression"
+    );
+
+    host.request_reset();
+    let events: Vec<_> = (0..8).map(|id| numbered(true, 1, 1, 61, id)).collect();
+    host.process_block(
+        16,
+        &[&input[0], &input[1]],
+        &mut outs(&mut output),
+        &events,
+        &mut [],
+        Duration::from_secs(2),
+    )
+    .unwrap();
+    assert_eq!(
+        snapshot(&host)
+            .1
+            .iter()
+            .filter(|event| event.2 == 1)
+            .count(),
+        32,
+        "MPE dense note-on expansion lost messages"
+    );
 }

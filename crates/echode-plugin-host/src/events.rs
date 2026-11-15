@@ -3,13 +3,12 @@
 //! `None` in a destination becomes CLAP's -1. The buffer belongs to the caller
 //! so a reused buffer does not allocate on later blocks.
 //!
-//! Non-native note ports receive at most one MIDI 1.0 message or MIDI 2.0 UMP
-//! per event. Both lose note ids and wildcard channel/key addressing. Pitch and
-//! brightness need additional configuration/mapping and are not translated.
-//! MPE ports get each note on a member channel chosen by its zone. Expressions
-//! would need exclusive channels and initial values per note: not sent there.
+//! MIDI 1.0 and MIDI 2.0 ports receive at most one message per event; pitch
+//! and brightness are not translated there. MPE notes use member channels,
+//! with neutral expression values before each note-on. Per-note expressions
+//! reach only exclusively owned channels, never other sounding notes.
 
-use crate::mpe::MpeZone;
+use crate::mpe::{MEMBER_PITCH_RANGE, MpeZone};
 use crate::note_ports::NoteDialect;
 use clack_host::events::event_types::TransportFlags;
 use clack_host::events::event_types::{
@@ -20,6 +19,9 @@ use clack_host::events::io::EventBuffer;
 use clack_host::events::{EventFlags, EventHeader, Pckn};
 use clack_host::utils::{BeatTime, ClapId, SecondsTime};
 use echode_realtime::{Event, ExpressionKind, Target, Transport};
+
+/// An MPE note-on expands to three initial values and the note itself.
+pub(crate) const MAX_INPUT_EXPANSION: usize = 4;
 
 /// Appends `events` to `buffer` in order. The caller clears `buffer` first.
 ///
@@ -34,7 +36,7 @@ pub fn write_input(
 ) {
     for event in events {
         if let Some((port, dialect)) = midi_port(event, dialects) {
-            // Both MIDI events fit the native-sized storage they replace.
+            // Translation preserves input order, including same-time initial values.
             match dialect {
                 NoteDialect::Midi => {
                     if let Some(data) = midi_message(event) {
@@ -51,8 +53,8 @@ pub fn write_input(
                         .binary_search_by_key(&port, MpeZone::port)
                         .ok()
                         .and_then(|index| zones.get_mut(index));
-                    if let Some(data) = zone.and_then(|zone| mpe_message(event, zone)) {
-                        buffer.push(&MidiEvent::new(event.time(), port, data));
+                    if let Some(zone) = zone {
+                        write_mpe(event, zone, buffer);
                     }
                 }
                 NoteDialect::Clap => {}
@@ -151,22 +153,65 @@ fn midi_message(event: &Event) -> Option<[u8; 3]> {
     Some([status | channel, key, value])
 }
 
-/// A note on its zone's member channel. The note id finds the channel of the
-/// note-on; the event's own channel is not used. Expressions are not sent.
-fn mpe_message(event: &Event, zone: &mut MpeZone) -> Option<[u8; 3]> {
+/// A note on its zone's member channel; the event's own channel is not used.
+fn write_mpe(event: &Event, zone: &mut MpeZone, buffer: &mut EventBuffer) {
+    let send = |buffer: &mut EventBuffer, data| {
+        buffer.push(&MidiEvent::new(event.time(), zone.port(), data));
+    };
+    if let Event::Expression(note) = event {
+        let Some(member) = note
+            .target
+            .note_id
+            .and_then(|id| zone.exclusive_channel(id))
+        else {
+            return;
+        };
+        if !note.value.is_finite() {
+            return;
+        }
+        let data = match note.kind {
+            ExpressionKind::Pitch => {
+                // The zone explicitly configures every member's bend range.
+                let normalized = (note.value / f64::from(MEMBER_PITCH_RANGE)).clamp(-1.0, 1.0);
+                let scale = if normalized < 0.0 { 8192.0 } else { 8191.0 };
+                let bend = (8192.0 + normalized * scale).round() as u16;
+                [0xE0 | member, (bend & 0x7F) as u8, (bend >> 7) as u8]
+            }
+            ExpressionKind::Pressure => [0xD0 | member, seven_bits(note.value), 0],
+            ExpressionKind::Timbre => [0xB0 | member, 74, seven_bits(note.value)],
+        };
+        send(buffer, data);
+        return;
+    }
     let (on, target, value) = match event {
         Event::NoteOn(note) => (true, note.target, seven_bits(note.velocity).max(1)),
         Event::NoteOff(note) => (false, note.target, seven_bits(note.velocity)),
         Event::NoteChoke(note) => (false, note.target, 0),
-        _ => return None,
+        _ => return,
     };
     // Check the address before the zone counts a note.
-    let key = target.key.filter(|key| *key < 128)?;
-    let note_id = target.note_id?;
+    let (Some(key), Some(note_id)) = (target.key.filter(|key| *key < 128), target.note_id) else {
+        return;
+    };
     if on {
-        Some([0x90 | zone.start(note_id, key), key, value])
-    } else {
-        Some([0x80 | zone.end(note_id, key)?, key, value])
+        let member = zone.start(note_id, key);
+        let port = zone.port();
+        // Reused channels must not inherit the previous note's expression. When
+        // sharing begins, neutralize the channel and suppress further expression.
+        for data in [
+            [0xE0 | member, 0, 64],
+            [0xD0 | member, 0, 0],
+            [0xB0 | member, 74, 64],
+            [0x90 | member, key, value],
+        ] {
+            buffer.push(&MidiEvent::new(event.time(), port, data));
+        }
+    } else if let Some(member) = zone.end(note_id, key) {
+        buffer.push(&MidiEvent::new(
+            event.time(),
+            zone.port(),
+            [0x80 | member, key, value],
+        ));
     }
 }
 

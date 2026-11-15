@@ -899,6 +899,7 @@ class PolicyTests(unittest.TestCase):
         for name, target, file in (
             ("plugin-mpe-notes", "hosted_playback", "note_ports.rs"),
             ("plugin-mpe-lifecycle", "isolation", "threads.rs"),
+            ("plugin-mpe-expression", "isolation", "events.rs"),
         ):
             contract = contracts[name]
             self.assertEqual(contract["package"], "echode-plugin-host")
@@ -906,7 +907,7 @@ class PolicyTests(unittest.TestCase):
             self.assertTrue(contract["test"].startswith("midi_notes::mpe_"))
             self.assertTrue(contract["test"].endswith("under_rtsan"))
             self.assertEqual(contract["negative_control"]["file"], f"crates/echode-plugin-host/src/{file}")
-        for file in ("mpe.rs", "mpe_tests.rs"):
+        for file in ("mpe.rs", "mpe_tests.rs", "mpe_expression_tests.rs"):
             self.assertTrue(
                 {"check", "check-product-contracts", "rtsan"} <= self.selected(f"crates/echode-plugin-host/src/{file}")
             )
@@ -2771,6 +2772,7 @@ class PolicyTests(unittest.TestCase):
                 "plugin-midi2-lifecycle",
                 "plugin-mpe-notes",
                 "plugin-mpe-lifecycle",
+                "plugin-mpe-expression",
                 "plugin-state-poll",
                 "transport-declick",
                 "output-safety-deadline",
