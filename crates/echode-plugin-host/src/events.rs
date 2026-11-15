@@ -3,15 +3,15 @@
 //! `None` in a destination becomes CLAP's -1. The buffer belongs to the caller
 //! so a reused buffer does not allocate on later blocks.
 //!
-//! A note input port that accepts MIDI 1.0 but not CLAP notes receives each
-//! note event as at most one MIDI message. MIDI carries no note ids and has no
-//! per-note tuning or brightness on one channel (that would need MPE), so those
-//! are dropped, as are events with a wildcard channel or key.
+//! Non-native note ports receive at most one MIDI 1.0 message or MIDI 2.0 UMP
+//! per event. Both lose note ids and wildcard channel/key addressing. Pitch and
+//! brightness need additional configuration/mapping and are not translated.
 
+use crate::note_ports::NoteDialect;
 use clack_host::events::event_types::TransportFlags;
 use clack_host::events::event_types::{
-    MidiEvent, NoteChokeEvent, NoteExpressionEvent, NoteExpressionType, NoteOffEvent, NoteOnEvent,
-    ParamModEvent, ParamValueEvent, TransportEvent,
+    Midi2Event, MidiEvent, NoteChokeEvent, NoteExpressionEvent, NoteExpressionType, NoteOffEvent,
+    NoteOnEvent, ParamModEvent, ParamValueEvent, TransportEvent,
 };
 use clack_host::events::io::EventBuffer;
 use clack_host::events::{EventFlags, EventHeader, Pckn};
@@ -20,14 +20,23 @@ use echode_realtime::{Event, ExpressionKind, Target, Transport};
 
 /// Appends `events` to `buffer` in order. The caller clears `buffer` first.
 ///
-/// `midi_ports[port]` is true for an input note port that takes MIDI 1.0
-/// instead of CLAP notes. Missing entries are native ports.
-pub fn write_input(events: &[Event], midi_ports: &[bool], buffer: &mut EventBuffer) {
+/// `dialects[port]` selects the note wire format. Missing entries stay native.
+pub fn write_input(events: &[Event], dialects: &[NoteDialect], buffer: &mut EventBuffer) {
     for event in events {
-        if let Some(port) = midi_port(event, midi_ports) {
-            // A MIDI message is smaller than the native event it replaces.
-            if let Some(data) = midi_message(event) {
-                buffer.push(&MidiEvent::new(event.time(), port, data));
+        if let Some((port, dialect)) = midi_port(event, dialects) {
+            // Both MIDI events fit the native-sized storage they replace.
+            match dialect {
+                NoteDialect::Midi => {
+                    if let Some(data) = midi_message(event) {
+                        buffer.push(&MidiEvent::new(event.time(), port, data));
+                    }
+                }
+                NoteDialect::Midi2 => {
+                    if let Some(data) = midi2_message(event) {
+                        buffer.push(&Midi2Event::new(event.time(), port, data));
+                    }
+                }
+                NoteDialect::Clap => {}
             }
             continue;
         }
@@ -90,7 +99,7 @@ pub fn write_input(events: &[Event], midi_ports: &[bool], buffer: &mut EventBuff
 
 /// The port of a note event bound for a MIDI-only port. A wildcard port stays
 /// native: one MIDI message cannot address several ports.
-fn midi_port(event: &Event, midi_ports: &[bool]) -> Option<u16> {
+fn midi_port(event: &Event, dialects: &[NoteDialect]) -> Option<(u16, NoteDialect)> {
     let target = match event {
         Event::NoteOn(note) | Event::NoteOff(note) => note.target,
         Event::NoteChoke(note) => note.target,
@@ -98,11 +107,8 @@ fn midi_port(event: &Event, midi_ports: &[bool]) -> Option<u16> {
         Event::Transport(_) | Event::ParamValue(_) | Event::ParamMod(_) => return None,
     };
     let port = target.port?;
-    midi_ports
-        .get(usize::from(port))
-        .copied()
-        .unwrap_or(false)
-        .then_some(port)
+    let dialect = dialects.get(usize::from(port)).copied()?;
+    (dialect != NoteDialect::Clap).then_some((port, dialect))
 }
 
 /// The MIDI 1.0 channel message for one note event, if it has one.
@@ -124,6 +130,44 @@ fn midi_message(event: &Event) -> Option<[u8; 3]> {
     let channel = channel.filter(|channel| *channel < 16)?;
     let key = target.key.filter(|key| *key < 128)?;
     Some([status | channel, key, value])
+}
+
+/// MIDI 2.0 channel voice UMP, group zero, no note attributes (M2-104 §7.4).
+fn midi2_message(event: &Event) -> Option<[u32; 4]> {
+    let (status, target, data) = match event {
+        // Unlike MIDI 1.0, MIDI 2.0 note-on velocity zero is a real note-on.
+        Event::NoteOn(note) => (
+            0x90,
+            note.target,
+            u32::from(sixteen_bits(note.velocity)) << 16,
+        ),
+        Event::NoteOff(note) => (
+            0x80,
+            note.target,
+            u32::from(sixteen_bits(note.velocity)) << 16,
+        ),
+        // Neither MIDI dialect has the native CLAP choke operation.
+        Event::NoteChoke(note) => (0x80, note.target, 0),
+        Event::Expression(note) if note.kind == ExpressionKind::Pressure => (
+            0xA0,
+            note.target,
+            (note.value.clamp(0.0, 1.0) * f64::from(u32::MAX)).round() as u32,
+        ),
+        _ => return None,
+    };
+    let channel = target.channel.filter(|channel| *channel < 16)?;
+    let key = target.key.filter(|key| *key < 128)?;
+    Some([
+        0x4000_0000 | (status | u32::from(channel)) << 16 | u32::from(key) << 8,
+        data,
+        0,
+        0,
+    ])
+}
+
+fn sixteen_bits(value: f64) -> u16 {
+    // The model stores this exact resolution; NaN's saturating cast yields 0.
+    (value.clamp(0.0, 1.0) * f64::from(u16::MAX)).round() as u16
 }
 
 /// CLAP's 0..=1 to MIDI's 0..=127 at the nearest step. Values outside clamp.

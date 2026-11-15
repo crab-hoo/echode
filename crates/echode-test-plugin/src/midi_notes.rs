@@ -3,25 +3,38 @@ use clack_plugin::events::io::InputEvents;
 use clack_plugin::events::spaces::CoreEventSpace;
 use clack_plugin::extensions::prelude::*;
 use clap_sys::ext::note_ports::{
-    CLAP_EXT_NOTE_PORTS, CLAP_NOTE_DIALECT_CLAP, CLAP_NOTE_DIALECT_MIDI, clap_host_note_ports,
+    CLAP_EXT_NOTE_PORTS, CLAP_NOTE_DIALECT_CLAP, CLAP_NOTE_DIALECT_MIDI, CLAP_NOTE_DIALECT_MIDI2,
+    clap_host_note_ports,
 };
 use std::ffi::CStr;
 use std::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
 
-/// Input note ports this fixture declares. Two show both dialects at once.
+/// Two input ports show native and MIDI dialects at once.
 pub(crate) const PORTS: u32 = 2;
-/// Bit `n` set: input port `n` takes MIDI only. Clear: CLAP only.
-static MIDI_ONLY: AtomicU8 = AtomicU8::new(0b10);
+/// Bit n selects MIDI for port n; bit 7 selects MIDI 2.0 instead of MIDI 1.0.
+static LAYOUT: AtomicU8 = AtomicU8::new(0b10);
 /// The layout a state load asked for, applied while inactive.
 static WANTED: AtomicU8 = AtomicU8::new(0b10);
 static ACTIVATIONS: AtomicU8 = AtomicU8::new(0);
-/// The host's `supported_dialects` at initialization.
 static HOST_DIALECTS: AtomicU32 = AtomicU32::new(u32::MAX);
-/// The events of the latest block that had any, one packed record each.
-/// Sixteen cover this fixture's blocks; they bound no product event count.
-static RECORDS: [AtomicU64; 16] = [const { AtomicU64::new(0) }; 16];
-/// Records in `RECORDS`, or `u8::MAX` when a block had more than it holds.
+/// Sixty-four hold this fixture's reset and note blocks, not a product limit.
+static RECORDS: [Record; 64] = [const { Record::new() }; 64];
+/// Latest nonempty block's record count, or u8::MAX for an overflow.
 static COUNT: AtomicU8 = AtomicU8::new(0);
+
+struct Record {
+    address: AtomicU64,
+    words: [AtomicU32; 4],
+}
+
+impl Record {
+    const fn new() -> Self {
+        Self {
+            address: AtomicU64::new(0),
+            words: [const { AtomicU32::new(0) }; 4],
+        }
+    }
+}
 
 const NATIVE_ON: u64 = 1;
 const NATIVE_OFF: u64 = 2;
@@ -29,6 +42,7 @@ const NATIVE_CHOKE: u64 = 3;
 const MIDI: u64 = 4;
 const EXPRESSION: u64 = 5;
 const OTHER: u64 = 6;
+const MIDI2: u64 = 7;
 
 pub(crate) fn probe(host: HostSharedHandle<'_>) {
     let Some(extension) = host.get_extension::<HostNotePorts>() else {
@@ -47,10 +61,13 @@ pub(crate) fn probe(host: HostSharedHandle<'_>) {
 }
 
 pub(crate) fn dialects(index: u32) -> u32 {
-    if u32::from(MIDI_ONLY.load(Ordering::Acquire)) & (1 << index) != 0 {
-        CLAP_NOTE_DIALECT_MIDI
-    } else {
+    let layout = LAYOUT.load(Ordering::Acquire);
+    if u32::from(layout) & (1 << index) == 0 {
         CLAP_NOTE_DIALECT_CLAP
+    } else if layout & 0x80 != 0 {
+        CLAP_NOTE_DIALECT_MIDI2
+    } else {
+        CLAP_NOTE_DIALECT_MIDI
     }
 }
 
@@ -65,7 +82,7 @@ pub(crate) fn activate() {
 
 pub(crate) fn deactivate() {
     // CLAP allows a note-port change only while inactive.
-    MIDI_ONLY.store(WANTED.load(Ordering::Acquire), Ordering::Release);
+    LAYOUT.store(WANTED.load(Ordering::Acquire), Ordering::Release);
 }
 
 pub(crate) fn record(events: &InputEvents<'_>) {
@@ -74,49 +91,64 @@ pub(crate) fn record(events: &InputEvents<'_>) {
         return;
     }
     for (slot, event) in RECORDS.iter().zip(events) {
-        let time = u64::from(event.header().time() as u16);
         let (kind, port, data) = match event.as_core_event() {
             Some(CoreEventSpace::Midi(midi)) => {
                 let [status, key, value] = midi.data();
-                let data = u64::from(status) | u64::from(key) << 8 | u64::from(value) << 16;
-                (MIDI, midi.port_index(), data)
+                (
+                    MIDI,
+                    midi.port_index(),
+                    [
+                        u32::from(status) | u32::from(key) << 8 | u32::from(value) << 16,
+                        0,
+                        0,
+                        0,
+                    ],
+                )
             }
+            Some(CoreEventSpace::Midi2(midi)) => (MIDI2, midi.port_index(), midi.data()),
             Some(CoreEventSpace::NoteOn(note)) => native(NATIVE_ON, note.pckn()),
             Some(CoreEventSpace::NoteOff(note)) => native(NATIVE_OFF, note.pckn()),
             Some(CoreEventSpace::NoteChoke(note)) => native(NATIVE_CHOKE, note.pckn()),
             Some(CoreEventSpace::NoteExpression(note)) => native(EXPRESSION, note.pckn()),
-            _ => (OTHER, u16::MAX, 0),
+            _ => (OTHER, u16::MAX, [0; 4]),
         };
-        let port = u64::from(port as u8);
-        slot.store(
-            kind | port << 8 | time << 16 | data << 32,
+        slot.address.store(
+            kind | u64::from(port) << 8 | u64::from(event.header().time()) << 24,
             Ordering::Release,
         );
+        for (word, value) in slot.words.iter().zip(data) {
+            word.store(value, Ordering::Release);
+        }
     }
-    let count = if total > RECORDS.len() {
-        u8::MAX
-    } else {
-        total as u8
-    };
-    COUNT.store(count, Ordering::Release);
+    COUNT.store(
+        if total > RECORDS.len() {
+            u8::MAX
+        } else {
+            total as u8
+        },
+        Ordering::Release,
+    );
 }
 
-fn native(kind: u64, pckn: clack_plugin::events::Pckn) -> (u64, u16, u64) {
+fn native(kind: u64, pckn: clack_plugin::events::Pckn) -> (u64, u16, [u32; 4]) {
     let port = pckn.port_index.into_specific().unwrap_or(u16::MAX);
     let key = pckn.key.into_specific().unwrap_or(0xFF);
-    (kind, port, u64::from(key as u8))
+    (kind, port, [key as u32, 0, 0, 0])
 }
 
-/// Host dialects, activations, current layout, record count, then each record.
+/// Dialects, activations, layout, count; each record is an address and four words.
 pub(crate) fn snapshot() -> Vec<u8> {
     let mut bytes = vec![
         HOST_DIALECTS.load(Ordering::Acquire) as u8,
         ACTIVATIONS.load(Ordering::Acquire),
-        MIDI_ONLY.load(Ordering::Acquire),
+        LAYOUT.load(Ordering::Acquire),
         COUNT.load(Ordering::Acquire),
     ];
     for record in &RECORDS {
-        bytes.extend_from_slice(&record.load(Ordering::Acquire).to_le_bytes());
+        bytes.extend_from_slice(&record.address.load(Ordering::Acquire).to_le_bytes());
+        for word in &record.words {
+            bytes.extend_from_slice(&word.load(Ordering::Acquire).to_le_bytes());
+        }
     }
     bytes
 }

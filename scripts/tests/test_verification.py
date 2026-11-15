@@ -879,6 +879,21 @@ class PolicyTests(unittest.TestCase):
         self.assertIn("note.time", contract["negative_control"]["old"])
         self.assertIn("0,", contract["negative_control"]["new"])
 
+    def test_midi2_contracts_cover_project_notes_and_inactive_lifecycle_changes(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        for name, target in (("plugin-midi2-notes", "hosted_playback"), ("plugin-midi2-lifecycle", "isolation")):
+            contract = contracts[name]
+            self.assertEqual(contract["package"], "echode-plugin-host")
+            self.assertEqual(contract["target"], ["--test", target])
+            self.assertTrue(contract["test"].startswith("midi_notes::midi2_"))
+            self.assertTrue(contract["test"].endswith("under_rtsan"))
+            self.assertEqual(contract["negative_control"]["file"], "crates/echode-plugin-host/src/note_ports.rs")
+            self.assertIn("midi2", contract["negative_control"]["old"])
+        for file in ("note_ports.rs", "note_ports_tests.rs", "events.rs", "events_tests.rs"):
+            self.assertTrue(
+                {"check", "check-product-contracts", "rtsan"} <= self.selected(f"crates/echode-plugin-host/src/{file}")
+            )
+
     def test_mix_controls_select_product_ownership_and_live_audio_checks(self):
         contracts = {item["id"]: item for item in self.policy["product_contracts"]}
         for contract_id, swift_test in (
@@ -2735,6 +2750,8 @@ class PolicyTests(unittest.TestCase):
                 "queued-stop",
                 "plugin-transport-reset",
                 "plugin-midi-panic",
+                "plugin-midi2-notes",
+                "plugin-midi2-lifecycle",
                 "plugin-state-poll",
                 "transport-declick",
                 "output-safety-deadline",

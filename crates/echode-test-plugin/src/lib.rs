@@ -35,8 +35,8 @@ use clap_sys::ext::audio_ports::{
     clap_audio_port_info, clap_plugin_audio_ports,
 };
 use clap_sys::ext::note_ports::{
-    CLAP_EXT_NOTE_PORTS, CLAP_NOTE_DIALECT_CLAP, CLAP_NOTE_DIALECT_MIDI, clap_note_port_info,
-    clap_plugin_note_ports,
+    CLAP_EXT_NOTE_PORTS, CLAP_NOTE_DIALECT_CLAP, CLAP_NOTE_DIALECT_MIDI, CLAP_NOTE_DIALECT_MIDI2,
+    clap_note_port_info, clap_plugin_note_ports,
 };
 use clap_sys::ext::state::{CLAP_EXT_STATE, clap_host_state, clap_plugin_state};
 use clap_sys::plugin::clap_plugin;
@@ -166,7 +166,7 @@ impl Plugin for TestGain {
         }
         if matches!(
             fault_now(),
-            Fault::NotePorts | Fault::MidiNotes | Fault::OnsetMidi
+            Fault::NotePorts | Fault::MidiNotes | Fault::OnsetMidi | Fault::OnsetMidi2
         ) {
             builder.register::<PluginNotePorts>();
         }
@@ -359,6 +359,8 @@ enum Fault {
     MidiNotes,
     /// [`Fault::Onset`] behind a MIDI-only note port. Native notes poison the output.
     OnsetMidi,
+    /// [`Fault::Onset`] behind a MIDI 2.0-only port. Other note dialects poison it.
+    OnsetMidi2,
 }
 
 /// For [`Fault::RestartNested`]: activations so far, and whether the first
@@ -399,6 +401,7 @@ fn fault_code(text: &str) -> u8 {
         "timeline" => 31,
         "midi-notes" => 32,
         "onset-midi" => 33,
+        "onset-midi2" => 34,
         _ if text.starts_with("restart-nested:") => 22,
         _ if text.starts_with("delay:") => 19,
         // The event counter, with the second process call held as `process-wait`.
@@ -445,6 +448,7 @@ fn fault_from_code(code: u8) -> Fault {
         31 => Fault::Timeline,
         32 => Fault::MidiNotes,
         33 => Fault::OnsetMidi,
+        34 => Fault::OnsetMidi2,
         _ => Fault::None,
     }
 }
@@ -494,21 +498,23 @@ struct Onset {
 }
 
 impl Onset {
-    /// With `midi`, notes come from MIDI 1.0 note messages. Wildcard lifecycle
-    /// chokes and all-sounds-off both stop the voice, as a native choke does.
+    /// MIDI probes reject the other dialects. Wildcard lifecycle chokes and
+    /// all-sounds-off stop the voice, as a native choke does.
     fn render(
         &mut self,
         output: &mut [f32],
         events: &clack_plugin::events::io::InputEvents<'_>,
         scale: f32,
-        midi: bool,
+        dialect: Fault,
     ) {
         let mut next = 0usize;
         for (frame, sample) in output.iter_mut().enumerate() {
             while next < events.len() as usize && events[next].header().time() as usize <= frame {
                 use clack_plugin::events::spaces::CoreEventSpace;
                 match events[next].as_core_event() {
-                    Some(CoreEventSpace::NoteOn(_) | CoreEventSpace::NoteOff(_)) if midi => {
+                    Some(CoreEventSpace::NoteOn(_) | CoreEventSpace::NoteOff(_))
+                        if dialect != Fault::Onset =>
+                    {
                         self.poisoned = true;
                     }
                     Some(CoreEventSpace::NoteOn(_)) => {
@@ -518,7 +524,7 @@ impl Onset {
                     Some(CoreEventSpace::NoteOff(_) | CoreEventSpace::NoteChoke(_)) => {
                         self.held = false;
                     }
-                    Some(CoreEventSpace::Midi(message)) if midi => {
+                    Some(CoreEventSpace::Midi(message)) if dialect == Fault::OnsetMidi => {
                         let [status, data, value] = message.data();
                         match (status & 0xF0, data, value) {
                             (0x90, _, 1..) => {
@@ -528,6 +534,23 @@ impl Onset {
                             (0x80 | 0x90, _, _) | (0xB0, 120, _) => self.held = false,
                             _ => {}
                         }
+                    }
+                    Some(CoreEventSpace::Midi2(message)) if dialect == Fault::OnsetMidi2 => {
+                        let [word, _, _, _] = message.data();
+                        match (word >> 20) & 0xF {
+                            0x9 if word >> 28 == 4 => {
+                                self.held = true;
+                                self.age = 0;
+                            }
+                            0x8 if word >> 28 == 4 => self.held = false,
+                            0xB if word >> 28 == 4 && (word >> 8) & 0x7F == 120 => {
+                                self.held = false;
+                            }
+                            _ => self.poisoned = true,
+                        }
+                    }
+                    Some(CoreEventSpace::Midi(_) | CoreEventSpace::Midi2(_)) => {
+                        self.poisoned = true;
                     }
                     _ => {}
                 }
@@ -799,7 +822,7 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
                 fill_outputs(&mut audio, 0.0);
                 return Ok(ProcessStatus::Continue);
             }
-            Fault::Onset | Fault::OnsetMidi => {
+            Fault::Onset | Fault::OnsetMidi | Fault::OnsetMidi2 => {
                 let initial = self.onset;
                 let mut channel = 0usize;
                 for mut port in &mut audio {
@@ -818,7 +841,7 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
                             output,
                             events.input,
                             if channel == 0 { 0.25 } else { -0.125 },
-                            self.fault == Fault::OnsetMidi,
+                            self.fault,
                         );
                         self.onset = state;
                         channel += 1;
@@ -1673,6 +1696,8 @@ unsafe extern "C" fn note_port_get(
                 midi_notes::dialects(index)
             } else if fault_now() == Fault::OnsetMidi {
                 CLAP_NOTE_DIALECT_MIDI
+            } else if fault_now() == Fault::OnsetMidi2 {
+                CLAP_NOTE_DIALECT_MIDI2
             } else {
                 CLAP_NOTE_DIALECT_CLAP
                     | if fault_now() == Fault::TailLegacy {
@@ -1685,6 +1710,8 @@ unsafe extern "C" fn note_port_get(
                 midi_notes::dialects(index)
             } else if fault_now() == Fault::OnsetMidi {
                 CLAP_NOTE_DIALECT_MIDI
+            } else if fault_now() == Fault::OnsetMidi2 {
+                CLAP_NOTE_DIALECT_MIDI2
             } else {
                 CLAP_NOTE_DIALECT_CLAP
             },

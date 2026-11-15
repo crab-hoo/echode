@@ -107,6 +107,7 @@
 | UC-85 | テンポ同期の第三者 CLAP 音源・FX で再生・停止・位置移動・短いループ・曲中のテンポ変更を試し、後段とフォルダ FX でも拍が合うか確認する。名前・版・同期設定を記録する。自動回帰は通知と波形の一致だけで、メーカーの同期モードと実機の聴感は判定できない | 第三者・実機・聴感 | [ADR 0358](decisions/0358-product-musical-transport.md) | 2026-11-15 |
 | UC-90 | CLAP 形式を受けず MIDI 1.0 だけを受ける第三者 CLAP 音源で、ノートを再生・停止・位置移動・ループし、鳴る・強弱が付く・音が残らないことを確かめる。名前・版を記録する。自動回帰は検査用だけで、メーカーのベロシティ曲線と聴感は分からない | 第三者・実機・聴感 | [ADR 0375](decisions/0375-midi-1-notes-for-midi-only-clap-ports.md) | 2026-11-15 |
 | UC-91 | 遅延を持つ第三者 CLAP の後ろとフォルダにテンポ同期 FX を置き、開始・一時停止・位置移動・遅延より短いループ・テンポ変更を比べる。名前・版・報告遅延・同期設定を記録する。自動回帰は通知の補正だけで、メーカーの同期モードとプリロール時の聴感は判定できない | 第三者・実機・聴感 | [ADR 0378](decisions/0378-pdc-stage-transport.md) | 2026-11-15 |
+| UC-92 | MIDI 2.0 だけを受ける第三者 CLAP 音源で、曲の再生・停止・位置移動・ループを行い、強弱と発音停止を確認する。名前・版・ポートとグループ設定を記録する。自動回帰はグループ 0 の検査用音源だけで、メーカーのグループ解釈・ベロシティ曲線と聴感は判定できない | 第三者・実機・聴感 | [ADR 0379](decisions/0379-midi2-notes-for-clap-ports.md) | 2026-11-15 |
 | UC-21 | 窓での変更（パラメーターにならない編集を含む）が、無関係な編集の後も残り、1 回の Undo で戻る | 画面・第三者 | [ADR 0229](decisions/0229-plugin-window-live-edits.md) | 2026-11-02 |
 | UC-22 | 窓アイコンと VoiceOver、実ウィンドウの表示、アプリ切替時の隠れ方、第三者の GUI と音 | 画面・VO・第三者・聴感 | [ADR 0130](decisions/0130-clap-parameter-editing.md)、[ADR 0132](decisions/0132-helper-plugin-windows.md)、[ADR 0134](decisions/0134-plugin-window-lifetime-and-shortcuts.md) | 2026-10-21 |
 | UC-23 | プラグイン付きトラックを選ぶたびの GUI の停止と、パラメーター画面の重さが直った | 実機・第三者 | [ADR 0131](decisions/0131-device-view-and-responsive-parameters.md) | 2026-10-20 |

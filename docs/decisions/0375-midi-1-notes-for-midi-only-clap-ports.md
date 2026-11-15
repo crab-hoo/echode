@@ -1,7 +1,7 @@
 # 0375. CLAP 形式を受けないノート入力ポートへ曲のノートを MIDI 1.0 で送る
 
 - 日付: 2026-11-15
-- 状態: 現行
+- 状態: 一部置換（[0379](0379-midi2-notes-for-clap-ports.md)）
 - 領域: プラグイン・隔離
 - 対象: F2・FCA-07・P2-03 の `clap.note-ports`
 - 一部置換: [ADR 0356](0356-clap-note-port-capabilities-and-lifecycle.md) の「native CLAP だけを対応と答える」判断

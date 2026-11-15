@@ -266,6 +266,7 @@ pub use catalog::{
 };
 pub use events::write_input;
 pub use live::{CatalogTiming, CatalogWaiter, LiveCatalog};
+pub use note_ports::NoteDialect;
 #[cfg(debug_assertions)]
 pub use realtime::GuardAlloc;
 pub use scan::{

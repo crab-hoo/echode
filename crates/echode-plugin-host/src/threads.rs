@@ -2003,14 +2003,15 @@ fn render_plugin(
     // Lifecycle events precede same-time project notes without copying them
     // into mapping-sized storage. Port-count changes cannot grow an RT buffer.
     let choke = NoteChokeEvent::new(0, Pckn::match_all());
-    let lifecycle = (region.block_command(generation) == CMD_RESET_PROCESS)
-        .then_some((&choke, &started.notes.resets));
+    let midi_resets = (&started.notes.resets, &started.notes.midi2_resets);
+    let lifecycle =
+        (region.block_command(generation) == CMD_RESET_PROCESS).then_some((&choke, &midi_resets));
     region.copy_input_events(generation, &mut buffers.decoded);
     // Notes for a MIDI-only port become one MIDI message each, never more,
     // so the native-sized event storage still holds them.
     write_input(
         &buffers.decoded,
-        &started.notes.midi_ports,
+        &started.notes.dialects,
         &mut buffers.events,
     );
     // CLAP reads the state at sample zero from process.transport as well as
