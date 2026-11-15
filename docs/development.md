@@ -10,7 +10,7 @@ lint の固定版（ruff・shellcheck・shfmt）は `make setup-lint` が `targe
 1. `git status --short` で既存変更を把握し、他の作業の変更を巻き戻さない。
    `make agent-context` で不足ツール・鮮度・選択された検査・関連資料を一度に確認する。
    個別確認は `make doctor` と `make verify-plan`、必要な節の読込と根拠の扱いは [エージェントの手順](agent-workflow.md) に従う。
-2. [現在の制約](status.md)、触る領域の [ARCHITECTURE](ARCHITECTURE.md) 分割資料、関連 ADR、[監査の読み順](README.md#監査の読み順) を読む。
+2. [現在の制約](status.md)、領域別の制約、触る領域の [ARCHITECTURE](ARCHITECTURE.md) 分割資料、関連 ADR、[監査の読み順](README.md#監査の読み順) を読む。
    設計上の将来機能と実装済みの機能を区別し、下記の保守の観点から今回の影響範囲も確認する。
 3. 不具合は最小入力、初期状態、操作順、期待と実際、使用した版を記録する。
    製品の入口から再現し、回帰テストを先に失敗させる。環境エラーは [デバッグ手順](debugging.md) で切り分ける。
@@ -54,9 +54,9 @@ lint の固定版（ruff・shellcheck・shfmt）は `make setup-lint` が `targe
 ### ドキュメント
 
 - 利用方法・コマンド・設定が変われば `README.md` と該当手順を更新する。
-- 実画面・VoiceOver・聴感・実機の確認待ちを作ったら [ユーザー確認の一覧](user-checks.md) に項目を足し、status.md からはその番号を示す。
-- 実装範囲・制約が変われば [status.md](status.md)、設計が変われば [ARCHITECTURE.md](ARCHITECTURE.md) と対応する [docs/architecture/](architecture/) 分割資料、方針・完了条件が変われば [PLAN.md](PLAN.md) を更新する。
-- status.md には利用者に残る制約と未確認の項目だけを書く。制約が消えたら status.md の項目も消す。
+- 実画面・VoiceOver・聴感・実機の確認待ちを作ったら [ユーザー確認の一覧](user-checks.md) に項目を足し、`docs/status/` からはその番号を示す。
+- 実装範囲・制約が変われば [領域別の制約](status.md#領域別の制約)、設計が変われば [ARCHITECTURE.md](ARCHITECTURE.md) と対応する [docs/architecture/](architecture/) 分割資料、方針・完了条件が変われば [PLAN.md](PLAN.md) を更新する。
+- `docs/status/` には利用者に残る制約と未確認の項目だけを書く。制約が消えたら `docs/status/` の項目も消す。
 - ADR を新しく書くのは、次のどれかに当たる判断だけである。
   - 他の案と比べて選んだ。選ばなかった案と理由を書ける。
   - 後から変えにくい。保存形式、公開する API・ABI、プロセスの境界、依存ライブラリ、ビルド基準など。

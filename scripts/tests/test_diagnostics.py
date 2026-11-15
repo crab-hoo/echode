@@ -373,6 +373,7 @@ class DeveloperDocumentationTests(unittest.TestCase):
             "README.md",
             "docs/README.md",
             "docs/status.md",
+            *sorted(f"docs/status/{path.name}" for path in (ROOT / "docs/status").glob("*.md")),
             "docs/development.md",
             "docs/agent-workflow.md",
             "docs/debugging.md",

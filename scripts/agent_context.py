@@ -39,28 +39,66 @@ SECTION_BUDGET_BYTES = 12_000
 # in verification.json; this index cannot remove verification obligations.
 AREA_GUIDES = {
     "bridge": (
+        "docs/status/storage.md",
+        "docs/status/api-and-documents.md",
+        "docs/status/audio.md",
+        "docs/status/plugins.md",
+        "docs/status/piano-roll.md",
+        "docs/status/arrange-and-browser.md",
         "docs/architecture/ui-and-metal.md",
         "docs/architecture/api-qa-and-distribution.md",
         "docs/debugging/arrange-mixer-and-browser.md",
         "docs/debugging/saving-history-and-api.md",
     ),
-    "audio": ("docs/architecture/audio-engine.md", "docs/debugging/audio-and-plugins.md"),
-    "isolation": ("docs/architecture/plugins-and-devices.md", "docs/debugging/audio-and-plugins.md"),
-    "drawing": ("docs/architecture/ui-and-metal.md", "docs/debugging/arrange-mixer-and-browser.md"),
-    "history": ("docs/architecture/model-and-history.md", "docs/debugging/saving-history-and-api.md"),
-    "input": ("docs/architecture/ui-and-metal.md", "docs/debugging/piano-roll.md"),
+    "audio": (
+        "docs/status/audio.md",
+        "docs/architecture/audio-engine.md",
+        "docs/debugging/audio-and-plugins.md",
+    ),
+    "isolation": (
+        "docs/status/plugins.md",
+        "docs/architecture/plugins-and-devices.md",
+        "docs/debugging/audio-and-plugins.md",
+    ),
+    "drawing": (
+        "docs/status/arrange-and-browser.md",
+        "docs/architecture/ui-and-metal.md",
+        "docs/debugging/arrange-mixer-and-browser.md",
+    ),
+    "history": (
+        "docs/status/storage.md",
+        "docs/status/api-and-documents.md",
+        "docs/architecture/model-and-history.md",
+        "docs/debugging/saving-history-and-api.md",
+    ),
+    "input": (
+        "docs/status/piano-roll.md",
+        "docs/status/arrange-and-browser.md",
+        "docs/architecture/ui-and-metal.md",
+        "docs/debugging/piano-roll.md",
+    ),
     "render": (
+        "docs/status/audio.md",
+        "docs/status/plugins.md",
+        "docs/status/storage.md",
         "docs/architecture/audio-engine.md",
         "docs/architecture/api-qa-and-distribution.md",
         "docs/debugging/audio-and-plugins.md",
     ),
     "dependencies": ("docs/PLAN.md", "docs/architecture/api-qa-and-distribution.md"),
     "app_drawing": (
+        "docs/status/arrange-and-browser.md",
+        "docs/status/piano-roll.md",
         "docs/architecture/ui-and-metal.md",
         "docs/debugging/arrange-mixer-and-browser.md",
         "docs/debugging/piano-roll.md",
     ),
-    "product_audio": ("docs/architecture/audio-engine.md", "docs/debugging/audio-and-plugins.md"),
+    "product_audio": (
+        "docs/status/audio.md",
+        "docs/status/plugins.md",
+        "docs/architecture/audio-engine.md",
+        "docs/debugging/audio-and-plugins.md",
+    ),
 }
 
 

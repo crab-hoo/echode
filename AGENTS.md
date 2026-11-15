@@ -25,7 +25,7 @@ Echode は macOS 専用の DAW です。このファイルは全エージェン�
 
 1. `make agent-context` で環境・変更範囲・古い結果・関連資料を一度に確認する。
    個別確認は `make doctor` と `make verify-plan`。情報取得・実行の方針は [エージェントの手順](docs/agent-workflow.md) に従う。
-2. [資料の入口](docs/README.md) と [現在の制約](docs/status.md) を読み、触る領域の PLAN・ARCHITECTURE（および `docs/architecture/` の領域別設計書）、関連 ADR と監査は必要な節だけを読む。
+2. [資料の入口](docs/README.md) と [現在の制約](docs/status.md) を読み、領域別の制約と PLAN・ARCHITECTURE（および `docs/architecture/` の領域別設計書）、関連 ADR と監査は必要な節だけを読む。
    全文を読む資料の合計と節の大きさには上限があり、`make agent-context` が測る（[ADR 0235](docs/decisions/0235-reading-budget-and-split-guides.md)）。
 3. [開発手順](docs/development.md) に従い、製品と同じ経路で不具合を再現してから修正する。開始時にドキュメント・テスト基盤・デバッグ基盤への影響も確認する。
 4. 必要な基盤の更新を同じ作業で終え、[検査手順](docs/verification.md) で全選択項目を処理し、最後に `make verify`。失敗時は [デバッグ手順](docs/debugging.md)。
@@ -39,7 +39,7 @@ Echode は macOS 専用の DAW です。このファイルは全エージェン�
 必要な実機検査を提案する時は、自動検査では分からない何を確認するのかを説明する。
 明示的な依頼なしに機器を開く検査やアプリ操作を実行せず、開いているアプリの終了・置換もしない。
 ユーザー担当の実機項目は理由付きで見送り、未確認を合格にしない。
-新しい確認待ちは [ユーザー確認の一覧](docs/user-checks.md) に場面ごとの項目として足し、`docs/status.md` からはその番号を示す。
+新しい確認待ちは [ユーザー確認の一覧](docs/user-checks.md) に場面ごとの項目として足し、`docs/status/` の領域別の制約からはその番号を示す。
 
 ## 基盤の保守も作業に含める
 

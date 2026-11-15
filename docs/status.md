@@ -21,134 +21,16 @@
 - **監査記録**: 状態は各監査の表が正本。未完了の束ねは [統合表](reviews/2026-11-08-open-items-register.md)。
   後続の監査で指摘がなくても完了にはしない。
 
-## 利用時に残る制約
+## 領域別の制約
 
-### 保存・復旧・パッケージ
+制約・未接続・未確認の項目の正本は次のファイルに置く。触る領域の見出しと必要な節を読む。
+`make agent-context` は変更領域に応じて案内し、開始時の全文読込には含めない。
 
-- **保存のクラッシュ耐久性（XCA-01〜03、HIS-A1）**: 連番の欠けと状態の保管物の欠落は、読めない先端と同じく同意まで書込みを拒否する。
-  作業ツリーの JSON は同期しない。実際の電源断は未実施で、Swift の警告は原因をまだ言い分けない（[ADR 0230](decisions/0230-save-durability.md)）。
-- **復旧と保存の信頼境界（2026-10-27 監査）**: ジャーナルの適用・不変条件の違反では、連番と理由を返してオープンを拒否する（ADV-01、[ADR 0180](decisions/0180-journal-replay-invariants.md)）。
-  読めない先端から親へ戻る復旧は、明示の同意まで書込みを拒否する（ADV-02、[ADR 0183](decisions/0183-recovery-consent.md)）。
-  失われた編集は復元しない。警告の実画面・VoiceOver はユーザー確認待ち（UC-30）。
-  消失済みの過去の完全ログ・画像は復元していない（[証拠の保全](evidence/README.md)）。
-- **プロジェクトの開始**: 復元失敗後の操作は UC-31、失敗理由の表示・VO は UC-84 が未確認。
-  読めない Git の参照・設定は、原本を保って開くことを拒否する（[ADR 0350](decisions/0350-unreadable-history-is-not-empty.md)）。
-- **パッケージの浮動小数点の精度**: 既に丸められた保存値は復元しない（[ADR 0196](decisions/0196-lossless-package-floats.md)）。
-- **素材とキャッシュの Git 除外**: 任意の Git パターンの正規化はしない（[ADR 0031](decisions/0031-content-addressed-store.md#除外規則の行単位の照合2026-10-29)）。
-- **素材の回収**: 公開後は失敗時も素材を消さない。掃除はない（[ADR 0362](decisions/0362-published-media-and-helper-lifetimes.md)）。
-- **保存済み音声の有限性**: 保存済み PCM と外部音声の取込みは、NaN・無限大を含めば拒否する。
-  波形キャッシュのマップ読込みと実機の聴感は、この検証の範囲外である（[ADR 0056](decisions/0056-audio-import.md#外部音声の一括復号と取込みの検証2026-10-29)）。
-- **波形キャッシュの破損**: 壊れたキャッシュは元の PCM から作り直し、素材が読めなければ波形を出さない。
-  素材に対する全列の認証はしない。旧 `ECHDPK01` は作り直し、現在の識別子は `ECHDPK02` である（[ADR 0058](decisions/0058-waveform-peaks.md)）。
+- [保存・復旧・パッケージ](status/storage.md)
+- [API・MCP・文書の入口](status/api-and-documents.md)
+- [音声・再生・トランスポート](status/audio.md)
+- [プラグイン・デバイスビュー](status/plugins.md)
+- [ピアノロール](status/piano-roll.md)
+- [アレンジ・ブラウザ・ミックス・画面](status/arrange-and-browser.md)
 
-### API・MCP・文書の入口
-
-- **API の応答の書込み**: 応答の書込みが 30 秒進まない接続は閉じる。送信失敗の前に成立した編集は再実行しない（[ADR 0073](decisions/0073-socket-path.md)）。
-- **MCP の応答**: 版確認後はサイズ上限・読取り期限がなく、無応答なら待ち続ける。
-  不正応答は結果不明として確認を促し、確定した編集を再送・巻戻ししない（[ADR 0365](decisions/0365-mcp-complete-session-replies.md)）。
-- **文書の寿命と古い入力（SPG-02）**: 閉じる間はヘルパーの終了を待たず、文書なしの画面を `busy` のまま表示する（[ADR 0203](decisions/0203-document-session.md)）。
-  実画面での文書切替・VoiceOver・聴感はユーザー確認待ち（UC-29）。
-- **文書の手番の調停（SPG-05）**: CLI と MCP はこのサービスを使わず、`DocumentHost` へ直接つなぐ（[ADR 0204](decisions/0204-document-service.md)）。
-- **Swift の型付き編集入口（SPG-03）**: 互換の raw JSON の入口が残る（[ADR 0202](decisions/0202-generated-swift-edit-actions.md)）。
-- **製品のログ**: 異常終了で待ち行列の残りは失われ、ヘルパーは終了時の stderr の末尾だけ。
-  自動保存停止は `history.usage`、使用量ログは終了時。実アプリは UC-66（[ADR 0322](decisions/0322-product-log.md)）。
-
-### 音声・再生・トランスポート
-
-- **HAL**: 実機の一覧復帰・過負荷通知は未確認（UC-87・88）。通知しない音切れは検出できない。
-- **テンポ境界**: 原点前後の実機・聴感は UC-62（[ADR 0275](decisions/0275-shared-integer-tempo-index.md)）。
-- **停止と一時停止**: 停止は記憶した開始位置へ戻り、一時停止はその場に保つ（[ADR 0155](decisions/0155-remembered-playback-start.md)）。
-  Return は、入力欄とブラウザ一覧の確定・配置を優先する（[ADR 0181](decisions/0181-piano-reference-workflow-and-keys.md)）。
-  実画面の操作感と、停止で戻る時の聴感はユーザー確認待ち（UC-17）。
-- **再生ヘッドの追従**: 追従は保存しない表示状態で、キーの割当はない。
-  停止中のズームで範囲外になった再生ヘッドは、次の再生・停止・位置移動まで表示しない（[ADR 0159](decisions/0159-playhead-follow.md)）。
-  ページ送り・VoiceOver は未確認（UC-18）。
-- **開いた時の出力準備**: 再生は準備中の FX を含む出力の完成を待つ。
-  停止中の処理負荷は開いた時から生じる（[ADR 0147](decisions/0147-output-prewarm-and-background-media.md)、[ADR 0333](decisions/0333-install-diff-graph-off-worker.md)）。
-  実機の待ちと操作感は UC-19・69。
-- **ライブ停止**: 停止中も無音の入力でプラグインを処理し、余韻とプラグイン内の鍵盤の音を出力する（[ADR 0133](decisions/0133-stopped-plugin-processing-and-edit-input.md)）。
-  実機と第三者プラグインの聴感はユーザー確認待ち（UC-25）。
-- **位置移動と準備の取消**: 位置移動・未発音の準備の取消とオフラインの停止では、以前の発音状態を消す（[ADR 0099](decisions/0099-transport-plugin-state.md)）。
-- **バス・ループ・ゲイン・メーター**: 暗黙のステレオ→モノ変換はエラーにし、モノの音源は等電力でステレオへ上げる（[ADR 0095](decisions/0095-product-audio-buses-and-continuity.md)、UC-72・[ADR 0337](decisions/0337-mono-instrument-on-stereo-source.md)）。
-  Phase 3 のレンダリングキャッシュの生成本体、Ogg、プラグインのサムネイルは未実装（[ADR 0108](decisions/0108-phase1-loop-readiness.md)）。
-  クリップゲインは `0..=1_048_576`（音声クリップのみ）で、負の配置オフセットはファイル前の無音として扱う（[ADR 0109](decisions/0109-placement-bounds-and-plugin-capture.md)）。
-  トラックメーターはフェーダー後の左右最大ピークで、LUFS やトゥルーピークではない（[ADR 0107](decisions/0107-mix-controls.md)）。
-- **Sine Pad と音源の選択**: 音源のないトラックのノートは無音で、旧プロジェクトへ暗黙の音源を補わない。
-  従来の既定音を使うには Sine Pad を挿す（[ADR 0123](decisions/0123-explicit-sine-pad-plugin.md)）。
-- **クリップゲイン**: 実機の操作感・聴感は未確認（UC-48、[ADR 0241](decisions/0241-unscaled-placement-pcm.md)）。
-- **規模・ミックスと履歴（FCA-05〜07・19）**: モデル ID の線形探索と履歴のメモリ予算は残る（[ADR 0274](decisions/0274-reused-track-plans.md)）。
-  ノートと配置の編集の 1 段は触れた run と中身の一覧を持つ。多くを変える編集はその分を持ち、総量の予算はない（[ADR 0353](decisions/0353-shared-placement-runs.md)）。
-  子は親の FX・音量・パンを通る（UC-47・49・73、[ADR 0338](decisions/0338-folder-bus.md)）。
-  PDC は最遅の経路に揃え、再生ヘッドと後段のノートは未補正（UC-51・74、[ADR 0340](decisions/0340-latency-graph.md)）。
-- **長い素材**: 全体を復号して 1 コピーを常駐させ、逐次読込みはない（[ADR 0273](decisions/0273-shared-source-clip-windows.md)）。
-
-### プラグイン・デバイスビュー
-
-- **CLAP の互換性**: 第三者のテンポ同期・聴感は UC-85、ほかの互換性は UC-80〜83。
-  音声ポートの構造変更は未対応（[ADR 0356](decisions/0356-clap-note-port-capabilities-and-lifecycle.md)）。
-- **遅いプラグインの走査**: 5 秒で答えないバンドルは後で 120 秒待ち、なお答えなければ次の起動まで出ない（UC-65、[ADR 0285](decisions/0285-scan-timeouts-are-not-verdicts.md)）。
-- **オフライン書出し（CLI-A1）**: ステレオ・u32 フレームまで、ヘルパーは 1 ブロック 60 秒待つ。出力先は元パッケージの外へ固定する（[ADR 0260](decisions/0260-pinned-gui-export-destination.md)）。
-  取消は処理の区切りを待つ。画面・VO は UC-53〜61、聴感は UC-52・57（[ADR 0258](decisions/0258-peak-export-normalization.md)）。
-- **プラグインの取りこぼし**: 欠けた音声・余韻は復元せず、ノートは打ち直す。
-  自動ミュートの画面は UC-63・79・86、期限は UC-64、実機・聴感は UC-50・75。
-- **プラグインの状態の大きさ**: 上限はない。取得・復元は送信込みで 2 秒待ち、2 GiB 前後から時間切れになる（[ADR 0319](decisions/0319-control-send-deadline.md)）。
-- **ヘルパーの時間切れ（SPG-01）**: 実行中の制御要求があれば、次の要求は busy で拒否する。
-  時間切れは結果不明で、背景取得以外は自動再送しない（[ADR 0348](decisions/0348-background-state-capture-retries.md)）。
-  実機・第三者の応答と聴感は UC-28・76・77。
-- **プラグインの窓での変更（DOC-A1・A2）**: そのデバイス自身の Undo が、画面の知らない途中の変更を読み込み直すことは残る。
-  出力を開き直すと、ヘルパーは記録した状態から作り直される（[ADR 0229](decisions/0229-plugin-window-live-edits.md)）。
-  実画面と第三者プラグインはユーザー確認待ち（UC-21）。
-- **プラグイン GUI・パラメーターの編集**: デバイスビューの一覧は、プラグインが `clap.params` で公開する値だけを扱う（[ADR 0130](decisions/0130-clap-parameter-editing.md)）。
-  窓が閉じている時のプラグイン自身の変化は、自動保存だけで記録する（[ADR 0132](decisions/0132-helper-plugin-windows.md)）。
-  窓アイコンの実画面・VoiceOver、実ウィンドウの表示、アプリ切替時の隠れ方、第三者プラグインの GUI と聴感はユーザー確認待ち（UC-22）。
-- **デバイスビューと GUI の応答性**: 実機と第三者プラグインでの GUI の停止の解消はユーザー確認待ち（UC-23）。
-  実画面での暗転の解消はユーザー確認待ち（UC-24、[ADR 0133](decisions/0133-stopped-plugin-processing-and-edit-input.md)）。
-  出力の準備中の編集、一覧の再試行と状態の表示、FX の追加中の再生は UC-43〜46・71。
-  再生中の編集の実機は UC-67（[ADR 0330](decisions/0330-playing-edit-media-and-tempo-retime.md)）。
-  取込み中の編集・Undo は取込み後に順に効く（UC-68、[ADR 0331](decisions/0331-off-worker-audio-import.md)）。
-  計画生成は残る。閉じる時は起動中のヘルパーを止める（UC-70、[ADR 0334](decisions/0334-cancel-helper-starts-on-close.md)）。
-  列の開閉と下部の積み方の実画面の操作感と VoiceOver はユーザー確認待ち（UC-26、[ADR 0146](decisions/0146-independent-editor-stack.md)）。
-- **デバイスチェインの表示**: フォルダとデバイス列の開閉は文書内の表示状態で、保存・Undo の対象外である（[ADR 0128](decisions/0128-folder-disclosure-and-row-projection.md)、[ADR 0137](decisions/0137-device-disclosure.md)）。
-  トラックの複製でオートメーションとルーティングは引き継がない（[ADR 0129](decisions/0129-track-duplication.md)）。
-  狭い幅・低い行・深い字下げでヘッダの FX 名を隠す時は、下部とインスペクターで全チェインを扱う（[ADR 0139](decisions/0139-track-header-fx-names.md)）。
-  インスペクターの FX 追加ボタンの実画面と VoiceOver はユーザー確認待ち（UC-27、[ADR 0165](decisions/0165-inspector-fx-add-and-arrange-note-pitch.md)）。
-- **隔離・Workgroup・キャッシュ**: AUv3 の二重隔離の回避、走査の Seatbelt、Workgroup ポートの 2 ms ポーリングの置換は未実装（[ADR 0111](decisions/0111-macos-helper-notices.md)）。
-  CPU の並列グラフ、メーカー単位のヘルパーの集約、SME、Metal 4 は未実装（[ADR 0113](decisions/0113-product-macos-workgroup-and-caches.md)）。
-
-### ピアノロール
-
-- **入力長**: 記憶した値は全トラック共有で、再オープン時に初期化される（[ADR 0172](decisions/0172-piano-click-and-input-length.md)）。
-  実画面の操作感はユーザー確認待ち（UC-07）。
-- **複数ノートのベロシティ**: 一括調整の実画面・VoiceOver・聴感はユーザー確認待ち（UC-08、[ADR 0177](decisions/0177-piano-batch-note-velocity.md)）。
-- **表示範囲の共有**: 実画面と VoiceOver はユーザー確認待ち（UC-09、[ADR 0174](decisions/0174-shared-piano-viewport.md)）。
-- **ノートの編集**: 吸着・追加・ベロシティ・枠選択と、選択・移動・複製・グリッドの実画面・VoiceOver・聴感はユーザー確認待ち（UC-10、UC-32〜37）。
-- **操作の状態の一本化（SPG-08）**: 解放が届かない製品の経路は未確認で、実画面はユーザー確認待ち（UC-11、[ADR 0206](decisions/0206-piano-interaction-state.md)）。
-- **クリップの大きさ**: 旧ジャーナルの移動・複製は、従来の固定化の規則で再生する（[ADR 0170](decisions/0170-content-relative-auto-bars.md)）。
-  ノートの所属替えと、隣のクリップで止める処理は未接続で、草案に残る（[ADR 0169](decisions/0169-clip-growth-follows-notes-and-stops-at-walls.md)）。
-
-### アレンジ・ブラウザ・ミックス・画面
-
-- **MIDI クリップの音高表示**: 実画面と VoiceOver はユーザー確認待ち（UC-01、[ADR 0165](decisions/0165-inspector-fx-add-and-arrange-note-pitch.md)）。
-- **クリップの移動と複製（UIF-03）**: 移動先で重なる配置は置き換え（削除・切詰め・分割）になる（[ADR 0154](decisions/0154-clip-move-and-duplicate.md)）。
-  ⌘D はアレンジにフォーカスがある時だけ有効で、押し続けの自動反復はしない（[ADR 0188](decisions/0188-arrange-adjacent-clip-duplication.md)）。
-  重ねるモード・自動クロスフェード・複数クリップは未接続。実画面の操作感と VoiceOver はユーザー確認待ち（UC-05）。
-- **クリップのミックス操作の文書交換**: 実画面の文書切替・VoiceOver はユーザー確認待ち（UC-14、[ADR 0194](decisions/0194-clip-mix-gesture-document-scope.md)）。
-- **音声のドロップ**: 複数ファイルの同時ドロップ・自動スクロール・配置予定の波形と、同じトラックでの配置の重複は未接続（[ADR 0145](decisions/0145-sample-browser-file-drops.md)）。
-  ドラッグの実操作・見え方・VoiceOver はユーザー確認待ち（UC-06）。
-- **サンプルブラウザのクリック（UIF-05・09）**: クリックの遅れとフォーカスが直ったかはユーザー確認待ち（UC-15）。
-  遅れの量は未計測である（[ADR 0143](decisions/0143-browser-click-and-audition-timing.md)）。
-- **試聴**: プラグインを使わない。過大出力で止まり、次の試聴で戻る（[ADR 0344](decisions/0344-sample-audition-output-guard.md)、UC-78）。
-  表示中は無音の試聴出力を保つ（[ADR 0152](decisions/0152-browser-audition-controls.md)）。
-  隣の行の先読みと、長いファイルの読込み時間の計測はしていない（[ADR 0163](decisions/0163-sample-overview.md)）。
-  2 つの IOProc の加算と機器切替時の挙動、聴感は実機でのユーザー確認待ち（UC-16、[ADR 0135](decisions/0135-sample-audition.md)）。
-  長い素材の読込み中の試聴と、表示中の試聴の操作もユーザー確認待ち（UC-41・42）。
-  試聴のループ（UIF-10）は再現しておらず、原因は未確定である（[照合](reviews/2026-10-21-ui-feedback-audit.md)）。
-- **2026-10-25 の操作の報告**: サンプル一覧の Space が製品のどこで止まっていたかは再現していない（[照合](reviews/2026-10-25-user-feedback.md)）。
-  実画面と聴感での解消はユーザー確認待ち（UC-20）。
-- **選択トラックのミックス（P2-06）**: ピアノロールの行の Solo / Mute ボタンは単一トラックのまま。選択外のソロは解除しない（[ADR 0189](decisions/0189-selected-track-mute-and-solo.md)）。
-  無音の基準からの音量比が定まらない一括入力は、理由を示して拒否する（[ADR 0191](decisions/0191-selected-track-numeric-mix.md)）。
-  一括の切替・読み上げの増減・文書切替・ドラッグとリセットの実画面・VoiceOver・聴感はユーザー確認待ち（UC-12、UC-38〜40、[ADR 0228](decisions/0228-selected-track-live-mix.md)）。
-- **値の操作子（UIF-04）**: 実画面の操作感・VoiceOver・第三者プラグインの変換はユーザー確認待ち（UC-13、[ADR 0153](decisions/0153-value-control-clicks-and-typed-entry.md)）。
-- **ペインのリサイズと描画（UIF-01、JNK-01・02）**: リサイズ中の見え方はユーザー確認待ち（UC-02、[ADR 0144](decisions/0144-unscaled-canvas-resizing.md)）。
-  上下のずれ・再生開始時のがくつき・VoiceOver の解消はユーザー確認待ち（UC-03、[ADR 0149](decisions/0149-flipped-canvas-anchor-and-fixed-transport-chrome.md)）。
-  ちらつきの有無はユーザー確認待ち（UC-04、[ADR 0150](decisions/0150-stale-drawable-frame.md)）。
+分割の判断と測定は [ADR 0370](decisions/0370-domain-status-guides.md) にある。

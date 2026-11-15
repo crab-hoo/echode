@@ -100,6 +100,11 @@ class ContextTests(unittest.TestCase):
         self.assertEqual(set(data["selection"]), {"check", "measure"})
         paths = {guide["path"] for guide in data["guides"]}
         self.assertIn("docs/architecture/model-and-history.md", paths)
+        self.assertIn("docs/status/storage.md", paths)
+        self.assertIn("docs/status/api-and-documents.md", paths)
+        self.assertIn("docs/status/audio.md", paths)
+        self.assertNotIn("docs/status/piano-roll.md", paths)
+        self.assertTrue({"docs/status/storage.md", "docs/status/audio.md"}.issubset(context.all_guides()))
         self.assertTrue(set(context.COMMON_GUIDES).issubset(paths))
         with self.assertRaisesRegex(ValueError, "unknown area"):
             context.collect(self.root, ["typo"])
@@ -214,6 +219,26 @@ class ContextTests(unittest.TestCase):
         reading = context.reading_budget(ROOT, context.all_guides())
         self.assertLessEqual(reading["start_bytes"], context.START_BUDGET_BYTES, reading["start"])
         self.assertEqual(reading["oversized"], [])
+
+    def test_status_details_are_indexed_bounded_and_selected_by_area(self):
+        expected = {
+            "history": {"storage", "api-and-documents"},
+            "audio": {"audio"},
+            "isolation": {"plugins"},
+            "input": {"piano-roll", "arrange-and-browser"},
+            "drawing": {"arrange-and-browser"},
+        }
+        details = {path.relative_to(ROOT).as_posix() for path in (ROOT / "docs/status").glob("*.md")}
+        self.assertTrue(details, "PCA-03: status constraints must live outside the full-read index")
+        self.assertTrue(details.isdisjoint(context.START_GUIDES))
+        self.assertTrue(details.issubset(context.all_guides()))
+        index = (ROOT / "docs/status.md").read_text()
+        for name in details:
+            with self.subTest(guide=name):
+                self.assertIn(f"]({name.removeprefix('docs/')})", index)
+        for area, names in expected.items():
+            with self.subTest(area=area):
+                self.assertTrue({f"docs/status/{name}.md" for name in names}.issubset(context.AREA_GUIDES[area]))
 
     def test_live_documentation_index_covers_every_verification_area(self):
         policy = context.verify.load_policy(ROOT)

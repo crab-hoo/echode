@@ -14,6 +14,7 @@ make agent-context
 共通資料は常に案内し、関連資料の候補は既存の `scripts/verification.json` の領域から求める。
 未編集の領域を調べる時は `make agent-context CONTEXT_ARGS='--area isolation'` のように候補を追加する。
 `--area` は既存変更の領域や検査対象を除外しない。
+領域別の制約は [現在の範囲と制約](status.md) から引く。`docs/status/` は変更領域の案内と節の容量検査に含め、開始時の全文読込には含めない。
 
 全変更、検査の選択根拠・目的、資料のハッシュと見出しは `target/agent-context.json` に保存する。
 全文 JSON が必要な時だけ `--json` を使う。

@@ -122,6 +122,8 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
 通常の `make check` は `check-format`、`check-lint`、`check-verification`、`check-base`、`check-swift`、`check-product-contracts` を順に 1 回ずつ実行する。
 `scripts/verify.py` では JSON の `make_target` により、結果 ID `check` が `check-base` を実行し、Rust、Swift、製品契約は別の結果として記録する。
 
+### 通常の検査と契約の入口
+
 - `check-verification`: 検査選択、依存入力の失効、診断、署名、作業資料のリンクと行長整合、ADR・監査・スパイクを含む全文書のローカルリンク。
   `scripts/run_unit_tests.py` が `scripts/tests` の各モジュールを別プロセスで同時に実行する（[ADR 0271](decisions/0271-task-tier-duplicate-runs.md)）。
   失敗・取込みの誤り・0 件のモジュールは、その出力全体を表示して失敗にする。
@@ -151,6 +153,9 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
   全反例が現在のソースへ適用できること（置換元が 1 回だけ現れること）を、ビルドせずに確認する。
   反例は実行しない。反例はソースのコピーを別にビルドするので、全体の段階に任せる（[ADR 0327](decisions/0327-instrumented-builds-only-on-github.md)）。
   出荷しない feature を名指す契約も、通常テストごと全体の段階に任せる。
+
+### 契約の反例・追加の検査
+
 - `check-contract-controls`（全体の段階）: 全契約の反例を実行する。
   ソースのコピー上で各契約の `negative_control`（既知の不具合を戻す差分）を適用し、テストの期待値で失敗しなければ検査全体を失敗とする。
   コンパイル失敗は検出の証拠にしない。
