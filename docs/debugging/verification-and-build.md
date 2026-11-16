@@ -194,6 +194,14 @@ Xcode 側のビルド診断が quiet 出力に出ない場合がある。大量�
 `-Zbuild-std --offline` が `failed to download addr2line` 等で止まる場合は、製品の依存とは別の固定 nightly の標準ライブラリ用キャッシュが不足している。
 `make setup-bridge` の Miri sysroot 準備で取得してから検査を再実行する。ツールの存在確認だけでは、このキャッシュ不足は分からない。
 
+### Swift 契約が `SDK cannot be located` / `PlatformPath` で失敗する
+
+`xcrun --show-sdk-platform-path` の失敗後に Swift の契約がまとめて `missing, skipped, or failed required test` となる場合は、まず SDK の選択を調べる。
+2026-11-17 の `full`（run `43932204488`）では `/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk` が見つからず、`contracts (2)`・`contracts (3)` が失敗した。
+変更前の `4c40ae1`（run `43918901455`、`contracts (2)`）にも同じ診断があり、センド・鍵の音声回帰に由来する断定の失敗ではない。
+ランナーで `xcode-select --print-path`、`xcrun --find swiftc`、`xcrun --sdk macosx --show-sdk-path` と `xcrun --show-sdk-platform-path` の終了コード・出力、`SDKROOT`・`DEVELOPER_DIR` を収集する。
+選択した Xcode・SDK・Testing.framework を同じ環境にそろえてから再実行する。テストを省略したり、古いバンドルで代用して合格にしない。
+
 ### Swift のテストのリンクで `_NSApplicationMain` などが未定義になる
 
 `libechode_ffi.a` は製品の Rust 全体を含み、そのシステムライブラリは `swift/EchodeBridge/Package.swift` の `CEchodeFfi` が宣言する。

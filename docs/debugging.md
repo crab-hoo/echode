@@ -42,6 +42,7 @@ make debug-report
   - 機器なしの出力の回帰が GitHub の `full` だけで `pumped_peak(...) > 0.1` に落ちる
 - ツール・ビルド・生成物
   - ツール不足・ビルド失敗
+  - Swift 契約が `SDK cannot be located` / `PlatformPath` で失敗する
   - Swift のテストのリンクで `_NSApplicationMain` などが未定義になる
   - `check-ffi` が外部シンボルを拒否する
   - `check-audio-lints` が宣言や解除を拒否する
