@@ -80,7 +80,7 @@ actor FakeParameterPlugin {
 
     func send(_ document: Document, _ command: DeviceCommand) async throws -> DeviceResult {
         switch command {
-        case .audioConfigs, .selectAudioConfig:
+        case .audioConfigs, .selectAudioConfig, .applyAudioPorts:
             throw CancellationError()
         case .parameters(let device):
             reads += 1

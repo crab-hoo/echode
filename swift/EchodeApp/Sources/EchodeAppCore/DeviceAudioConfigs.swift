@@ -9,7 +9,8 @@ public final class DeviceAudioConfigState {
     public private(set) var list: DeviceAudioConfigs?
     public private(set) var busy = false
     public private(set) var error: String?
-    @ObservationIgnored private var request = 0
+    private var request = 0
+    var revision: Int { request }
 
     func begin() -> Int? {
         guard !busy else { return nil }
@@ -61,9 +62,25 @@ extension ProjectController {
     /// where the ordinary plugin-state edit records exactly one Undo step.
     @discardableResult
     public func selectAudioConfig(_ id: UInt32, device: UUID, documentID: DocumentID) async -> Bool {
-        guard let session = inputSession(for: documentID), let parameters = session.parameterStates[device],
-            !session.historyBusy, let list = parameters.audioConfiguration.list,
-            list.currentID != id, list.configs.contains(where: { $0.id == id })
+        guard let state = inputSession(for: documentID)?.parameterStates[device]?.audioConfiguration,
+            let list = state.list, list.currentID != id, list.configs.contains(where: { $0.id == id })
+        else { return false }
+        return await changeAudioConfig(
+            .selectAudioConfig(device: device, id: id), device: device, documentID: documentID)
+    }
+
+    @discardableResult
+    public func applyAudioPorts(
+        _ requests: [DeviceAudioPortChange], device: UUID, documentID: DocumentID
+    ) async -> Bool {
+        guard !requests.isEmpty else { return false }
+        return await changeAudioConfig(
+            .applyAudioPorts(device: device, requests: requests), device: device, documentID: documentID)
+    }
+
+    private func changeAudioConfig(_ command: DeviceCommand, device: UUID, documentID: DocumentID) async -> Bool {
+        guard let session = inputSession(for: documentID), !session.historyBusy,
+            let parameters = session.parameterStates[device]
         else { return false }
         let state = parameters.audioConfiguration
         guard let request = state.begin() else { return false }
@@ -73,7 +90,7 @@ extension ProjectController {
                 session.parameterStates[device] === parameters
             else { return false }
             do {
-                let result = try await self.sendDevice(document, .selectAudioConfig(device: device, id: id))
+                let result = try await self.sendDevice(document, command)
                 session.publish(result.snapshot)
                 if result.report.changed == true { session.recordEdit() }
                 state.finish(request)

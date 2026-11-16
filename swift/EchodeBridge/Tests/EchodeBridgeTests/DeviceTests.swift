@@ -4,6 +4,24 @@ import Testing
 @testable import EchodeBridge
 
 struct DeviceTests {
+    @Test func audioPortChangesEncodeTheWholeBatchWithoutNarrowingIndicesOrChannels() throws {
+        let device = UUID()
+        let requests = [
+            DeviceAudioPortChange(input: true, index: .max, channels: 0),
+            DeviceAudioPortChange(input: false, index: 0, channels: .max),
+        ]
+        let data = try JSONEncoder().encode(DeviceCommand.applyAudioPorts(device: device, requests: requests))
+        let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(object["type"] as? String == "device.audio_ports.apply")
+        #expect(object["device"] as? String == device.uuidString)
+        let ports = try #require(object["requests"] as? [[String: Any]])
+        #expect(ports.count == 2)
+        #expect(ports[0]["input"] as? Bool == true && ports[1]["input"] as? Bool == false)
+        #expect((ports[0]["index"] as? NSNumber)?.uint32Value == .max)
+        #expect((ports[0]["channels"] as? NSNumber)?.uint32Value == 0)
+        #expect((ports[1]["channels"] as? NSNumber)?.uint32Value == .max)
+    }
+
     @Test func audioConfigCommandsAndReportsUsePluginIDs() throws {
         let device = UUID()
         for (command, kind, id) in [

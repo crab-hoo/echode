@@ -926,8 +926,18 @@ class PolicyTests(unittest.TestCase):
             "crates/echode-document/src/device.rs",
             "swift/EchodeApp/Sources/EchodeAppCore/DeviceAudioConfigs.swift",
             "swift/EchodeApp/Sources/EchodeAppCore/DeviceAudioConfigView.swift",
+            "swift/EchodeApp/Sources/EchodeAppCore/DeviceAudioPortEditor.swift",
+            "swift/EchodeApp/Tests/EchodeAppTests/DeviceAudioPortTests.swift",
         ):
             self.assertTrue({"check", "check-product-contracts", "check-swift"} <= self.selected(path))
+        ports_state = contracts["device-audio-ports-state"]
+        self.assertEqual((ports_state["package"], ports_state["target"]), ("echode-document", ["--lib"]))
+        self.assertEqual(ports_state["negative_control"]["file"], "crates/echode-document/src/device.rs")
+        ports_ui = contracts["device-audio-ports-ui"]
+        self.assertEqual(ports_ui["suite"], "DeviceAudioPortTests")
+        self.assertEqual(
+            ports_ui["negative_control"]["file"], "swift/EchodeApp/Sources/EchodeAppCore/DeviceAudioPortEditor.swift"
+        )
         groups = self.policy["product_contract_inputs"]
         self.assertIn("echode-test-plugin", groups["rust:echode-document"]["packages"])
 
@@ -2825,6 +2835,8 @@ class PolicyTests(unittest.TestCase):
                 "plugin-audio-port-mapping",
                 "device-audio-config-state",
                 "device-audio-config-ui",
+                "device-audio-ports-state",
+                "device-audio-ports-ui",
                 "plugin-audio-config-selection",
                 "plugin-audio-config-routing",
                 "plugin-configurable-audio-ports",

@@ -3,6 +3,19 @@ use echode_sandbox::{PluginHost, SessionLayout, SpawnOptions};
 
 #[test]
 fn contract_audio_config_selection_records_plugin_state_once_and_releases_failures() {
+    check_edit("device.audio_config.select", r#", "id":206"#, r#", "id":1"#);
+}
+
+#[test]
+fn contract_audio_port_changes_record_plugin_state_once_and_release_failures() {
+    check_edit(
+        "device.audio_ports.apply",
+        r#", "requests":[{"input":false,"index":0,"channels":1}]"#,
+        r#", "requests":[{"input":false,"index":4294967295,"channels":1}]"#,
+    );
+}
+
+fn check_edit(kind: &str, extra: &str, refused_extra: &str) {
     let artifacts = std::env::current_exe()
         .unwrap()
         .parent()
@@ -46,12 +59,23 @@ fn contract_audio_config_selection_records_plugin_state_once_and_releases_failur
     echode_history::write_package(&dir, &project).unwrap();
     let host = DocumentHost::open(&dir).unwrap();
     let mut audio = Session::new(host.snapshot());
-    let mut editing = BTreeSet::from([device.raw()]);
-    let captured = round_trip(Some(&control), &Request::SelectAudioConfig(206));
+    let mut editing = BTreeSet::new();
+    let bytes = format!(r#"{{"type":"{kind}","device":"{device}"{extra}}}"#);
+    let Resolution::Waiting(waiting) =
+        dispatch(&host, &mut audio, &mut editing, bytes.as_bytes(), true).unwrap()
+    else {
+        panic!("configuration edits must reach the device lane");
+    };
+    let dispatched = waiting.ready(Some(control.clone()), &mut editing);
+    assert!(
+        editing.contains(&device.raw()),
+        "defer background saves before changing ports"
+    );
+    let captured = round_trip(dispatched.control.as_ref(), &dispatched.request);
     assert_eq!(
         captured.as_ref().unwrap()[3],
         6,
-        "select before capturing plugin-owned layout"
+        "change ports before capturing plugin-owned layout"
     );
     let selected = captured.as_ref().unwrap().clone();
     let report = commit(&host, &mut audio, &mut editing, device, captured).unwrap();
@@ -90,12 +114,19 @@ fn contract_audio_config_selection_records_plugin_state_once_and_releases_failur
     assert!(plugin.follow_ports().unwrap());
 
     editing.insert(device.raw());
-    let refused = round_trip(Some(&control), &Request::SelectAudioConfig(1));
+    let bytes = format!(r#"{{"type":"{kind}","device":"{device}"{refused_extra}}}"#);
+    let Resolution::Waiting(waiting) =
+        dispatch(&host, &mut audio, &mut editing, bytes.as_bytes(), true).unwrap()
+    else {
+        panic!("refused edits must reach the device lane");
+    };
+    let dispatched = waiting.ready(Some(control.clone()), &mut editing);
+    let refused = round_trip(dispatched.control.as_ref(), &dispatched.request);
     assert!(matches!(refused, Err(DocumentError::Helper(_))));
     assert!(commit(&host, &mut audio, &mut editing, device, refused).is_err());
     assert!(
         editing.is_empty(),
-        "failed selections must release background saves"
+        "failed configuration edits must release background saves"
     );
     assert_eq!(
         host.snapshot().tracks()[0].devices[0].state.as_deref(),

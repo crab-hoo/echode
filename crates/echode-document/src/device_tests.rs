@@ -15,6 +15,11 @@ fn audio_config_commands_resolve_on_the_device_lane_and_selection_captures() {
     for (kind, extra, changes) in [
         ("device.audio_configs", "", false),
         ("device.audio_config.select", ",\"id\":303", true),
+        (
+            "device.audio_ports.apply",
+            ",\"requests\":[{\"input\":false,\"index\":0,\"channels\":1}]",
+            true,
+        ),
     ] {
         let bytes = format!(r#"{{"type":"{kind}","device":"{device}"{extra}}}"#);
         let result = dispatch(&host, &mut audio, &mut editing, bytes.as_bytes(), true);
@@ -40,6 +45,23 @@ fn audio_config_commands_resolve_on_the_device_lane_and_selection_captures() {
     ] {
         let bytes =
             format!(r#"{{"type":"device.audio_config.select","device":"{device}"{extra}}}"#);
+        assert!(matches!(
+            dispatch(&host, &mut audio, &mut editing, bytes.as_bytes(), true),
+            Err(DocumentError::Malformed(_))
+        ));
+        assert!(editing.is_empty());
+    }
+    for requests in [
+        "null",
+        r#"[{"input":false,"index":0}]"#,
+        r#"[{"input":false,"index":-1,"channels":1}]"#,
+        r#"[{"input":false,"index":0,"channels":4294967296}]"#,
+        r#"[{"input":false,"index":0,"channels":1.5}]"#,
+        r#"[{"input":false,"index":0,"channels":1,"extra":true}]"#,
+    ] {
+        let bytes = format!(
+            r#"{{"type":"device.audio_ports.apply","device":"{device}","requests":{requests}}}"#
+        );
         assert!(matches!(
             dispatch(&host, &mut audio, &mut editing, bytes.as_bytes(), true),
             Err(DocumentError::Malformed(_))

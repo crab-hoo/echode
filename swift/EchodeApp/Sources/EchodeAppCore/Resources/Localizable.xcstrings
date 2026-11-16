@@ -547,6 +547,60 @@
         "ja": { "stringUnit": { "state": "translated", "value": "このプラグインには選択できる音声構成がありません。" } }
       }
     },
+    "Change audio ports": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Change Audio Ports…" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "音声ポートを変更…" } }
+      }
+    },
+    "Add audio port change": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Add Port Change" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "変更するポートを追加" } }
+      }
+    },
+    "Apply audio port changes": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Apply Port Changes" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "ポート変更を適用" } }
+      }
+    },
+    "Audio port changes help": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Enter only the ports to change. Each row: direction, zero-based port index, channel count (0 requests disabling/removal). Unlisted ports stay unchanged. Apply interrupts audio, may be refused, and saves the plugin's state as one undoable edit. Special port types are not supported." } },
+        "ja": { "stringUnit": { "state": "translated", "value": "変更するポートだけ入力します。各行は入出力・0 始まりのポート番号・チャンネル数です（0 は無効化・削除の要求）。未指定のポートはそのままです。適用は音声を中断し、拒否される場合があります。状態を 1 回の取り消せる編集として保存します。特殊なポート種別は未対応です。" } }
+      }
+    },
+    "Audio port input": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Input" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "入力" } }
+      }
+    },
+    "Audio port output": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Output" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "出力" } }
+      }
+    },
+    "Audio port direction": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Port Direction" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "ポートの入出力" } }
+      }
+    },
+    "Audio port index": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Port Index (from 0)" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "ポート番号（0 始まり）" } }
+      }
+    },
+    "Audio port channels": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Channels (0 to disable/remove)" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "チャンネル数（0 は無効化・削除）" } }
+      }
+    },
     "Audio configuration interruption help": {
       "localizations": {
         "en": { "stringUnit": { "state": "translated", "value": "Reading or selecting an audio configuration interrupts plugin processing. Selection is saved in the plugin's state and can be undone." } },

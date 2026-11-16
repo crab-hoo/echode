@@ -61,7 +61,10 @@ CLAP の遅延は有効化の直後にメインスレッドで読み、初回の
 デバイス列の明示ボタンだけで一覧を読み、現在 ID がある時だけ選択中を示す。文書の publication 後は一覧を破棄し、暗黙には再取得しない。
 `device.audio_config.select` は背景保存を保留してから、デバイスレーンで ID 選択と状態取得を続けて行う。
 文書ワーカーの共通の `commit` が取得した状態を単一の Undo 編集へ記録し、失敗でも保留を解く。
-選択 ID は別に保存せず、プラグイン自身の状態・通常の保存と復元を正本にする。任意変更の UI と特殊な `port_details` 指定は未接続である。
+選択 ID や任意の要求列は別に保存せず、プラグイン自身の状態・通常の保存と復元を正本にする。
+任意変更は「音声ポートを変更」の一時フォームで入出力・0 始まりの番号・チャンネル数（0 は無効化・削除）を入力し、全行を一度の `device.audio_ports.apply` と状態編集へ送る。
+入力・取消・フォームの表示はプラグインを呼ばず、publication 後や取消済みのフォームからは適用しない（[ADR 0387](../decisions/0387-device-audio-port-change-form.md)）。
+可否の事前照会はせず、適用の拒否を表示する。特殊な `port_details` 指定は未接続である。
 `clap.note-ports` は native CLAP・MIDI 1.0・MIDI 2.0・MPE を対応と答える。
 入力形式はこの順で選び、既存の経路を保つ（[ADR 0375](../decisions/0375-midi-1-notes-for-midi-only-clap-ports.md)、[ADR 0379](../decisions/0379-midi2-notes-for-clap-ports.md)）。
 MIDI 2.0 はグループ 0 の UMP で、16 bit のベロシティ（0 も発音）と 32 bit のポリプレッシャーを送る。

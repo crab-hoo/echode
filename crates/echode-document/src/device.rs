@@ -53,6 +53,12 @@ enum DeviceCommand {
     /// Selects a preset and captures its plugin-owned state as one edit.
     #[serde(rename = "device.audio_config.select")]
     SelectAudioConfig { device: Id, id: u32 },
+    /// Applies explicit port changes and captures plugin-owned state as one edit.
+    #[serde(rename = "device.audio_ports.apply")]
+    ApplyAudioPorts {
+        device: Id,
+        requests: Vec<PortChange>,
+    },
 }
 
 #[derive(Deserialize)]
@@ -60,6 +66,14 @@ enum DeviceCommand {
 struct Change {
     id: u32,
     value: f64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PortChange {
+    input: bool,
+    index: u32,
+    channels: u32,
 }
 
 #[derive(Serialize)]
@@ -93,6 +107,7 @@ pub(crate) enum Request {
     CloseGui,
     AudioConfigs,
     SelectAudioConfig(u32),
+    ApplyAudioPorts(Vec<echode_sandbox::AudioPortRequest>),
 }
 
 /// A checked command and the helper that answers it. Only closing a window
@@ -153,6 +168,19 @@ pub(crate) fn dispatch(
         DeviceCommand::CloseGui { device } => (device, Request::CloseGui),
         DeviceCommand::AudioConfigs { device } => (device, Request::AudioConfigs),
         DeviceCommand::SelectAudioConfig { device, id } => (device, Request::SelectAudioConfig(id)),
+        DeviceCommand::ApplyAudioPorts { device, requests } => (
+            device,
+            Request::ApplyAudioPorts(
+                requests
+                    .into_iter()
+                    .map(|request| echode_sandbox::AudioPortRequest {
+                        input: request.input,
+                        index: request.index,
+                        channels: request.channels,
+                    })
+                    .collect(),
+            ),
+        ),
     };
     let waiting = Waiting { device, request };
     if !matches!(waiting.request, Request::CloseGui) {
@@ -194,7 +222,7 @@ impl Waiting {
     fn ready(self, control: Option<PluginControl>, editing: &mut BTreeSet<u128>) -> Dispatch {
         if matches!(
             self.request,
-            Request::Set(_) | Request::SelectAudioConfig(_)
+            Request::Set(_) | Request::SelectAudioConfig(_) | Request::ApplyAudioPorts(_)
         ) {
             editing.insert(self.device.raw());
         }
@@ -231,6 +259,10 @@ pub(crate) fn round_trip(
         Request::Capture => return Ok(control.capture_state()?),
         Request::SelectAudioConfig(id) => {
             control.select_audio_port_config(*id)?;
+            return Ok(control.capture_state()?);
+        }
+        Request::ApplyAudioPorts(requests) => {
+            control.apply_audio_port_configuration(requests)?;
             return Ok(control.capture_state()?);
         }
         Request::AudioConfigs => {

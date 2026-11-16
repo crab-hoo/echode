@@ -56,6 +56,7 @@ private struct DeviceListChange: Equatable {
     let audioConfigs: DeviceAudioConfigs?
     let audioConfigBusy: Bool
     let audioConfigError: String?
+    let audioConfigRevision: Int
     @MainActor init(_ state: DeviceParameterState) {
         layout = state.layout
         revision = state.revision
@@ -65,6 +66,7 @@ private struct DeviceListChange: Equatable {
         audioConfigs = state.audioConfiguration.list
         audioConfigBusy = state.audioConfiguration.busy
         audioConfigError = state.audioConfiguration.error
+        audioConfigRevision = state.audioConfiguration.revision
     }
 }
 
@@ -128,6 +130,9 @@ private struct DeviceStripCanvas: NSViewRepresentable {
         strip.onSelectAudioConfig = { device, id in
             Task { await controller.selectAudioConfig(id, device: device, documentID: document) }
         }
+        strip.onApplyAudioPorts = { device, requests in
+            Task { await controller.applyAudioPorts(requests, device: device, documentID: document) }
+        }
         strip.configure(
             devices: devices, track: track, document: document, busy: busy, locked: locked, states: states,
             outputOpening: outputOpening, outputUpdating: outputUpdating, collapsed: collapsed)
@@ -179,6 +184,7 @@ final class DeviceStripView: NSView {
     var onRetry: ((UUID) -> Void)?
     var onReadAudioConfigs: ((UUID) -> Void)?
     var onSelectAudioConfig: ((UUID, UInt32) -> Void)?
+    var onApplyAudioPorts: ((UUID, [DeviceAudioPortChange]) -> Void)?
     var contentWidth: Double { columns.reduce(Self.trailingWidth) { $0 + $1.preferredWidth } }
     override var isFlipped: Bool { true }
 
@@ -247,6 +253,7 @@ final class DeviceStripView: NSView {
             column.onRetry = { [weak self] in self?.onRetry?(device.id) }
             column.audioConfigs.onRead = { [weak self] in self?.onReadAudioConfigs?(device.id) }
             column.audioConfigs.onSelect = { [weak self] id in self?.onSelectAudioConfig?(device.id, id) }
+            column.audioConfigs.onApplyPorts = { [weak self] requests in self?.onApplyAudioPorts?(device.id, requests) }
             column.configure(
                 device: device, first: index == 0, last: index + 1 == devices.count,
                 busy: busy, locked: locked, outputOpening: outputOpening, outputUpdating: outputUpdating,
@@ -504,7 +511,8 @@ final class DeviceColumnView: NSView, NSDraggingSource {
         retry.setAccessibilityLabel(text("Retry parameters") + " " + device.title)
         audioConfigs.isHidden = isCollapsed || device.offline
         audioConfigs.configure(
-            state?.audioConfiguration, title: device.title, enabled: !busy && !locked && !device.offline)
+            state?.audioConfiguration, title: device.title, enabled: !busy && !locked && !device.offline && !isCollapsed
+        )
         search.isHidden = isCollapsed
         message.isHidden = isCollapsed || note == nil
         list.isHidden = isCollapsed || note != nil
@@ -530,7 +538,7 @@ final class DeviceColumnView: NSView, NSDraggingSource {
         }
         let latencyHeight = latency.isHidden ? 0.0 : 22.0
         latency.frame = CGRect(x: 8, y: isCollapsed ? 96 : 64, width: max(0, width), height: 20)
-        let configHeight = audioConfigs.isHidden ? 0.0 : 52.0
+        let configHeight = audioConfigs.isHidden ? 0.0 : 78.0
         audioConfigs.frame = CGRect(x: 8, y: 64 + latencyHeight, width: max(0, width), height: configHeight)
         search.frame = CGRect(x: 8, y: 64 + latencyHeight + configHeight, width: max(0, width), height: 24)
         let body = CGRect(

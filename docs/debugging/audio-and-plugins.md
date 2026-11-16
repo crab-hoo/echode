@@ -302,10 +302,14 @@ cargo test -q -p echode-plugin-host --test hosted_playback audio_ports::
 連続した要求が停止する時は `MainRequests::take(false)` が無効化専用の要求を取っていないか、完了済みの再起動世代を制御側が再び待っていないか調べる。
 時間切れは結果不明で自動再送しない。所有中の要求が完了するまでは後続が busy となる。
 デバイス列は文書の publication ごとに一覧を破棄する。編集・Undo/Redo の後に一覧が消えることは再走査の失敗ではない。
-読込み・選択の失敗は構成欄へ出し、再クリックだけで再試行する。現在 ID のないプラグインでは選択中を推測しない。
+読込み・選択・任意変更の失敗は構成欄へ出し、再クリックだけで再試行する。現在 ID のないプラグインでは選択中を推測しない。
 画面からの選択は `device.audio_config.select` で選択と取得を実行し、ワーカーの `commit` で記録する（[ADR 0386](../decisions/0386-device-audio-configuration-controls.md)）。
 Undo が増えない時は選択・取得・記録のどこが失敗したかと、状態バイトが以前と同じかを区別する。
 実ヘルパーの状態と再オープンは `device-audio-config-state`、実ボタンと ID・古い応答は `device-audio-config-ui` を使う。
+任意変更のフォームは `device.audio_ports.apply` で全行を一度に送り、選択と同じ状態取得・記録を使う（[ADR 0387](../decisions/0387-device-audio-port-change-form.md)）。
+入力・取消に IPC はない。古いフォームの拒否は既存の要求世代、入力欄は `DeviceAudioPortEditor.swift` を確認し、文書の publication 後は開き直す。
+フォームの破棄が画面へ届かない時は、`DeviceListChange.audioConfigRevision` と `DeviceAudioConfigState` の要求世代が Observation の対象かを調べる。一覧がない状態の無効化も通知する必要がある。
+拡張の有無や番号の適否は適用時に判定する。`device-audio-ports-state` と `device-audio-ports-ui` が状態と一括送信の境界を照合する。
 回帰は上の `audio_ports::` の 2 つの入口と `audio_configs_tests.rs`、第三者の保存・聴感は UC-97・UC-98 を使う。
 
 ### CLAP がテンポ・再生位置を取得できない

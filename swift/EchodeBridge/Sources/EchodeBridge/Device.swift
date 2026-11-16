@@ -91,6 +91,18 @@ public struct DeviceWindowReport: Decodable, Sendable, Equatable {
     }
 }
 
+/// One explicit CLAP port change. Indices are zero-based; zero channels requests removal.
+public struct DeviceAudioPortChange: Encodable, Sendable, Equatable {
+    public let input: Bool
+    public let index: UInt32
+    public let channels: UInt32
+    public init(input: Bool, index: UInt32, channels: UInt32) {
+        self.input = input
+        self.index = index
+        self.channels = channels
+    }
+}
+
 /// A plugin-owned audio-port preset. IDs are not enumeration indices.
 public struct DeviceAudioConfig: Decodable, Sendable, Equatable, Identifiable {
     public let id: UInt32
@@ -169,12 +181,18 @@ public enum DeviceCommand: Encodable, Sendable, Equatable {
     case audioConfigs(device: UUID)
     /// Selects a preset and records its state as one Undo step.
     case selectAudioConfig(device: UUID, id: UInt32)
+    /// Applies port changes and records the plugin's state as one Undo step.
+    case applyAudioPorts(device: UUID, requests: [DeviceAudioPortChange])
 
-    enum CodingKeys: String, CodingKey { case type, device, changes, title, id, text }
+    enum CodingKeys: String, CodingKey { case type, device, changes, title, id, text, requests }
 
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
+        case .applyAudioPorts(let device, let requests):
+            try container.encode("device.audio_ports.apply", forKey: .type)
+            try container.encode(device, forKey: .device)
+            try container.encode(requests, forKey: .requests)
         case .audioConfigs(let device):
             try container.encode("device.audio_configs", forKey: .type)
             try container.encode(device, forKey: .device)

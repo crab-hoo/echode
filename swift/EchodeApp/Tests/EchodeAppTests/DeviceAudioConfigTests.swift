@@ -7,9 +7,10 @@ import Testing
 
 /// The UI fixture writes a real document edit; the Rust device-lane contract
 /// checks the CLAP lifecycle, actual captured bytes and state restoration.
-private actor ConfigPlugin {
+actor ConfigPlugin {
     private(set) var reads = 0
     private(set) var selections: [UInt32] = []
+    private(set) var applications: [[DeviceAudioPortChange]] = []
     private var fail = false
     private var held = false
     private var waiting: CheckedContinuation<Void, Never>?
@@ -44,24 +45,32 @@ private actor ConfigPlugin {
             return DeviceResult(report: DeviceReport(audioConfigs: list), snapshot: try await document.snapshot())
         case .selectAudioConfig(let device, let id):
             selections.append(id)
-            if fail {
-                fail = false
-                throw CancellationError()
-            }
-            current = id
-            let hash = String(repeating: id == 206 ? "b" : "a", count: 64)
-            let snapshot = try await document.perform(
-                #"{"type":"device.set_state","device":"\#(device.uuidString)","state":"\#(hash)"}"#)
-            return DeviceResult(report: DeviceReport(changed: true), snapshot: snapshot)
+            return try await capture(document, device: device, id: id)
+        case .applyAudioPorts(let device, let requests):
+            applications.append(requests)
+            if held { await withCheckedContinuation { waiting = $0 } }
+            let mono = requests.contains { !$0.input && $0.index == 0 && $0.channels == 1 }
+            return try await capture(document, device: device, id: mono ? 206 : 100)
         default:
             return try await DeviceResult.send(document, command)
         }
+    }
+    private func capture(_ document: Document, device: UUID, id: UInt32) async throws -> DeviceResult {
+        if fail {
+            fail = false
+            throw CancellationError()
+        }
+        current = id
+        let hash = String(repeating: id == 206 ? "b" : "a", count: 64)
+        let snapshot = try await document.perform(
+            #"{"type":"device.set_state","device":"\#(device.uuidString)","state":"\#(hash)"}"#)
+        return DeviceResult(report: DeviceReport(changed: true), snapshot: snapshot)
     }
 }
 
 @MainActor
 struct DeviceAudioConfigTests {
-    private func project(_ plugin: ConfigPlugin) async throws -> (ProjectController, DocumentID, UUID, UUID, URL) {
+    func project(_ plugin: ConfigPlugin) async throws -> (ProjectController, DocumentID, UUID, UUID, URL) {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-audio-config-\(UUID()).echode")
         let controller = ProjectController(sendDevice: { try await plugin.send($0, $1) })
         await controller.open(url, creating: true)

@@ -506,6 +506,9 @@ CLAP パラメーターの通信は `crates/echode-sandbox/src/params.rs`、ヘ�
 確定の完了（成功と失敗の保留解除）は `device::commit` を通し、回帰は `device_tests.rs`・`worker_tests.rs` に置く（[ADR 0346](decisions/0346-failed-device-commits-release-saves.md)）。
 画面は `DeviceParameters.swift`（デバイスごとの状態・世代・ピン留め）、`WorkspaceParameterView.swift`（画面内の行だけの一覧）、
 `WorkspaceDeviceView.swift`（横並びの列とドロップ）に置く。
+音声構成の選択と任意変更は `DeviceAudioConfigs.swift` の共通の状態編集へ通す。
+任意のポート変更フォームと入力の検査は `DeviceAudioPortEditor.swift`、取消と要求世代の検査は `DeviceAudioConfigView.swift` に置く。
+実状態の回帰は `device_config_tests.rs`、画面は `DeviceAudioPortTests.swift`（[ADR 0387](decisions/0387-device-audio-port-change-form.md)）。
 列の開閉と文書 ID の検査は `DeviceDisclosure.swift`、幅・入力・フォーカスの制御は `WorkspaceDeviceView.swift` に置く。
 ヘッダの FX 名前と残りのチェインのメニューは `TrackFXNames.swift`、入力とアクセシビリティは `ArrangeHeaderView.swift` に置く。
 テスト用 CLAP のパラメーターは `crates/echode-test-plugin/src/params.rs` が持つ。

@@ -12,6 +12,7 @@ echode-actions = { path = "../echode-actions" }
 echode-audio-io = { path = "../echode-audio-io" }
 echode-history = { path = "../echode-history" }
 echode-model = { path = "../echode-model" }
+echode-sandbox = { path = "../echode-sandbox" }
 log.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -20,7 +21,6 @@ uuid = "1"
 [dev-dependencies]
 echode-audio-io = { path = "../echode-audio-io", features = ["headless-output"] }
 echode-log = { path = "../echode-log" }
-echode-sandbox = { path = "../echode-sandbox" }
 
 [lints]
 workspace = true
