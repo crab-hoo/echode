@@ -22,7 +22,8 @@ python3 scripts/run-bridge-validation.py --timeout 600 --log "$bridge_output/rus
 python3 scripts/run-bridge-validation.py --timeout 600 --log "$bridge_output/product-rust-tests.log" \
     cargo "+$BRIDGE_NIGHTLY" test --locked --offline -Zbuild-std --target "$bridge_target" \
     --release --lib -p echode-ffi
-python3 scripts/run-bridge-validation.py --timeout 600 --log "$bridge_output/document-rust-tests.log" \
+ECHODE_PLUGIN_HOST="$bridge_root/target/debug/echode-plugin-host" \
+    python3 scripts/run-bridge-validation.py --timeout 600 --log "$bridge_output/document-rust-tests.log" \
     cargo "+$BRIDGE_NIGHTLY" test --locked --offline -Zbuild-std --target "$bridge_target" \
     --release --lib -p echode-document
 python3 scripts/run-bridge-validation.py --timeout 600 --log "$bridge_output/audio-rust-tests.log" \

@@ -201,6 +201,9 @@ Xcode 側のビルド診断が quiet 出力に出ない場合がある。大量�
 変更前の `4c40ae1`（run `43918901455`、`contracts (2)`）にも同じ診断があり、センド・鍵の音声回帰に由来する断定の失敗ではない。
 ランナーで `xcode-select --print-path`、`xcrun --find swiftc`、`xcrun --sdk macosx --show-sdk-path` と `xcrun --show-sdk-platform-path` の終了コード・出力、`SDKROOT`・`DEVELOPER_DIR` を収集する。
 選択した Xcode・SDK・Testing.framework を同じ環境にそろえてから再実行する。テストを省略したり、古いバンドルで代用して合格にしない。
+`SDKROOT` に存在しない CommandLineTools の SDK を与えると、選択中の Xcode が有効でも同じ診断を再現できる。
+`swift_contract_runner.py` は `xcrun --sdk macosx --show-sdk-platform-path` で macOS を明示し、SwiftPM と同じ選択の Testing.framework を使う。
+選択中の Xcode に macOS SDK 自体がない場合は引き続き失敗にし、別の SDK へのフォールバックや環境の書換えはしない。
 
 ### Swift のテストのリンクで `_NSApplicationMain` などが未定義になる
 
@@ -418,6 +421,9 @@ macOS 標準 make 3.81 は `.SHELLFLAGS` を無視する。厳密なレシピ実
 最適化等で `negative_control` が期待値で落ちなくなった場合は、本来の不具合を再現する差分へ更新する（例: `loop-head-residency`）。
 Swift の反例ビルドは Rust ABI を作り直さない。Rust の差分を Swift 契約へ直接登録すると、
 未変更の ABI へリンクして反例を検出できない。モデルの反例は Rust 契約、UI の反例は Swift 契約に分ける。
+Rust の `--lib -p echode-document` もヘルパーの実行ファイルを再リンクしない。
+`device-audio-port-details-state` の負の対照は文書レーンの `request.details` の欠落を入れ、実行されるライブラリで検出する。
+ヘルパーだけを変えたのに既存の実行ファイルを起動する反例は、期待値が正しくても `NOT rejected` になる。
 `check-product-contracts`・`check-contract-controls` 全体の `VERIFICATION TIMEOUT` と、個別契約のタイムアウトを区別する。
 前者では `product-contracts.json` の各記録の `seconds` と `reused` で進んでいた契約を確認する。
 `reused: true` は同じ識別値で前回合格した記録であり、それ以外の古いログを今回の完了証拠にしない。
@@ -580,6 +586,18 @@ Swift の負の対照を同じ位置まで何度もやり直す場合は、契�
 ツール識別は PATH 文字列ではなく解決された `rustc` / `swift` 等の実パスを使う。
 
 ## サニタイザー
+
+### ASan の文書回帰が `Spawn(Posix { step: Spawn, code: 2 })` になる
+
+`document-rust-tests.log` の起動パスと `target/debug/echode-plugin-host` を比較する。
+固定 nightly のテスト実行ファイルは `release/build/<crate>/<hash>/out/` に置かれることがあり、親を 2 回たどっても製品の成果物にはならない。
+ASan の文書回帰は `sanitizer-prerequisites` の通常ヘルパーを `ECHODE_PLUGIN_HOST` で明示し、その隣のテスト用プラグインを使う。
+文書ライブラリの ASan 計装は維持する。ヘルパーの欠落をスキップせず、実行ファイルを移した通常ビルドでも同じ回帰を確認できる。
+
+### TSan の `PluginWindowStatusTests` が `stoppedLog.failureCount == 0` で失敗する
+
+読取スレッドは `PluginActivityReader` の初期化中に開始する。テストの `ReaderBox.set` より先に `stop` が呼ばれると、停止対象がなく失敗を記録する。
+停止の確認は、テストが対象を登録したことを semaphore で伝えてから行う。待ち時間の延長やログの断定の削除で置き換えない。
 
 ### TSan の既知の環境要因と製品不具合の切り分け
 

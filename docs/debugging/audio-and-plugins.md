@@ -355,6 +355,9 @@ cargo test -q -p echode-engine musical_time
 `a_missed_delayed_off_recovers_when_the_source_has_no_event_under_rtsan` の `read_exact` が `UnexpectedEof` になる場合は、波形の断定ではなく待機用フィクスチャとの接続が先に閉じている。
 2026-11-17 の `full`（run `43932204488`、`rtsan`）と変更前の `4c40ae1`（run `43918901455`）で同じ失敗があった。
 ヘルパーの stderr・終了状態と待機ソケットの送受信位置を収集し、RTSan の違反報告・時間切れ・ヘルパー終了を区別する。原因が確定する前に再生の復帰が失敗したと結論せず、未確認を合格にしない。
+待機フィクスチャのソケット通信・切断は `process_gate.rs` のリレーへ分離し、処理側は原子変数の ticket とスピンだけで 2 回目・4 回目の処理を保留する。
+`process` で直接 `read_exact`・`write_all`・ソケットの破棄を行うと、音の復帰を検査する前にヘルパーの RTSan が禁止操作を検出し得る。
+接続の切断・タイムアウト・非 RT の破棄でもスピンを解放する。取りこぼすブロック・回復期限・波形の断定は変更しない。
 
 ```sh
 cargo test -q -p echode-plugin-host --test hosted_playback pdc_notes::

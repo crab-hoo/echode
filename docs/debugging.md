@@ -73,6 +73,8 @@ make debug-report
   - 基準コミット（`VERIFY_BASE`）エラー
   - 検査の直後の不要な再実行
 - サニタイザー
+  - ASan の文書回帰が `Spawn(Posix { step: Spawn, code: 2 })` になる
+  - TSan の `PluginWindowStatusTests` が `stoppedLog.failureCount == 0` で失敗する
   - TSan の既知の環境要因と製品不具合の切り分け
   - fuzz の発見（`crash-`・`oom-`・`timeout-`）
 

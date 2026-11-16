@@ -199,6 +199,40 @@ class VerificationCostTests(unittest.TestCase):
         self.assertIn("-Zbuild-std", source)
         self.assertIn("-Zsanitizer=thread -Zexternal-clangrt", source)
 
+    def test_swift_runner_selects_macos_sdk_despite_an_inherited_sdkroot(self):
+        import swift_contract_runner as runner
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            compiler = root / "toolchain/usr/bin/swiftc"
+            helper = compiler.parent.parent / "libexec/swift/pm/swiftpm-testing-helper"
+            platform = root / "MacOSX.platform"
+            frameworks = platform / "Developer/Library/Frameworks"
+            binary = root / "build"
+            bundle = binary / "Tests.xctest/Contents/MacOS/Tests"
+            for file in (helper, bundle):
+                file.parent.mkdir(parents=True, exist_ok=True)
+                file.touch()
+            (frameworks / "Testing.framework").mkdir(parents=True)
+
+            def query(args, **kwargs):
+                if args == ["xcrun", "--find", "swiftc"]:
+                    return str(compiler)
+                if args == ["xcrun", "--sdk", "macosx", "--show-sdk-platform-path"]:
+                    return str(platform)
+                if args[0] == "swift":
+                    return str(binary)
+                raise subprocess.CalledProcessError(1, args, stderr="SDK cannot be located")
+
+            runner.runtime.cache_clear()
+            self.addCleanup(runner.runtime.cache_clear)
+            with (
+                patch.dict(os.environ, SDKROOT="/missing/CommandLineTools/SDKs/MacOSX.sdk"),
+                patch.object(runner.subprocess, "check_output", side_effect=query),
+            ):
+                result = runner.runtime(str(root), "App", "Tests", "scratch")
+            self.assertEqual(result, (str(helper), str(bundle), str(frameworks), str(platform / "Developer/usr/lib")))
+
     def test_direct_swift_runner_keeps_filter_environment_and_one_test_gate(self):
         import swift_contract_runner as runner
 

@@ -37,15 +37,20 @@ fn contract_audio_port_details_cross_the_device_lane_and_state_history() {
 }
 
 fn check_edit(kind: &str, extra: &str, refused_extra: &str, details_marker: Option<u8>) {
-    let artifacts = std::env::current_exe()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf();
+    let host_bin = std::env::var_os("ECHODE_PLUGIN_HOST")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::env::current_exe()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("echode-plugin-host")
+        });
+    let artifacts = host_bin.parent().unwrap();
     let mut plugin = PluginHost::spawn(SpawnOptions {
-        host_bin: &artifacts.join("echode-plugin-host"),
+        host_bin: &host_bin,
         plugin: Some(&artifacts.join("libechode_test_plugin.dylib")),
         fault: Some("audio-ports"),
         plugin_id: Some("dev.echode.test-gain"),

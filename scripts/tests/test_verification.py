@@ -941,7 +941,7 @@ class PolicyTests(unittest.TestCase):
         )
         details = contracts["device-audio-port-details-state"]
         self.assertEqual((details["package"], details["target"]), ("echode-document", ["--lib"]))
-        self.assertEqual(details["negative_control"]["file"], "crates/echode-plugin-host/src/audio_configs.rs")
+        self.assertEqual(details["negative_control"]["file"], "crates/echode-document/src/device.rs")
         details_ui = contracts["device-audio-port-details-ui"]
         self.assertEqual(details_ui["suite"], "DeviceAudioPortTests")
         self.assertEqual(

@@ -179,10 +179,12 @@ struct PluginWindowStatusTests {
 
         let stoppedLog = LockedMessages()
         let holder = ReaderBox()
+        let ready = DispatchSemaphore(value: 0)
         let stoppedReader = PluginActivityReader(
             poll: { sequence in
                 stoppedLog.recordAttempt()
                 if sequence == 0 { return PluginActivityPage(next: 4) }
+                ready.wait()
                 holder.stop()
                 throw DecodingError.dataCorrupted(
                     .init(codingPath: [], debugDescription: "post-stop failure"))
@@ -190,6 +192,7 @@ struct PluginWindowStatusTests {
             deliver: { _ in },
             recordFailure: { stoppedLog.recordFailure($0) })
         holder.set(stoppedReader)
+        ready.signal()
         #expect(stoppedReader.waitUntilFinished())
         #expect(stoppedLog.attemptCount == 2)
         #expect(stoppedLog.failureCount == 0)

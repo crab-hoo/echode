@@ -53,6 +53,7 @@ mod midi_notes;
 mod note_ports;
 mod param_rescan;
 mod params;
+mod process_gate;
 mod sidechain;
 mod tail;
 mod thread_check;
@@ -653,7 +654,7 @@ pub struct TestGainProcessor<'a> {
     reset_gate: Option<std::os::unix::net::UnixStream>,
     reset_gate_used: bool,
     // Off-RT connection; this deliberately broken plugin holds its second block.
-    process_gate: Option<std::os::unix::net::UnixStream>,
+    process_gate: Option<process_gate::ProcessGate>,
     process_calls: usize,
     process_gate_twice: bool,
     /// For [`Fault::Nan`]: blocks processed, and whether a reset cleared it.
@@ -747,12 +748,7 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
                         .or_else(|| fault.strip_prefix("onset-wait-twice:"))
                         .map(str::to_owned)
                 })
-                .map(|path| {
-                    let gate = std::os::unix::net::UnixStream::connect(path).expect("process gate");
-                    gate.set_read_timeout(Some(std::time::Duration::from_secs(10)))
-                        .expect("process gate timeout");
-                    gate
-                }),
+                .map(|path| process_gate::ProcessGate::connect(&path)),
             process_calls: 0,
             process_gate_twice: std::env::var("ECHODE_TEST_FAULT")
                 .is_ok_and(|fault| fault.starts_with("onset-wait-twice:")),
@@ -832,16 +828,9 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
         }
         self.process_calls += 1;
         if (self.process_calls == 2 || (self.process_gate_twice && self.process_calls == 4))
-            && let Some(mut gate) = self.process_gate.take()
+            && let Some(gate) = &mut self.process_gate
         {
-            use std::io::{Read, Write};
-            gate.write_all(&[1]).expect("process reached");
-            let mut release = [0];
-            gate.read_exact(&mut release).expect("process release");
-            gate.write_all(&[2]).expect("process finished");
-            if self.process_gate_twice && self.process_calls == 2 {
-                self.process_gate = Some(gate);
-            }
+            gate.hold();
         }
         match self.fault {
             Fault::Sidechain | Fault::SidechainMono => {

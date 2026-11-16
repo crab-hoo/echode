@@ -16,7 +16,7 @@ def runtime(root, package, product, scratch):
 
     compiler = Path(query(["xcrun", "--find", "swiftc"]))
     helper = compiler.parent.parent / "libexec/swift/pm/swiftpm-testing-helper"
-    platform = Path(query(["xcrun", "--show-sdk-platform-path"]))
+    platform = Path(query(["xcrun", "--sdk", "macosx", "--show-sdk-platform-path"]))
     frameworks = platform / "Developer/Library/Frameworks"
     libraries = platform / "Developer/usr/lib"
     binary = Path(query(["swift", "build", "--package-path", package, "--scratch-path", scratch, "--show-bin-path"]))
