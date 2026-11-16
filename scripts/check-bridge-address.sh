@@ -16,14 +16,15 @@ export ASAN_OPTIONS=halt_on_error=1:detect_leaks=0:detect_stack_use_after_return
 # combining them would unify dev/test features and change the tested configuration.
 export CARGO_TARGET_DIR="$bridge_output/rust"
 export RUSTFLAGS='-Ctarget-cpu=apple-m4 -Zsanitizer=address -Cdebuginfo=2 -Cforce-frame-pointers=yes'
+# These relocated test executables launch the normal prerequisite helper.
+export ECHODE_PLUGIN_HOST="$bridge_root/target/debug/echode-plugin-host"
 python3 scripts/run-bridge-validation.py --timeout 600 --log "$bridge_output/rust-tests.log" \
     cargo "+$BRIDGE_NIGHTLY" test --locked --offline -Zbuild-std --target "$bridge_target" \
     --release --lib -p echode-bridge-spike --features fault-injection
 python3 scripts/run-bridge-validation.py --timeout 600 --log "$bridge_output/product-rust-tests.log" \
     cargo "+$BRIDGE_NIGHTLY" test --locked --offline -Zbuild-std --target "$bridge_target" \
     --release --lib -p echode-ffi
-ECHODE_PLUGIN_HOST="$bridge_root/target/debug/echode-plugin-host" \
-    python3 scripts/run-bridge-validation.py --timeout 600 --log "$bridge_output/document-rust-tests.log" \
+python3 scripts/run-bridge-validation.py --timeout 600 --log "$bridge_output/document-rust-tests.log" \
     cargo "+$BRIDGE_NIGHTLY" test --locked --offline -Zbuild-std --target "$bridge_target" \
     --release --lib -p echode-document
 python3 scripts/run-bridge-validation.py --timeout 600 --log "$bridge_output/audio-rust-tests.log" \

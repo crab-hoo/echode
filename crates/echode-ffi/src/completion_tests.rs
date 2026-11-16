@@ -118,6 +118,28 @@ fn wait_for_reopen(path: &std::path::Path) -> *mut Document {
 
 #[test]
 fn contract_ending_a_document_from_a_device_completion_never_joins_its_own_thread() {
+    const CHILD: &str = "ECHODE_COMPLETION_CLOSE_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        // A broken join guard may abort inside the C callback. Keep that
+        // process failure behind a parent assertion, including in controls.
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "completion_tests::contract_ending_a_document_from_a_device_completion_never_joins_its_own_thread",
+                "--exact",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "document completion child failed ({}):\n{}\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
     let refused = refused_joins();
     let before = refused.load(Ordering::SeqCst);
     for round in 0..4 {

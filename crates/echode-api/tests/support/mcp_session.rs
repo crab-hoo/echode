@@ -79,8 +79,13 @@ impl Fixture {
         if let Some(worker) = self.worker.take() {
             self.stop.store(true, Ordering::Release);
             let _ = UnixStream::connect(&self.socket);
-            worker.join().unwrap();
+            let result = worker.join();
             self.session.take();
+            // Preserve an in-flight assertion failure instead of aborting with
+            // a second panic when the peer closed a truncated reply.
+            if !std::thread::panicking() {
+                result.expect("MCP fixture worker panicked");
+            }
         }
     }
 }

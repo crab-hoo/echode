@@ -424,6 +424,8 @@ Swift の反例ビルドは Rust ABI を作り直さない。Rust の差分を S
 Rust の `--lib -p echode-document` もヘルパーの実行ファイルを再リンクしない。
 `device-audio-port-details-state` の負の対照は文書レーンの `request.details` の欠落を入れ、実行されるライブラリで検出する。
 ヘルパーだけを変えたのに既存の実行ファイルを起動する反例は、期待値が正しくても `NOT rejected` になる。
+反例が C コールバックで abort する回帰は子プロセスへ隔離し、親が終了状態を断定する。異常終了をそのまま負の対照の合格とは扱わない。
+フィクスチャの `Drop` は進行中のアサーション失敗に重ねて `join().unwrap()` せず、通常終了時にはワーカーの失敗を引き続き拒否する。
 `check-product-contracts`・`check-contract-controls` 全体の `VERIFICATION TIMEOUT` と、個別契約のタイムアウトを区別する。
 前者では `product-contracts.json` の各記録の `seconds` と `reused` で進んでいた契約を確認する。
 `reused: true` は同じ識別値で前回合格した記録であり、それ以外の古いログを今回の完了証拠にしない。
@@ -591,7 +593,7 @@ Swift の負の対照を同じ位置まで何度もやり直す場合は、契�
 
 `document-rust-tests.log` の起動パスと `target/debug/echode-plugin-host` を比較する。
 固定 nightly のテスト実行ファイルは `release/build/<crate>/<hash>/out/` に置かれることがあり、親を 2 回たどっても製品の成果物にはならない。
-ASan の文書回帰は `sanitizer-prerequisites` の通常ヘルパーを `ECHODE_PLUGIN_HOST` で明示し、その隣のテスト用プラグインを使う。
+ASan の文書・音声回帰は `sanitizer-prerequisites` の通常ヘルパーを `ECHODE_PLUGIN_HOST` で明示し、その隣のテスト用プラグインを使う。
 文書ライブラリの ASan 計装は維持する。ヘルパーの欠落をスキップせず、実行ファイルを移した通常ビルドでも同じ回帰を確認できる。
 
 ### TSan の `PluginWindowStatusTests` が `stoppedLog.failureCount == 0` で失敗する
