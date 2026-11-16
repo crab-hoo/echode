@@ -9,7 +9,7 @@
 //! [`Project::check_invariants`] reports the first rule a snapshot breaks.
 //!
 //! - The meter divides into a whole number of ticks per bar.
-//! - Content, note, track, device, parameter, and placement ids are unique.
+//! - Content, note, track, device, parameter, placement, send, and sidechain ids are unique.
 //! - Contents are sorted by id.
 //! - A content does not list its own id as a take.
 //! - A note has a pitch in 0..=127, a positive length, no articulation, and
@@ -35,6 +35,10 @@
 //! - Parents form a forest: every parent exists, and no track is its own ancestor.
 //! - The track array is the arrange order. Sibling order keys are unique
 //!   fractional indexes.
+//! - Each send or sidechain has a finite gain from zero through [`GAIN_MAX`],
+//!   names an existing track (and, for a sidechain, a CLAP device), is unique
+//!   per `(source, target)` or `(device, source)` pair, and forms no cycle
+//!   with folder parent edges (`child -> parent`).
 
 mod change_values;
 mod changeset;
@@ -58,6 +62,8 @@ mod parameter_fields;
 mod placement;
 mod placement_fields;
 mod project_fields;
+mod route_fields;
+mod routing;
 mod runs;
 mod tempo_fields;
 mod time;
@@ -77,6 +83,7 @@ pub use model::{
     NoteGeometry, Placement, Project, ProjectMetadata, Track, TrackMetadata, clip_gain_allowed,
     fade_allowed, fade_frames, initial_order, is_media_hash, midi7_to_velocity, velocity_to_midi7,
 };
+pub use routing::{ROUTE_GAIN_DEFAULT, RouteTap, SendRoute, SidechainRoute, route_gain_allowed};
 pub use runs::{Cursor as RunCursor, Iter as RunIter, MEAN_RUN, Notes, Placements, RunItem, Runs};
 pub use time::{
     FLICKS_PER_SECOND, Flick, Meter, TICKS_PER_QUARTER, Tempo, TempoMap, TempoPoint, Tick,

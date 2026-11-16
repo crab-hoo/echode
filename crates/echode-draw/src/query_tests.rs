@@ -299,6 +299,7 @@ fn sparse_long_notes_do_not_walk_the_whole_content() {
         order: initial_order(),
         clips: vec![clip].into(),
         devices: vec![test_mixer(12)],
+        sends: Vec::new(),
     };
     let project = Project::try_assemble(
         Meter::four_four(),

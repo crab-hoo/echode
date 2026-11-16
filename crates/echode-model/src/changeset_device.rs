@@ -2,7 +2,8 @@
 
 use super::{
     Change, Field, Id, ModelError, ObjectKey, ObjectKind, Property, Value, diff_parameter_fields,
-    field_id, field_ids, field_optional_text, field_text, parameter_change, update,
+    diff_sidechain_fields, field_id, field_ids, field_optional_ids, field_optional_text,
+    field_text, parameter_change, sidechain_change, update,
 };
 use crate::device::{Device, DeviceKind, Parameter, valid_pins, valid_state_hash};
 use crate::device_fields::device_fields;
@@ -23,6 +24,7 @@ macro_rules! define_device_changeset {
             pub track: Id,
             kind: String,
             $($field: $type,)+
+            pub sidechains: Vec<Id>,
             pub parameters: Vec<Id>,
         }
 
@@ -81,6 +83,32 @@ macro_rules! define_device_changeset {
                     deletes.push(parameter_change(false, before.id, parameter));
                 }
             }
+            let before_sidechains = sidechain_order(before);
+            let after_sidechains = sidechain_order(after);
+            if before_sidechains != after_sidechains {
+                updates.push(update(
+                    ObjectKey::Id(after.id),
+                    Property::SidechainOrder,
+                    Value::Ids(before_sidechains),
+                    Value::Ids(after_sidechains),
+                ));
+            }
+            for sidechain in &after.sidechains {
+                if let Some(previous) = before
+                    .sidechains
+                    .iter()
+                    .find(|item| item.id == sidechain.id)
+                {
+                    diff_sidechain_fields(previous, sidechain, updates);
+                } else {
+                    creates.push(sidechain_change(true, after.id, sidechain));
+                }
+            }
+            for sidechain in before.sidechains.iter().rev() {
+                if !after.sidechains.iter().any(|item| item.id == sidechain.id) {
+                    deletes.push(sidechain_change(false, before.id, sidechain));
+                }
+            }
         }
 
         pub(super) fn device_change(create: bool, track: Id, device: &Device) -> Change {
@@ -90,6 +118,7 @@ macro_rules! define_device_changeset {
             ];
             $(fields.extend(DeviceField::$create.create(device));)+
             fields.push(Field { property: Property::ParamOrder, value: Value::Ids(parameter_order(device)) });
+            fields.push(Field { property: Property::SidechainOrder, value: Value::Ids(sidechain_order(device)) });
             let id = ObjectKey::Id(device.id);
             if create {
                 Change::Create { kind: ObjectKind::Device, id, fields }
@@ -104,6 +133,7 @@ macro_rules! define_device_changeset {
                     track,
                     kind: device.kind.as_str().to_string(),
                     $($field: device.$field.to_owned(),)+
+                    sidechains: sidechain_order(device),
                     parameters: parameter_order(device),
                 }
             }
@@ -114,6 +144,7 @@ macro_rules! define_device_changeset {
                     kind: field_text(fields, Property::DeviceKind)?,
                     $($field: $read(fields, Property::$property)?,)+
                     parameters: field_ids(fields, Property::ParamOrder)?,
+                    sidechains: field_optional_ids(fields, Property::SidechainOrder)?,
                 })
             }
 
@@ -131,7 +162,12 @@ macro_rules! define_device_changeset {
                 }
             }
 
-            pub fn finish(&self, id: Id, parameters: Vec<Parameter>) -> Result<Device, ModelError> {
+            pub fn finish(
+                &self,
+                id: Id,
+                sidechains: Vec<crate::routing::SidechainRoute>,
+                parameters: Vec<Parameter>,
+            ) -> Result<Device, ModelError> {
                 let kind = DeviceKind::parse(&self.kind).ok_or(ModelError::InvalidChange)?;
                 if kind == DeviceKind::Mixer
                     && (self.bypassed || self.offline || self.state.is_some() || !self.pinned.is_empty())
@@ -142,6 +178,7 @@ macro_rules! define_device_changeset {
                     id,
                     kind,
                     $($field: self.$field.to_owned(),)+
+                    sidechains,
                     parameters,
                 })
             }
@@ -156,6 +193,14 @@ fn parameter_order(device: &Device) -> Vec<Id> {
         .parameters
         .iter()
         .map(|parameter| parameter.id)
+        .collect()
+}
+
+fn sidechain_order(device: &Device) -> Vec<Id> {
+    device
+        .sidechains
+        .iter()
+        .map(|sidechain| sidechain.id)
         .collect()
 }
 

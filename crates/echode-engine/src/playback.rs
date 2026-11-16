@@ -36,10 +36,10 @@ mod preparation;
 use preparation::GraphPreparation;
 #[path = "playback_faders.rs"]
 mod faders;
-use faders::{Routing, track_routing};
+use faders::{PreparedSidechain, Routing, track_routing};
 #[path = "playback_bus.rs"]
 mod bus;
-use crate::compensation::{Routes, TrackFlow, compensate};
+use crate::compensation::{Routes, SendFlow, SidechainFlow, StageLine, TrackFlow, compensate};
 use crate::delay::Delay;
 use bus::Bus;
 #[path = "playback_transport.rs"]
@@ -311,6 +311,8 @@ struct Prepared {
     demands: Vec<TrackEventDemand>,
     /// Which tracks feed which bus, and this block's start order.
     bus: Bus,
+    sends: Vec<SendFlow>,
+    sidechains: Vec<PreparedSidechain>,
     /// One bus's sum of its children's post-fader audio. One bus is summed
     /// at a time, so every parent shares these.
     bus_left: Vec<f64>,
@@ -390,7 +392,12 @@ impl Prepared {
             .zip(&derived)
             .map(|(track, derived)| (track.track_key, derived.score.clone()))
             .collect();
-        let Routing { gates, parents } = track_routing(project, &plan)?;
+        let Routing {
+            gates,
+            parents,
+            sends,
+            sidechains,
+        } = track_routing(project, &plan)?;
         let bus = Bus::new(parents);
         // Group the clips once, in loaded order, rather than filtering per track.
         let mut placed = HashMap::<u128, Vec<StoredClip>>::new();
@@ -499,6 +506,8 @@ impl Prepared {
             loop_end: loop_bounds.map(|(_, end)| end),
             demands,
             bus,
+            sends,
+            sidechains,
             bus_left: vec![0.0; frames],
             bus_right: vec![0.0; frames],
             mix_left: vec![0.0; frames],
@@ -1367,6 +1376,14 @@ fn compensate_plan(
     frames: usize,
 ) -> Result<(Vec<(u32, Delay)>, Compensated), PlaybackError> {
     let reported = hosts.latencies();
+    compensate_with_latencies(prepared, &reported, frames)
+}
+
+fn compensate_with_latencies(
+    prepared: &mut Prepared,
+    reported: &crate::plugins::Latencies,
+    frames: usize,
+) -> Result<(Vec<(u32, Delay)>, Compensated), PlaybackError> {
     let flows: Vec<TrackFlow<'_>> = prepared
         .tracks
         .iter()
@@ -1375,18 +1392,36 @@ fn compensate_plan(
             parent: *parent,
             // A cached track reads its finished audio and runs no device.
             clips: track.cache.is_none() && !track.clips.is_empty(),
-            devices: reported.of(track.key),
+            devices: if track.cache.is_some() {
+                &[]
+            } else {
+                reported.of(track.key)
+            },
             notes_from: None,
         })
         .collect();
     if flows.len() != prepared.tracks.len() {
         return Err(PlaybackError::BufferTooSmall);
     }
-    // The folder bus is the only merge between tracks the product plays yet;
-    // sends, sidechains and handed-out notes join through the same routes.
+    let sidechains: Vec<SidechainFlow> = prepared
+        .sidechains
+        .iter()
+        .filter_map(|route| {
+            let devices = flows.get(route.track)?.devices;
+            let device = devices
+                .iter()
+                .position(|item| item.device == route.device)?;
+            Some(SidechainFlow {
+                from: route.from,
+                track: route.track,
+                device,
+            })
+        })
+        .collect();
     let plan = compensate(Routes {
         tracks: &flows,
-        ..Routes::default()
+        sends: &prepared.sends,
+        sidechains: &sidechains,
     })?;
     // Refused before anything is reserved: a helper may report any number.
     let mut footprint = 0u64;
@@ -1413,6 +1448,9 @@ fn compensate_plan(
         Compensated {
             reported: reported.reported(),
             stage_inputs: plan.stage_inputs,
+            sends: plan.sends,
+            sidechains: plan.sidechains,
+            stage_lines: plan.stage_lines,
             latency: plan.latency,
             tail: plan.tail,
         },
@@ -1516,6 +1554,12 @@ struct Compensated {
     /// to notice later changes.
     reported: Vec<crate::plugins::DeviceReport>,
     stage_inputs: Vec<(u128, u64)>,
+    #[cfg_attr(not(test), allow(dead_code))]
+    sends: Vec<u64>,
+    #[cfg_attr(not(test), allow(dead_code))]
+    sidechains: Vec<u64>,
+    #[cfg_attr(not(test), allow(dead_code))]
+    stage_lines: Vec<StageLine>,
     latency: u64,
     tail: u32,
 }
@@ -1688,6 +1732,13 @@ pub fn playback(
         control.chain = chain;
         control.routes = routes.to_vec();
         control.host_bin = host_bin.to_path_buf();
+    } else {
+        let (_delays, compensated) = compensate_plan(&mut audio.current, &control.hosts, frames)?;
+        audio
+            .status
+            .latency
+            .store(compensated.latency, Ordering::Release);
+        control.compensated = compensated;
     }
     Ok((control, audio))
 }
@@ -2335,6 +2386,7 @@ impl PlaybackControl {
         self.published_plan = pending.revision;
         if compensated.reported != self.compensated.reported
             || compensated.latency != self.compensated.latency
+            || compensated.tail != self.compensated.tail
         {
             self.compensation_changes = self.compensation_changes.wrapping_add(1);
         }

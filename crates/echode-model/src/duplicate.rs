@@ -8,6 +8,11 @@ use crate::model::{Content, ModelError, Project, Track, arrange_tracks, sort_not
 
 /// Domain separation for [`copy_id`]. A new derivation needs a new context.
 const COPY_CONTEXT: &str = "echode 2026-10-20 track.duplicate object id";
+const DEVICE_COPY_CONTEXT: &str = "echode 2026-04-19 device.copy sidechain id";
+
+pub(crate) fn copy_device_sidechain_id(copy: Id, original: Id) -> Id {
+    derived_id(DEVICE_COPY_CONTEXT, copy, original)
+}
 
 /// Id of the copy of `original` made by the duplicate edit named `seed`.
 fn copy_id(seed: Id, original: Id) -> Id {
@@ -77,8 +82,20 @@ impl Project {
             }
             for device in &mut copy.devices {
                 device.id = fresh(device.id)?;
+                for sidechain in &mut device.sidechains {
+                    sidechain.id = fresh(sidechain.id)?;
+                    if members.contains(&sidechain.source) {
+                        sidechain.source = copy_id(seed, sidechain.source);
+                    }
+                }
                 for parameter in &mut device.parameters {
                     parameter.id = fresh(parameter.id)?;
+                }
+            }
+            for send in &mut copy.sends {
+                send.id = fresh(send.id)?;
+                if members.contains(&send.target) {
+                    send.target = copy_id(seed, send.target);
                 }
             }
             copy.clips.edit(|clips| {
@@ -133,8 +150,10 @@ impl Project {
         for track in self.tracks() {
             used.insert(track.id);
             used.extend(track.clips.iter().map(|clip| clip.id));
+            used.extend(track.sends.iter().map(|send| send.id));
             for device in &track.devices {
                 used.insert(device.id);
+                used.extend(device.sidechains.iter().map(|sidechain| sidechain.id));
                 used.extend(device.parameters.iter().map(|parameter| parameter.id));
             }
         }

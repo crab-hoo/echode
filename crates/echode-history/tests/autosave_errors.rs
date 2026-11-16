@@ -237,7 +237,7 @@ fn revision_validation_keeps_json_and_schema_causes_through_worker_replies() {
     let autosave = Autosave::create(&fixture.0).unwrap();
     autosave.revisions().unwrap();
     let repo = gix::open(&fixture.0).unwrap();
-    for text in ["{", "{\"schema\":7}"] {
+    for text in ["{", "{\"schema\":8}"] {
         let blob = repo.write_blob(text).unwrap().detach();
         let id = revision(&repo, vec![entry("project.json", Blob, blob)]);
         let error = autosave.load(id).unwrap_err();
@@ -259,12 +259,12 @@ fn revision_validation_keeps_json_and_schema_causes_through_worker_replies() {
                     error.original(),
                     PackageError::Validation(Invalid::UnsupportedSchema {
                         kind: PackageKind::Project,
-                        schema: 7,
+                        schema: 8,
                     })
                 ),
                 "{error:?}"
             );
-            assert_eq!(error.to_string(), "unsupported project schema 7");
+            assert_eq!(error.to_string(), "unsupported project schema 8");
         }
         assert!(!error.is_durability_unknown());
         assert_eq!(fs::read(fixture.0.join("project.json")).unwrap(), original);

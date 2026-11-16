@@ -26,6 +26,176 @@ fn response(session: &ApiSession, line: &str) -> Value {
 }
 
 #[test]
+fn routing_edits_are_queryable_and_undoable_through_the_api() {
+    let (_cleanup, session) = open_session();
+    let added = response(
+        &session,
+        r#"{"jsonrpc":"2.0","id":1,"method":"actions.transaction","params":{"actions":[{"type":"track.add","name":"source"},{"type":"track.add","name":"return"}]}}"#,
+    );
+    assert!(added.get("error").is_none(), "{added}");
+    let summary = response(
+        &session,
+        r#"{"jsonrpc":"2.0","id":2,"method":"project.summary"}"#,
+    );
+    let source = &summary["result"]["tracks"][0]["id"];
+    let target = &summary["result"]["tracks"][1]["id"];
+    let request = json!({"jsonrpc":"2.0","id":3,"method":"actions.perform","params":{
+        "type":"send.add", "source": source, "target": target
+    }});
+    let sent = response(&session, &request.to_string());
+    assert!(
+        sent.get("error").is_none(),
+        "send.add must be a registered routing action: {sent}"
+    );
+    let routes = response(
+        &session,
+        r#"{"jsonrpc":"2.0","id":4,"method":"project.routing"}"#,
+    );
+    assert_eq!(routes["result"][0]["source"], *source);
+    assert_eq!(routes["result"][0]["target"], *target);
+    assert_eq!(routes["result"][0]["gain"], 1.0);
+    assert_eq!(routes["result"][0]["tap"], "post_fx_pre_fader");
+    response(&session, r#"{"jsonrpc":"2.0","id":5,"method":"edit.undo"}"#);
+    let undone = response(
+        &session,
+        r#"{"jsonrpc":"2.0","id":6,"method":"project.routing"}"#,
+    );
+    assert_eq!(undone["result"], json!([]));
+    response(&session, r#"{"jsonrpc":"2.0","id":7,"method":"edit.redo"}"#);
+    assert_eq!(
+        response(
+            &session,
+            r#"{"jsonrpc":"2.0","id":8,"method":"project.routing"}"#
+        )["result"],
+        routes["result"]
+    );
+}
+
+#[test]
+fn sidechain_and_send_edits_update_routing_and_reject_cycles() {
+    let (_cleanup, session) = open_session();
+    let setup = response(
+        &session,
+        r#"{"jsonrpc":"2.0","id":1,"method":"actions.transaction","params":{"actions":[
+            {"type":"track.add","name":"kick"},
+            {"type":"track.add","name":"bass"},
+            {"type":"track.add","name":"bus"},
+            {"type":"device.add","track":{"ref":1,"field":"id"},"plugin":"org.example.comp"}
+        ]}}"#,
+    );
+    assert!(setup.get("error").is_none(), "{setup}");
+    let kick = setup["result"][0]["id"].as_str().unwrap();
+    let bass = setup["result"][1]["id"].as_str().unwrap();
+    let bus = setup["result"][2]["id"].as_str().unwrap();
+    let comp = setup["result"][3]["device"].as_str().unwrap();
+
+    let send = response(
+        &session,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "actions.perform",
+            "params": { "type": "send.add", "source": kick, "target": bus, "gain": 0.5 }
+        })
+        .to_string(),
+    );
+    let send_id = send["result"]["id"].as_str().unwrap();
+
+    let sidechain = response(
+        &session,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "actions.perform",
+            "params": { "type": "sidechain.add", "source": kick, "device": comp, "gain": 0.75 }
+        })
+        .to_string(),
+    );
+    let sidechain_id = sidechain["result"]["id"].as_str().unwrap();
+
+    // Reverse route bus -> kick is rejected as a cycle without altering existing routes.
+    let cycle = response(
+        &session,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "actions.perform",
+            "params": { "type": "send.add", "source": bus, "target": kick }
+        })
+        .to_string(),
+    );
+    assert_eq!(cycle["error"]["code"], -32000);
+
+    let updated = response(
+        &session,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "actions.transaction",
+            "params": {
+                "actions": [
+                    { "type": "send.set_gain", "send": send_id, "gain": 0.25 },
+                    { "type": "sidechain.set_gain", "sidechain": sidechain_id, "gain": 1.25 }
+                ]
+            }
+        })
+        .to_string(),
+    );
+    assert!(updated.get("error").is_none(), "{updated}");
+
+    let routes = response(
+        &session,
+        r#"{"jsonrpc":"2.0","id":6,"method":"project.routing"}"#,
+    );
+    assert_eq!(
+        routes["result"],
+        json!([
+            {
+                "id": send_id,
+                "kind": "send",
+                "source": kick,
+                "target": bus,
+                "gain": 0.25,
+                "tap": "post_fx_pre_fader"
+            },
+            {
+                "id": sidechain_id,
+                "kind": "sidechain",
+                "source": kick,
+                "target": bass,
+                "device": comp,
+                "gain": 1.25,
+                "tap": "post_fx_pre_fader"
+            }
+        ])
+    );
+
+    let removed = response(
+        &session,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "actions.transaction",
+            "params": {
+                "actions": [
+                    { "type": "send.remove", "send": send_id },
+                    { "type": "sidechain.remove", "sidechain": sidechain_id }
+                ]
+            }
+        })
+        .to_string(),
+    );
+    assert!(removed.get("error").is_none(), "{removed}");
+    assert_eq!(
+        response(
+            &session,
+            r#"{"jsonrpc":"2.0","id":8,"method":"project.routing"}"#
+        )["result"],
+        json!([])
+    );
+}
+
+#[test]
 fn the_catalog_lists_track_add() {
     let (_cleanup, session) = open_session();
     let body = response(

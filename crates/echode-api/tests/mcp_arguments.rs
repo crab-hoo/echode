@@ -63,6 +63,7 @@ fn rejected_arguments() -> Vec<(Value, Option<&'static str>)> {
         "echode.edit.redo",
         "echode.history.usage",
         "echode.project.summary",
+        "echode.project.routing",
     ] {
         for arguments in [json!({"extra":null}), json!({"actions":[]})] {
             cases.push((
@@ -89,6 +90,7 @@ fn rejected_arguments() -> Vec<(Value, Option<&'static str>)> {
         "echode.edit.redo",
         "echode.history.usage",
         "echode.project.summary",
+        "echode.project.routing",
     ] {
         for arguments in [
             Value::Null,

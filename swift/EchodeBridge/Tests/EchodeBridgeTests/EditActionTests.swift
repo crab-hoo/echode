@@ -9,6 +9,9 @@ struct EditActionTests {
         let clip = "00000000-0000-0000-0000-000000000002"
         let note = "00000000-0000-0000-0000-000000000003"
         let device = "00000000-0000-0000-0000-000000000004"
+        let bus = "00000000-0000-0000-0000-000000000005"
+        let send = "00000000-0000-0000-0000-000000000006"
+        let sidechain = "00000000-0000-0000-0000-000000000007"
         let actions: [EditAction] = [
             .addTrack(name: "音色 \"A\"\n"),
             .insertTrack(after: track, intoFolder: true, name: "child"),
@@ -42,6 +45,12 @@ struct EditActionTests {
                 track: track, start: 25, hash: String(repeating: "a", count: 64), sampleRate: 48_000, channels: 2,
                 frames: .max),
             .importAudio(track: track, start: 26, path: "/tmp/音声 \"one\".wav"),
+            .addSend(source: track, target: bus),
+            .setSendGain(send: send, gain: 0.5),
+            .removeSend(send: send),
+            .addSidechain(source: track, device: device, gain: 0.75),
+            .setSidechainGain(sidechain: sidechain, gain: 0.25),
+            .removeSidechain(sidechain: sidechain),
         ]
         let fixture = try #require(Bundle.module.url(forResource: "edit-actions", withExtension: "json"))
         let expected = try JSONSerialization.jsonObject(with: Data(contentsOf: fixture))

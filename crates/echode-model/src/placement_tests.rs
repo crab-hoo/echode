@@ -306,6 +306,7 @@ fn track(id: u128, clips: Vec<Placement>) -> Track {
         order: crate::initial_order(),
         clips: clips.into(),
         devices: vec![test_mixer(id)],
+        sends: Vec::new(),
     }
 }
 

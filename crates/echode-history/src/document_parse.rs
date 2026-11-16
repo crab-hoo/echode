@@ -13,7 +13,7 @@ use serde_json::Value;
 use crate::error::{MigrationError, PackageError, PackageKind, PackageValidationError as Invalid};
 
 /// Current package schema. Older numbers are raised by `SCHEMA_STEPS`.
-pub(super) const SCHEMA: u32 = 6;
+pub(super) const SCHEMA: u32 = 7;
 
 type SchemaStep = fn(&mut Value) -> Result<(), MigrationError>;
 
@@ -24,6 +24,7 @@ const SCHEMA_STEPS: &[SchemaStep] = &[
     |value| add_device_field(value, "bypassed", Value::Bool(false)),
     |value| add_device_field(value, "offline", Value::Bool(false)),
     |value| add_device_field(value, "pinned", Value::Array(Vec::new())),
+    add_route_fields,
 ];
 
 fn add_device_field(value: &mut Value, field: &str, default: Value) -> Result<(), MigrationError> {
@@ -38,6 +39,18 @@ fn add_device_field(value: &mut Value, field: &str, default: Value) -> Result<()
             .as_object_mut()
             .ok_or(MigrationError::DeviceNotObject)?;
         device.entry(field).or_insert_with(|| default.clone());
+    }
+    Ok(())
+}
+
+fn add_route_fields(value: &mut Value) -> Result<(), MigrationError> {
+    add_device_field(value, "sidechains", Value::Array(Vec::new()))?;
+    if let Some(object) = value.as_object_mut()
+        && object.contains_key("devices")
+    {
+        object
+            .entry("sends")
+            .or_insert_with(|| Value::Array(Vec::new()));
     }
     Ok(())
 }
@@ -209,7 +222,7 @@ fn parse_track(json: &str, expected_id: &str, package: &Path) -> Result<Track, P
             Ok(device)
         })
         .collect::<Result<Vec<_>, PackageError>>()?;
-    Ok(metadata.into_track(id, clips, devices))
+    Ok(metadata.into_track(id, clips, devices, file.sends))
 }
 
 fn parse_content(json: &str, expected_id: &str) -> Result<Content, PackageError> {
@@ -285,6 +298,7 @@ struct TrackFile {
     metadata: serde_json::Map<String, Value>,
     devices: Vec<echode_model::Device>,
     clips: Vec<Placement>,
+    sends: Vec<echode_model::SendRoute>,
 }
 
 #[derive(Deserialize)]

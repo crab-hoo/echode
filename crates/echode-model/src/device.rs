@@ -234,6 +234,7 @@ macro_rules! define_device {
             pub id: Id,
             pub kind: DeviceKind,
             $($(#[$meta])* pub $field: $type,)+
+            pub sidechains: Vec<crate::routing::SidechainRoute>,
             pub parameters: Vec<Parameter>,
         }
     };
@@ -251,6 +252,7 @@ impl Device {
             bypassed: false,
             offline: false,
             pinned: Vec::new(),
+            sidechains: Vec::new(),
             parameters: vec![
                 Parameter::at_default(ids.gain, ParamKey::Gain),
                 Parameter::at_default(ids.pan, ParamKey::Pan),
@@ -269,6 +271,7 @@ impl Device {
             bypassed: false,
             offline: false,
             pinned: Vec::new(),
+            sidechains: Vec::new(),
             parameters: Vec::new(),
         }
     }
@@ -330,6 +333,7 @@ fn validate_clap(
     {
         return Err(ModelError::InvalidDevice);
     }
+    crate::routing::validate_sidechains(&device.sidechains, seen)?;
     Ok(())
 }
 
@@ -350,6 +354,7 @@ pub(crate) fn validate_mixer(
         || device.bypassed
         || device.offline
         || !device.pinned.is_empty()
+        || !device.sidechains.is_empty()
         || device.parameters.len() != ParamKey::ORDER.len()
     {
         return Err(ModelError::InvalidParameter);

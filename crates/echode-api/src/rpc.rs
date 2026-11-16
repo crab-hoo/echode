@@ -55,6 +55,7 @@ impl ApiSession {
         let body = match method {
             "actions.list" => ok_response(&id, action_catalog()),
             "project.summary" => ok_response(&id, summary(&self.host.snapshot())),
+            "project.routing" => ok_response(&id, routing(&self.host.snapshot())),
             "protocol.version" => ok_response(&id, json!({ "version": 1 })),
             "actions.perform" => outcome(&id, perform(&self.host, &params)),
             "actions.transaction" => outcome(&id, transaction(&self.host, &params)),
@@ -102,6 +103,36 @@ fn summary(project: &Project) -> Value {
             "clips": track.clips.len(),
         })).collect::<Vec<_>>(),
     })
+}
+
+fn routing(project: &Project) -> Value {
+    let mut routes = Vec::new();
+    for track in project.tracks() {
+        for send in &track.sends {
+            routes.push(json!({
+                "id": send.id.to_string(),
+                "kind": "send",
+                "source": track.id.to_string(),
+                "target": send.target.to_string(),
+                "gain": send.gain,
+                "tap": send.tap,
+            }));
+        }
+        for device in &track.devices {
+            for sidechain in &device.sidechains {
+                routes.push(json!({
+                    "id": sidechain.id.to_string(),
+                    "kind": "sidechain",
+                    "source": sidechain.source.to_string(),
+                    "target": track.id.to_string(),
+                    "device": device.id.to_string(),
+                    "gain": sidechain.gain,
+                    "tap": sidechain.tap,
+                }));
+            }
+        }
+    }
+    Value::Array(routes)
 }
 
 #[derive(Debug)]

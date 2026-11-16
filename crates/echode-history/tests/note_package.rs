@@ -132,7 +132,7 @@ impl Package {
             actual, expected,
             "note key order, integer spelling, or one-line layout changed"
         );
-        assert_eq!(self.json()["schema"], 6);
+        assert_eq!(self.json()["schema"], 7);
         assert!(text.ends_with("  ],\n  \"expressions\":[]\n}\n"));
         let reopened = read_package(&self.root).unwrap();
         assert_eq!(&reopened, project);
@@ -307,7 +307,7 @@ fn note_package_rejects_invalid_notes_order_ids_and_unsupported_data() {
 fn note_package_keeps_legacy_migrations_shared_content_and_commit_recovery() {
     let package = Package::new();
     let original = package.json();
-    for schema in 1..=6 {
+    for schema in 1..=7 {
         let mut content = original.clone();
         content["schema"] = json!(schema);
         std::fs::write(&package.content, serde_json::to_vec(&content).unwrap()).unwrap();

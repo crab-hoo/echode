@@ -995,6 +995,160 @@ define_actions! {
             Err(ActionError::NotApplied)
         }
     }
+    AddSend {
+        id: "send.add",
+        name_ja: "センドを追加する",
+        name_en: "Add a send",
+        description_ja: "送り元の FX 後・フェーダー前の音声を受け先のバスへ送る",
+        description_en: "Route a track's post-FX, pre-fader output into a target track",
+        command {
+            source: Id,
+            target: Id,
+            #[serde(default)]
+            gain: Option<f32>,
+        }
+        action {
+            id: Id,
+            source: Id,
+            target: Id,
+            gain_bits: u32,
+        }
+        commit {
+            Action::AddSend {
+                id: Id::generate(),
+                source,
+                target,
+                gain_bits: gain.unwrap_or(echode_model::ROUTE_GAIN_DEFAULT).to_bits(),
+            }
+        }
+        edit |project: &Project| {
+            project
+                .add_send_with_id(*id, *source, *target, f32::from_bits(*gain_bits))
+                .map_err(Into::into)
+        }
+    }
+    SetSendGain {
+        id: "send.set_gain",
+        name_ja: "センド量を変える",
+        name_en: "Set send gain",
+        description_ja: "センドの送り量をリニアゲインで変える",
+        description_en: "Change a send route's linear gain",
+        command {
+            send: Id,
+            gain: f32,
+        }
+        action {
+            send: Id,
+            gain_bits: u32,
+        }
+        commit {
+            Action::SetSendGain {
+                send,
+                gain_bits: gain.to_bits(),
+            }
+        }
+        edit |project: &Project| {
+            project
+                .set_send_gain(*send, f32::from_bits(*gain_bits))
+                .map_err(Into::into)
+        }
+    }
+    RemoveSend {
+        id: "send.remove",
+        name_ja: "センドを外す",
+        name_en: "Remove a send",
+        description_ja: "トラック間のセンドを外す",
+        description_en: "Remove a send route between tracks",
+        command {
+            send: Id,
+        }
+        action {
+            send: Id,
+        }
+        commit {
+            Action::RemoveSend { send }
+        }
+        edit |project: &Project| {
+            project.remove_send(*send).map_err(Into::into)
+        }
+    }
+    AddSidechain {
+        id: "sidechain.add",
+        name_ja: "サイドチェインを追加する",
+        name_en: "Add a sidechain",
+        description_ja: "送り元トラックの FX 後・フェーダー前の音声を CLAP デバイスのサイドチェインへ送る",
+        description_en: "Route a track's post-FX, pre-fader output into a CLAP device's sidechain",
+        command {
+            source: Id,
+            device: Id,
+            #[serde(default)]
+            gain: Option<f32>,
+        }
+        action {
+            id: Id,
+            source: Id,
+            device: Id,
+            gain_bits: u32,
+        }
+        commit {
+            Action::AddSidechain {
+                id: Id::generate(),
+                source,
+                device,
+                gain_bits: gain.unwrap_or(echode_model::ROUTE_GAIN_DEFAULT).to_bits(),
+            }
+        }
+        edit |project: &Project| {
+            project
+                .add_sidechain_with_id(*id, *source, *device, f32::from_bits(*gain_bits))
+                .map_err(Into::into)
+        }
+    }
+    SetSidechainGain {
+        id: "sidechain.set_gain",
+        name_ja: "サイドチェイン量を変える",
+        name_en: "Set sidechain gain",
+        description_ja: "サイドチェインの送り量をリニアゲインで変える",
+        description_en: "Change a sidechain route's linear gain",
+        command {
+            sidechain: Id,
+            gain: f32,
+        }
+        action {
+            sidechain: Id,
+            gain_bits: u32,
+        }
+        commit {
+            Action::SetSidechainGain {
+                sidechain,
+                gain_bits: gain.to_bits(),
+            }
+        }
+        edit |project: &Project| {
+            project
+                .set_sidechain_gain(*sidechain, f32::from_bits(*gain_bits))
+                .map_err(Into::into)
+        }
+    }
+    RemoveSidechain {
+        id: "sidechain.remove",
+        name_ja: "サイドチェインを外す",
+        name_en: "Remove a sidechain",
+        description_ja: "CLAP デバイスへのサイドチェインを外す",
+        description_en: "Remove a sidechain route into a CLAP device",
+        command {
+            sidechain: Id,
+        }
+        action {
+            sidechain: Id,
+        }
+        commit {
+            Action::RemoveSidechain { sidechain }
+        }
+        edit |project: &Project| {
+            project.remove_sidechain(*sidechain).map_err(Into::into)
+        }
+    }
 }
 
 fn legacy_place_fade() -> i64 {

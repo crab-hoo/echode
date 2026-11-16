@@ -48,7 +48,7 @@ fn package_fields_keep_legacy_layout_and_replay_across_all_remaining_objects() {
     let original = fixture();
     write_package(&package.0, &original).unwrap();
     let project_text = std::fs::read_to_string(package.0.join("project.json")).unwrap();
-    assert!(project_text.starts_with("{\n  \"schema\":6,\n  \"meter\":{\"numerator\":7,\"denominator\":8},\n  \"tempo\":[\n    {\"at\":-123,\"numerator\":271,\"denominator\":3},\n    {\"at\":0,\"numerator\":241,\"denominator\":2}\n  ],\n"));
+    assert!(project_text.starts_with("{\n  \"schema\":7,\n  \"meter\":{\"numerator\":7,\"denominator\":8},\n  \"tempo\":[\n    {\"at\":-123,\"numerator\":271,\"denominator\":3},\n    {\"at\":0,\"numerator\":241,\"denominator\":2}\n  ],\n"));
     let track = &original.tracks()[0];
     let clip = &track.clips[0];
     let track_path = package.0.join("tracks").join(format!("{}.json", track.id));
@@ -62,7 +62,7 @@ fn package_fields_keep_legacy_layout_and_replay_across_all_remaining_objects() {
     assert_eq!(
         content_text,
         format!(
-            "{{\n  \"schema\":6,\n  \"id\":\"{}\",\n  \"audio\":{{\"hash\":\"{}\",\"sample_rate\":48000,\"channels\":2,\"frames\":96000}},\n  \"takes\":[],\n  \"notes\":[\n  ],\n  \"expressions\":[]\n}}\n",
+            "{{\n  \"schema\":7,\n  \"id\":\"{}\",\n  \"audio\":{{\"hash\":\"{}\",\"sample_rate\":48000,\"channels\":2,\"frames\":96000}},\n  \"takes\":[],\n  \"notes\":[\n  ],\n  \"expressions\":[]\n}}\n",
             clip.content,
             "ab".repeat(32)
         )

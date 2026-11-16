@@ -43,6 +43,9 @@ use placement::{clip_change, diff_clip_fields};
 mod project;
 use project::diff_project_fields;
 
+#[path = "changeset_route.rs"]
+mod route;
+use route::{diff_send_fields, diff_sidechain_fields, send_change, sidechain_change};
 #[path = "changeset_tempo.rs"]
 mod tempo;
 use tempo::diff_tempo;
@@ -105,6 +108,8 @@ define_object_kinds! {
     Content => "content",
     Device => "device",
     Parameter => "parameter",
+    Send => "send",
+    Sidechain => "sidechain",
 }
 
 /// An ordered list through which one kind owns objects of another.
@@ -120,6 +125,8 @@ impl Ownership {
     pub const CONTENT_NOTES: Self = Self::new(ObjectKind::Content, Property::NoteOrder);
     pub const TRACK_DEVICES: Self = Self::new(ObjectKind::Track, Property::DeviceOrder);
     pub const DEVICE_PARAMETERS: Self = Self::new(ObjectKind::Device, Property::ParamOrder);
+    pub const TRACK_SENDS: Self = Self::new(ObjectKind::Track, Property::SendOrder);
+    pub const DEVICE_SIDECHAINS: Self = Self::new(ObjectKind::Device, Property::SidechainOrder);
 
     const fn new(owner: ObjectKind, order: Property) -> Self {
         Self { owner, order }
@@ -140,6 +147,8 @@ impl ObjectKind {
             Self::Note => &[Ownership::CONTENT_NOTES],
             Self::Device => &[Ownership::TRACK_DEVICES],
             Self::Parameter => &[Ownership::DEVICE_PARAMETERS],
+            Self::Send => &[Ownership::TRACK_SENDS],
+            Self::Sidechain => &[Ownership::DEVICE_SIDECHAINS],
         }
     }
 }
@@ -208,6 +217,11 @@ define_properties! {
     Bypassed => "bypassed",
     Offline => "offline",
     PinnedParameters => "pinned_parameters",
+    SendOrder => "send_order",
+    SidechainOrder => "sidechain_order",
+    Target => "target",
+    Source => "source",
+    Tap => "tap",
 }
 
 pub use crate::change_values::Value;
@@ -336,11 +350,13 @@ fn diff_tracks(
             None => {
                 creates.push(track_change(true, track));
                 diff_devices(None, Some(track), creates, updates, deletes);
+                diff_sends(None, Some(track), creates, updates, deletes);
             }
             Some(previous) if Arc::ptr_eq(*previous, track) => {}
             Some(previous) => {
                 diff_track_fields(previous, track, updates);
                 diff_devices(Some(previous), Some(track), creates, updates, deletes);
+                diff_sends(Some(previous), Some(track), creates, updates, deletes);
             }
         }
     }
@@ -356,6 +372,7 @@ fn diff_tracks(
     diff_notes(&contents.before, &contents.after, creates, updates, deletes);
     for track in before.tracks() {
         if !after_by_id.contains_key(&track.id) {
+            diff_sends(Some(track), None, creates, updates, deletes);
             diff_devices(Some(track), None, creates, updates, deletes);
             deletes.push(track_change(false, track));
         }
@@ -399,6 +416,9 @@ fn diff_devices(
         match unmatched.remove(&diff_device_key(device)) {
             None => {
                 creates.push(device_change(true, owner, device));
+                for sidechain in &device.sidechains {
+                    creates.push(sidechain_change(true, device.id, sidechain));
+                }
                 for parameter in &device.parameters {
                     creates.push(parameter_change(true, device.id, parameter));
                 }
@@ -413,7 +433,38 @@ fn diff_devices(
         for parameter in device.parameters.iter().rev() {
             deletes.push(parameter_change(false, device.id, parameter));
         }
+        for sidechain in device.sidechains.iter().rev() {
+            deletes.push(sidechain_change(false, device.id, sidechain));
+        }
         deletes.push(device_change(false, owner, device));
+    }
+}
+
+fn diff_sends(
+    before: Option<&Track>,
+    after: Option<&Track>,
+    creates: &mut Vec<Change>,
+    updates: &mut Vec<Change>,
+    deletes: &mut Vec<Change>,
+) {
+    let empty: &[crate::routing::SendRoute] = &[];
+    let before_sends = before.map(|track| track.sends.as_slice()).unwrap_or(empty);
+    let after_sends = after.map(|track| track.sends.as_slice()).unwrap_or(empty);
+    let Some(owner) = after.or(before).map(|track| track.id) else {
+        return;
+    };
+    let mut unmatched: HashMap<Id, &crate::routing::SendRoute> =
+        before_sends.iter().map(|send| (send.id, send)).collect();
+    for send in after_sends {
+        match unmatched.remove(&send.id) {
+            None => creates.push(send_change(true, owner, send)),
+            Some(previous) => diff_send_fields(previous, send, updates),
+        }
+    }
+    for send in before_sends.iter().rev() {
+        if unmatched.contains_key(&send.id) {
+            deletes.push(send_change(false, owner, send));
+        }
     }
 }
 
@@ -649,6 +700,23 @@ fn field_ids(fields: &[Field], property: Property) -> Result<Vec<Id>, ModelError
             _ => None,
         })
         .ok_or(ModelError::InvalidChange)
+}
+
+fn field_optional_ids(fields: &[Field], property: Property) -> Result<Vec<Id>, ModelError> {
+    let mut found = None;
+    for field in fields {
+        if field.property != property {
+            continue;
+        }
+        if found.is_some() {
+            return Err(ModelError::InvalidChange);
+        }
+        match &field.value {
+            Value::Ids(ids) => found = Some(ids.clone()),
+            _ => return Err(ModelError::InvalidChange),
+        }
+    }
+    Ok(found.unwrap_or_default())
 }
 
 fn field_id(fields: &[Field], property: Property) -> Result<Id, ModelError> {

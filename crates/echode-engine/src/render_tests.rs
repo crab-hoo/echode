@@ -224,6 +224,7 @@ fn crowded(extra: usize) -> Project {
             parent: None,
             order: echode_model::initial_order(),
             devices: vec![echode_model::test_mixer(1)],
+            sends: Vec::new(),
             clips: vec![Placement {
                 id: Id::from_raw(2),
                 content: Id::from_raw(3),

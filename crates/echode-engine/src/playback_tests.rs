@@ -641,3 +641,157 @@ fn audit_fca04_an_edit_replans_only_the_track_it_changed() {
         "a loop change replanned the score"
     );
 }
+
+#[test]
+fn model_sends_and_sidechains_project_into_compensation_routes() {
+    use crate::compensation::{DeviceLatency, StageLine};
+    use crate::planes::{FinitePlanes, PlacedPlanes};
+    use crate::plugins::Latencies;
+    use echode_model::Id;
+
+    let (project, kick) = Project::new().add_track("kick");
+    let (project, bass) = project.add_track("bass");
+    let (project, reverb) = project.add_track("reverb");
+
+    let kick_fx = Id::generate();
+    let bass_pre = Id::generate();
+    let bass_comp = Id::generate();
+    let reverb_fx = Id::generate();
+
+    let project = project
+        .add_clap_device(kick, kick_fx, "org.example.kick_fx")
+        .unwrap()
+        .add_clap_device(bass, bass_pre, "org.example.bass_pre")
+        .unwrap()
+        .add_clap_device(bass, bass_comp, "org.example.comp")
+        .unwrap()
+        .add_clap_device(reverb, reverb_fx, "org.example.reverb")
+        .unwrap();
+
+    let send = Id::generate();
+    let sidechain = Id::generate();
+    let project = project
+        .add_send_with_id(send, kick, reverb, 0.5)
+        .unwrap()
+        .add_sidechain_with_id(sidechain, kick, bass_comp, 1.0)
+        .unwrap();
+
+    // Place dry audio on the return track so its `source_delay` must wait for `kick`'s send.
+    let plane = FinitePlanes::new(Arc::from([0.25_f32; 64]), None).unwrap();
+    let clips = [LoadedClip::new(reverb.raw(), 0, PlacedPlanes::whole(plane))];
+    let mut ids = PlaybackIds::new();
+    let mut meters = BTreeMap::new();
+    let caches = BTreeMap::new();
+    let mut prepared = Prepared::new(
+        &project,
+        48_000,
+        64,
+        &mut ids,
+        PreparedSources {
+            clips: &clips,
+            caches: &caches,
+        },
+        None,
+        &mut meters,
+    )
+    .unwrap();
+
+    let kick_key = prepared.tracks[0].key;
+    let bass_key = prepared.tracks[1].key;
+    let reverb_key = prepared.tracks[2].key;
+
+    // kick_fx: 100 frames; bass_pre: 20 frames; bass_comp: 30 frames (receives kick at 100, so
+    // bass main before bass_comp waits 80 frames -> bass finishes at 130); reverb_fx: 50 frames
+    // with 400 tail (receives kick at 100 -> reverb finishes at 150, master latency = 150).
+    let latencies = Latencies::from_tracks([
+        (
+            kick_key,
+            vec![DeviceLatency {
+                device: kick_fx.raw(),
+                latency: 100,
+                tail: 0,
+                instrument: false,
+                bypassed: false,
+            }],
+        ),
+        (
+            bass_key,
+            vec![
+                DeviceLatency {
+                    device: bass_pre.raw(),
+                    latency: 20,
+                    tail: 0,
+                    instrument: false,
+                    bypassed: false,
+                },
+                DeviceLatency {
+                    device: bass_comp.raw(),
+                    latency: 30,
+                    tail: 120,
+                    instrument: false,
+                    bypassed: false,
+                },
+            ],
+        ),
+        (
+            reverb_key,
+            vec![DeviceLatency {
+                device: reverb_fx.raw(),
+                latency: 50,
+                tail: 400,
+                instrument: false,
+                bypassed: false,
+            }],
+        ),
+    ]);
+
+    let (_instruments, compensated) =
+        compensate_with_latencies(&mut prepared, &latencies, 64).unwrap();
+    assert_eq!(compensated.latency, 150);
+    assert_eq!(compensated.tail, 400);
+    assert_eq!(compensated.sends, vec![0]);
+    assert_eq!(compensated.sidechains, vec![0]);
+    assert_eq!(
+        compensated.stage_lines,
+        vec![StageLine {
+            track: 1,
+            device: 1,
+            main: 80,
+        }]
+    );
+    // Dry kick (100) waits 50 frames at its output to meet reverb (150); bass (130) waits 20.
+    assert_eq!(prepared.tracks[0].output_delay.frames(), 50);
+    assert_eq!(prepared.tracks[1].output_delay.frames(), 20);
+    assert_eq!(prepared.tracks[2].output_delay.frames(), 0);
+    // Reverb's own placed clip waits 100 frames at its input to meet kick's send.
+    assert_eq!(prepared.tracks[2].source_delay.frames(), 100);
+    assert!(compensated.stage_inputs.contains(&(bass_comp.raw(), 100)));
+    assert!(compensated.stage_inputs.contains(&(reverb_fx.raw(), 100)));
+
+    // Taking the sidechain target offline skips its sidechain link cleanly, and offline render
+    // runs once all CLAP devices are offline.
+    let all_offline = project
+        .set_device_offline(kick_fx, true)
+        .unwrap()
+        .set_device_offline(bass_pre, true)
+        .unwrap()
+        .set_device_offline(bass_comp, true)
+        .unwrap()
+        .set_device_offline(reverb_fx, true)
+        .unwrap();
+    let (mut control, _audio) =
+        playback(&all_offline, 48_000, 64, PlaybackOptions::default()).unwrap();
+    assert_eq!(control.latency_samples(), 0);
+    assert_eq!(control.compensated.sends, vec![0]);
+    assert!(control.compensated.sidechains.is_empty());
+
+    let send2 = Id::generate();
+    let with_second_send = all_offline
+        .add_send_with_id(send2, bass, reverb, 0.25)
+        .unwrap();
+    control.replace(&with_second_send).unwrap();
+    assert_eq!(control.compensated.sends, vec![0, 0]);
+
+    let mut rendered = vec![0.0; 128];
+    crate::render_offline(&with_second_send, 48_000, 64, &mut rendered).unwrap();
+}

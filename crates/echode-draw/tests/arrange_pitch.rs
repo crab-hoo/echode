@@ -201,6 +201,7 @@ fn measure_product_arrange_query() {
             }]
             .into(),
             devices: vec![test_mixer(2 + track * 1_000)],
+            sends: Vec::new(),
         });
     }
     let project = Project::try_assemble(

@@ -11,6 +11,7 @@ fn track(id: u128, order: u32) -> Track {
         parent: None,
         order: crate::model::sibling_order(order),
         devices: vec![crate::test_mixer(id)],
+        sends: Vec::new(),
         clips: Default::default(),
     }
 }

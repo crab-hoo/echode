@@ -17,6 +17,7 @@ const VERSION_KEY: &str = "io.modelcontextprotocol/protocolVersion";
 const CAPABILITIES_KEY: &str = "io.modelcontextprotocol/clientCapabilities";
 const SUMMARY_URI: &str = "echode://project/summary";
 const TRACKS_URI: &str = "echode://project/tracks";
+const ROUTING_URI: &str = "echode://project/routing";
 
 #[derive(Default, PartialEq)]
 enum Lifecycle {
@@ -259,28 +260,43 @@ impl McpSession<'_> {
                 no_cursor(params)?;
                 Ok(json!({"resources":[
                     {"uri":SUMMARY_URI,"name":"Project summary","mimeType":"application/json"},
-                    {"uri":TRACKS_URI,"name":"Tracks","mimeType":"application/json"}
+                    {"uri":TRACKS_URI,"name":"Tracks","mimeType":"application/json"},
+                    {"uri":ROUTING_URI,"name":"Routing","mimeType":"application/json"}
                 ]}))
             }
             "resources/read" => {
                 let uri = params["uri"]
                     .as_str()
                     .ok_or_else(|| ProtocolError::new(-32602, "uri must be a string"))?;
-                if !matches!(uri, SUMMARY_URI | TRACKS_URI) {
-                    return Err(ProtocolError::new(
-                        if modern { -32602 } else { -32002 },
-                        "resource not found",
-                    ));
-                }
-                let response = backend(self.socket, "project.summary", json!({}))
-                    .map_err(ProtocolError::session)?;
-                let summary = response
-                    .get("result")
-                    .ok_or_else(|| ProtocolError::new(-32603, "session refused project summary"))?;
-                let data = if uri == TRACKS_URI {
-                    &summary["tracks"]
-                } else {
-                    summary
+                let data = match uri {
+                    SUMMARY_URI | TRACKS_URI => {
+                        let response = backend(self.socket, "project.summary", json!({}))
+                            .map_err(ProtocolError::session)?;
+                        let summary = response.get("result").ok_or_else(|| {
+                            ProtocolError::new(-32603, "session refused project summary")
+                        })?;
+                        if uri == TRACKS_URI {
+                            summary["tracks"].clone()
+                        } else {
+                            summary.clone()
+                        }
+                    }
+                    ROUTING_URI => {
+                        let response = backend(self.socket, "project.routing", json!({}))
+                            .map_err(ProtocolError::session)?;
+                        response
+                            .get("result")
+                            .ok_or_else(|| {
+                                ProtocolError::new(-32603, "session refused project routing")
+                            })?
+                            .clone()
+                    }
+                    _ => {
+                        return Err(ProtocolError::new(
+                            if modern { -32602 } else { -32002 },
+                            "resource not found",
+                        ));
+                    }
                 };
                 Ok(
                     json!({"contents":[{"uri":uri,"mimeType":"application/json","text":data.to_string()}]}),
@@ -320,7 +336,8 @@ impl McpSession<'_> {
             "echode.edit.undo"
             | "echode.edit.redo"
             | "echode.history.usage"
-            | "echode.project.summary" => {
+            | "echode.project.summary"
+            | "echode.project.routing" => {
                 if !arguments
                     .as_object()
                     .is_some_and(|object| object.is_empty())
@@ -435,7 +452,8 @@ fn tools() -> Vec<Value> {
         tool("echode.edit.undo", "Undo", "Undo the last edit in the configured session.", empty.clone(), false),
         tool("echode.edit.redo", "Redo", "Redo the last undone edit in the configured session.", empty.clone(), false),
         tool("echode.history.usage", "History memory", "Read Undo and Redo memory usage and whether autosave has stopped.", empty.clone(), true),
-        tool("echode.project.summary", "Project summary", "Read the configured project's meter and tracks without opening an audio device.", empty, true),
+        tool("echode.project.summary", "Project summary", "Read the configured project's meter and tracks without opening an audio device.", empty.clone(), true),
+        tool("echode.project.routing", "Project routing", "Read the configured project's send and sidechain routes without opening an audio device.", empty, true),
     ]);
     tools.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
     tools

@@ -84,7 +84,7 @@ fn device_package_keeps_scalar_order_layout_and_canonical_bytes() {
         let text = std::str::from_utf8(&bytes).unwrap();
         let expected = project.tracks()[0].devices.iter().map(|device| {
             format!(
-                "    {{\"id\":\"{}\",\"kind\":\"{}\",\"plugin\":{},\"state\":{},\"bypassed\":{},\"offline\":{},\"pinned\":{},\"parameters\":[",
+                "    {{\"id\":\"{}\",\"kind\":\"{}\",\"plugin\":{},\"state\":{},\"bypassed\":{},\"offline\":{},\"pinned\":{},\"sidechains\":{},\"parameters\":[",
                 device.id,
                 device.kind.as_str(),
                 serde_json::to_string(&device.plugin).unwrap(),
@@ -92,6 +92,7 @@ fn device_package_keeps_scalar_order_layout_and_canonical_bytes() {
                 device.bypassed,
                 device.offline,
                 serde_json::to_string(&device.pinned).unwrap(),
+                serde_json::to_string(&device.sidechains).unwrap(),
             )
         }).collect::<Vec<_>>();
         let actual = text
@@ -106,7 +107,7 @@ fn device_package_keeps_scalar_order_layout_and_canonical_bytes() {
             text.contains("\"parameters\":[\n    ]},\n"),
             "empty parameter layout changed"
         );
-        assert_eq!(package.track_json()["schema"], 6);
+        assert_eq!(package.track_json()["schema"], 7);
         let reopened = read_package(&package.root).unwrap();
         assert_eq!(reopened, project, "mask {mask}");
         write_package(&package.root, &reopened).unwrap();
@@ -118,7 +119,15 @@ fn device_package_keeps_scalar_order_layout_and_canonical_bytes() {
 fn device_package_rejects_bad_shapes_and_preserves_optional_text_defaults() {
     let package = Package::new();
     let original = package.track_json();
-    for field in ["id", "kind", "bypassed", "offline", "pinned", "parameters"] {
+    for field in [
+        "id",
+        "kind",
+        "bypassed",
+        "offline",
+        "pinned",
+        "sidechains",
+        "parameters",
+    ] {
         let mut track = original.clone();
         track["devices"][0].as_object_mut().unwrap().remove(field);
         package.reject(&track, &format!("missing field `{field}`"), field);
@@ -229,7 +238,7 @@ fn device_package_keeps_semantic_validation_and_state_object_checks() {
 fn device_package_keeps_legacy_migrations_and_commit_recovery() {
     let package = Package::new();
     let original = package.track_json();
-    for schema in 1..=6 {
+    for schema in 1..=7 {
         let mut track = original.clone();
         track["schema"] = json!(schema);
         for device in track["devices"].as_array_mut().unwrap() {
@@ -246,6 +255,12 @@ fn device_package_keeps_legacy_migrations_and_commit_recovery() {
             if schema < 6 {
                 device.remove("pinned");
             }
+            if schema < 7 {
+                device.remove("sidechains");
+            }
+        }
+        if schema < 7 {
+            track.as_object_mut().unwrap().remove("sends");
         }
         std::fs::write(&package.track, serde_json::to_vec(&track).unwrap()).unwrap();
         assert_eq!(

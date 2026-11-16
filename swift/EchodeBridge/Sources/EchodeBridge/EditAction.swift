@@ -41,6 +41,12 @@ public enum EditActionOf<Text: Encodable & Sendable>: Encodable, Sendable {
     case `restore`(`revision`: Text)
     case `placeAudio`(`track`: Text, `start`: Int64, `hash`: Text, `sampleRate`: UInt32, `channels`: UInt16, `frames`: UInt64)
     case `importAudio`(`track`: Text, `start`: Int64, `path`: Text)
+    case `addSend`(`source`: Text, `target`: Text, `gain`: Float? = nil)
+    case `setSendGain`(`send`: Text, `gain`: Float)
+    case `removeSend`(`send`: Text)
+    case `addSidechain`(`source`: Text, `device`: Text, `gain`: Float? = nil)
+    case `setSidechainGain`(`sidechain`: Text, `gain`: Float)
+    case `removeSidechain`(`sidechain`: Text)
 
     private struct Key: CodingKey {
         let stringValue: String
@@ -197,6 +203,30 @@ public enum EditActionOf<Text: Encodable & Sendable>: Encodable, Sendable {
             try object.encode(`track`, forKey: Key("track"))
             try object.encode(`start`, forKey: Key("start"))
             try object.encode(`path`, forKey: Key("path"))
+        case let .`addSend`(`source`, `target`, `gain`):
+            try object.encode("send.add", forKey: Key("type"))
+            try object.encode(`source`, forKey: Key("source"))
+            try object.encode(`target`, forKey: Key("target"))
+            try object.encode(`gain`, forKey: Key("gain"))
+        case let .`setSendGain`(`send`, `gain`):
+            try object.encode("send.set_gain", forKey: Key("type"))
+            try object.encode(`send`, forKey: Key("send"))
+            try object.encode(`gain`, forKey: Key("gain"))
+        case let .`removeSend`(`send`):
+            try object.encode("send.remove", forKey: Key("type"))
+            try object.encode(`send`, forKey: Key("send"))
+        case let .`addSidechain`(`source`, `device`, `gain`):
+            try object.encode("sidechain.add", forKey: Key("type"))
+            try object.encode(`source`, forKey: Key("source"))
+            try object.encode(`device`, forKey: Key("device"))
+            try object.encode(`gain`, forKey: Key("gain"))
+        case let .`setSidechainGain`(`sidechain`, `gain`):
+            try object.encode("sidechain.set_gain", forKey: Key("type"))
+            try object.encode(`sidechain`, forKey: Key("sidechain"))
+            try object.encode(`gain`, forKey: Key("gain"))
+        case let .`removeSidechain`(`sidechain`):
+            try object.encode("sidechain.remove", forKey: Key("type"))
+            try object.encode(`sidechain`, forKey: Key("sidechain"))
         }
     }
 }

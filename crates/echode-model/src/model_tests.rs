@@ -290,6 +290,7 @@ fn assembled_auto_clips_fit_their_notes() {
             parent: None,
             order: sibling_order(0),
             devices: vec![crate::device::test_mixer(1)],
+            sends: Vec::new(),
             clips: vec![Placement::new_auto(
                 Id::from_raw(2),
                 Id::from_raw(5),
@@ -338,6 +339,7 @@ fn assembled_clips_refuse_overlap_and_duplicate_ids() {
             parent: None,
             order: sibling_order(0),
             devices: vec![crate::device::test_mixer(1)],
+            sends: Vec::new(),
             clips: vec![clip(2, 20, 0), clip(3, 30, 0)].into(),
         }],
     )
@@ -353,6 +355,7 @@ fn assembled_clips_refuse_overlap_and_duplicate_ids() {
             parent: None,
             order: sibling_order(0),
             devices: vec![crate::device::test_mixer(1)],
+            sends: Vec::new(),
             clips: vec![clip(1, 20, 0)].into(),
         }],
     )
@@ -470,6 +473,7 @@ fn saved_folders_reject_a_cycle_and_a_missing_parent() {
         parent: parent.map(Id::from_raw),
         order: sibling_order(id as u32),
         devices: vec![crate::device::test_mixer(id)],
+        sends: Vec::new(),
         clips: Default::default(),
     };
     let error = Project::try_assemble(
@@ -617,6 +621,7 @@ fn shared_across_tracks(blocker: bool) -> (Project, Id, Id) {
                 parent: None,
                 order: sibling_order(0),
                 devices: vec![crate::device::test_mixer(1)],
+                sends: Vec::new(),
                 clips: vec![window(2, 5, -4, 8, -4, ClipKind::Fixed)].into(),
             },
             Track {
@@ -625,6 +630,7 @@ fn shared_across_tracks(blocker: bool) -> (Project, Id, Id) {
                 parent: None,
                 order: sibling_order(1),
                 devices: vec![crate::device::test_mixer(4)],
+                sends: Vec::new(),
                 clips: drum_clips.into(),
             },
         ],
@@ -826,6 +832,7 @@ fn unsorted_notes_are_rejected() {
         parent: None,
         order: sibling_order(0),
         devices: vec![crate::device::test_mixer(1)],
+        sends: Vec::new(),
         clips: vec![Placement::new_auto(
             Id::from_raw(2),
             Id::from_raw(5),
@@ -914,6 +921,7 @@ fn a_bad_track_order_is_rejected() {
         parent: None,
         order,
         devices: vec![crate::device::test_mixer(id)],
+        sends: Vec::new(),
         clips: Default::default(),
     };
     let same = sibling_order(0);

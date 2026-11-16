@@ -15,6 +15,7 @@ use super::note::NoteState;
 use super::parameter::ParamState;
 use super::placement::ClipState;
 use super::project::ProjectState;
+use super::route::{SendState, SidechainState};
 use super::tempo::TempoState;
 use super::track::TrackState;
 use super::{Change, Field, Id, ModelError, ObjectKey, ObjectKind, Ownership, Property, Value};
@@ -51,6 +52,20 @@ impl Child for DeviceState {
 
 impl Child for ParamState {
     const KIND: ObjectKind = ObjectKind::Parameter;
+    fn owner(&self) -> Id {
+        self.device
+    }
+}
+
+impl Child for SendState {
+    const KIND: ObjectKind = ObjectKind::Send;
+    fn owner(&self) -> Id {
+        self.track
+    }
+}
+
+impl Child for SidechainState {
+    const KIND: ObjectKind = ObjectKind::Sidechain;
     fn owner(&self) -> Id {
         self.device
     }
@@ -159,6 +174,8 @@ pub(super) struct Draft {
     notes: Children<NoteState>,
     devices: Children<DeviceState>,
     parameters: Children<ParamState>,
+    sends: Children<SendState>,
+    sidechains: Children<SidechainState>,
 }
 
 impl Draft {
@@ -172,6 +189,8 @@ impl Draft {
             notes: Children::new(),
             devices: Children::new(),
             parameters: Children::new(),
+            sends: Children::new(),
+            sidechains: Children::new(),
         };
         for content in project.contents() {
             draft
@@ -197,11 +216,23 @@ impl Draft {
                     .insert(clip.id, ClipState::from_clip(track.id, clip));
             }
             draft.tracks.insert(track.id, TrackState::from_track(track));
+            for send in &track.sends {
+                draft
+                    .sends
+                    .items
+                    .insert(send.id, SendState::from_send(track.id, send));
+            }
             for device in &track.devices {
                 draft
                     .devices
                     .items
                     .insert(device.id, DeviceState::from_device(track.id, device));
+                for sidechain in &device.sidechains {
+                    draft.sidechains.items.insert(
+                        sidechain.id,
+                        SidechainState::from_sidechain(device.id, sidechain),
+                    );
+                }
                 for parameter in &device.parameters {
                     draft.parameters.items.insert(
                         parameter.id,
@@ -262,6 +293,12 @@ impl Draft {
             ObjectKind::Parameter => self
                 .parameters
                 .insert(id_key(key)?, ParamState::from_fields(fields)?),
+            ObjectKind::Send => self
+                .sends
+                .insert(id_key(key)?, SendState::from_fields(fields)?),
+            ObjectKind::Sidechain => self
+                .sidechains
+                .insert(id_key(key)?, SidechainState::from_fields(fields)?),
         }
     }
 
@@ -274,6 +311,8 @@ impl Draft {
             ObjectKind::Note => self.notes.remove(id_key(key)?),
             ObjectKind::Device => self.devices.remove(id_key(key)?),
             ObjectKind::Parameter => self.parameters.remove(id_key(key)?),
+            ObjectKind::Send => self.sends.remove(id_key(key)?),
+            ObjectKind::Sidechain => self.sidechains.remove(id_key(key)?),
         }
     }
 
@@ -286,6 +325,8 @@ impl Draft {
             ObjectKind::Note => self.notes.complete(),
             ObjectKind::Device => self.devices.complete(),
             ObjectKind::Parameter => self.parameters.complete(),
+            ObjectKind::Send => self.sends.complete(),
+            ObjectKind::Sidechain => self.sidechains.complete(),
         }
     }
 
@@ -294,6 +335,16 @@ impl Draft {
             && let Some(parameter) = self.parameters.get_mut(&id)
         {
             return parameter.set(property, value);
+        }
+        if let ObjectKey::Id(id) = id
+            && let Some(send) = self.sends.get_mut(&id)
+        {
+            return send.set(property, value);
+        }
+        if let ObjectKey::Id(id) = id
+            && let Some(sidechain) = self.sidechains.get_mut(&id)
+        {
+            return sidechain.set(property, value);
         }
         if let ObjectKey::Id(id) = id
             && let Some(note) = self.notes.get_mut(&id)
@@ -336,6 +387,13 @@ impl Draft {
                     .get_mut(&id)
                     .ok_or(ModelError::InvalidChange)?
                     .parameters = ids.clone();
+                Ok(())
+            }
+            (ObjectKey::Id(id), Property::SidechainOrder, Value::Ids(ids)) => {
+                self.devices
+                    .get_mut(&id)
+                    .ok_or(ModelError::InvalidChange)?
+                    .sidechains = ids.clone();
                 Ok(())
             }
             (ObjectKey::Id(_id), Property::Lane, Value::Text(_)) => Ok(()),
@@ -386,6 +444,19 @@ impl Draft {
                     Ok(clip.finish(id))
                 },
             )?;
+            let sends = self.sends.resolve(
+                Ownership::TRACK_SENDS,
+                *track_id,
+                &track.send_order,
+                &mut seen,
+                |id, send, _| {
+                    if !self.tracks.contains_key(&send.target) {
+                        return Err(ModelError::InvalidChange);
+                    }
+                    send.finish(id)
+                },
+            )?;
+            let sidechains = &mut self.sidechains;
             let parameters = &mut self.parameters;
             let devices = self.devices.resolve(
                 Ownership::TRACK_DEVICES,
@@ -395,6 +466,18 @@ impl Draft {
                 |id, device, seen| {
                     #[cfg(test)]
                     crate::model_scale_tests::apply_device_owner_visit();
+                    let sidechains = sidechains.resolve(
+                        Ownership::DEVICE_SIDECHAINS,
+                        id,
+                        &device.sidechains,
+                        seen,
+                        |id, sidechain, _| {
+                            if !self.tracks.contains_key(&sidechain.source) {
+                                return Err(ModelError::InvalidChange);
+                            }
+                            sidechain.finish(id)
+                        },
+                    )?;
                     let parameters = parameters.resolve(
                         Ownership::DEVICE_PARAMETERS,
                         id,
@@ -402,10 +485,10 @@ impl Draft {
                         seen,
                         |id, parameter, _| parameter.finish(id),
                     )?;
-                    device.finish(id, parameters)
+                    device.finish(id, sidechains, parameters)
                 },
             )?;
-            tracks.push(Arc::new(track.finish(*track_id, clips, devices)));
+            tracks.push(Arc::new(track.finish(*track_id, clips, devices, sends)));
         }
         if !ObjectKind::ALL.iter().all(|kind| self.complete(*kind)) {
             return Err(ModelError::InvalidChange);

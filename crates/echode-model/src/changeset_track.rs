@@ -2,7 +2,7 @@
 
 use super::{
     Change, Device, Field, Id, ModelError, ObjectKey, ObjectKind, Placement, Property, Track,
-    Value, field_ids, field_optional_id, field_text, update,
+    Value, field_ids, field_optional_id, field_optional_ids, field_text, update,
 };
 use crate::track_fields::track_fields;
 
@@ -14,6 +14,7 @@ macro_rules! define_track_changeset {
             $($field: $type,)+
             pub clip_order: Vec<Id>,
             pub device_order: Vec<Id>,
+            pub send_order: Vec<Id>,
         }
 
         pub(super) fn diff_track_fields(before: &Track, after: &Track, updates: &mut Vec<Change>) {
@@ -26,6 +27,7 @@ macro_rules! define_track_changeset {
             for (property, before_ids, after_ids) in [
                 (Property::ClipOrder, clip_order(before), clip_order(after)),
                 (Property::DeviceOrder, device_order(before), device_order(after)),
+                (Property::SendOrder, send_order(before), send_order(after)),
             ] {
                 if before_ids != after_ids {
                     updates.push(update(ObjectKey::Id(after.id), property,
@@ -39,6 +41,7 @@ macro_rules! define_track_changeset {
                 $(Field { property: Property::$property, value: Value::$value(track.$field.to_owned()) },)+
                 Field { property: Property::ClipOrder, value: Value::Ids(clip_order(track)) },
                 Field { property: Property::DeviceOrder, value: Value::Ids(device_order(track)) },
+                Field { property: Property::SendOrder, value: Value::Ids(send_order(track)) },
             ];
             let id = ObjectKey::Id(track.id);
             if create {
@@ -54,6 +57,7 @@ macro_rules! define_track_changeset {
                     $($field: track.$field.to_owned(),)+
                     clip_order: clip_order(track),
                     device_order: device_order(track),
+                    send_order: send_order(track),
                 }
             }
 
@@ -62,6 +66,7 @@ macro_rules! define_track_changeset {
                     $($field: $read(fields, Property::$property)?,)+
                     clip_order: field_ids(fields, Property::ClipOrder)?,
                     device_order: field_ids(fields, Property::DeviceOrder)?,
+                    send_order: field_optional_ids(fields, Property::SendOrder)?,
                 })
             }
 
@@ -79,14 +84,24 @@ macro_rules! define_track_changeset {
                         self.device_order = ids.clone();
                         Ok(())
                     }
+                    (Property::SendOrder, Value::Ids(ids)) => {
+                        self.send_order = ids.clone();
+                        Ok(())
+                    }
                     // Preserve the legacy no-op accepted by Draft for all object ids.
                     (Property::Lane, Value::Text(_)) => Ok(()),
                     _ => Err(ModelError::InvalidChange),
                 }
             }
 
-            pub fn finish(&self, id: Id, clips: Vec<Placement>, devices: Vec<Device>) -> Track {
-                Track { id, $($field: self.$field.to_owned(),)+ clips: clips.into(), devices }
+            pub fn finish(
+                &self,
+                id: Id,
+                clips: Vec<Placement>,
+                devices: Vec<Device>,
+                sends: Vec<crate::routing::SendRoute>,
+            ) -> Track {
+                Track { id, $($field: self.$field.to_owned(),)+ clips: clips.into(), devices, sends }
             }
         }
     };
@@ -100,4 +115,8 @@ fn clip_order(track: &Track) -> Vec<Id> {
 
 fn device_order(track: &Track) -> Vec<Id> {
     track.devices.iter().map(|device| device.id).collect()
+}
+
+fn send_order(track: &Track) -> Vec<Id> {
+    track.sends.iter().map(|send| send.id).collect()
 }

@@ -24,6 +24,7 @@ fn track(id: u128, parent: Option<u128>, clips: Vec<Placement>) -> Track {
         parent: parent.map(Id::from_raw),
         order: crate::model::sibling_order(id as u32),
         devices: vec![crate::device::test_mixer(id)],
+        sends: Vec::new(),
         clips: clips.into(),
     }
 }

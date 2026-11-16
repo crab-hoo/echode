@@ -43,6 +43,10 @@ fn fields(track: &Track) -> Vec<Field> {
             Property::DeviceOrder,
             Value::Ids(track.devices.iter().map(|device| device.id).collect()),
         ),
+        field(
+            Property::SendOrder,
+            Value::Ids(track.sends.iter().map(|send| send.id).collect()),
+        ),
     ]
 }
 
@@ -267,9 +271,14 @@ fn track_changesets_reject_missing_fields_wrong_types_and_unknown_targets() {
                 }
                 change
             }));
+            let expected = if !wrong_type && field.property == Property::SendOrder {
+                Ok(base.clone())
+            } else {
+                Err(ModelError::InvalidChange)
+            };
             assert_eq!(
                 empty.apply_changeset(&changed),
-                Err(ModelError::InvalidChange),
+                expected,
                 "track creation {:?}, wrong_type={wrong_type}",
                 field.property
             );

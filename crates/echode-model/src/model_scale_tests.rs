@@ -494,6 +494,7 @@ fn nested_tracks(count: usize) -> Vec<Track> {
                     .map(|parent| Id::from_raw(parent as u128 + 1)),
                 order: crate::initial_order(),
                 devices: vec![crate::test_mixer(id)],
+                sends: Vec::new(),
                 clips: Default::default(),
             }
         })
@@ -576,6 +577,7 @@ fn reparent_fixture(depth: usize) -> (Project, Id, Id) {
             parent,
             order: crate::initial_order(),
             devices: vec![crate::test_mixer(id.raw())],
+            sends: Vec::new(),
             clips: Default::default(),
         })
         .collect();

@@ -32,6 +32,7 @@ fn merge_project(count: usize, owner_first: bool) -> Project {
         order: crate::initial_order(),
         clips: Default::default(),
         devices: vec![crate::test_mixer(id)],
+        sends: Vec::new(),
     };
     let mut owner = track(OWNER, "auto owner");
     for index in 0..count {

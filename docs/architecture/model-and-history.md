@@ -14,7 +14,7 @@ Phase 0 の履歴の別モデル・形式・Git 保存は、`echode-history` の
 
 - **Project**: グローバルマーカー、リージョン、コードトラック、トラックの木、マスター、設定
 - **Track**: 種別を持たない。MIDI、オーディオ、オートメーションのどのクリップも置ける。
-  デバイスチェイン、静的チャンネル、ルーティング、子トラック（フォルダ）を持つ
+  デバイスチェイン、静的チャンネル、センド（`SendRoute`）、子トラック（フォルダ）を持つ（[ADR 0391](../decisions/0391-model-routes-and-pdc-projection.md)）
 - **Content（中身）**: ノート列、オーディオの参照、テイクの ID。内容時刻 0 は作成時に固定し、配置は中身の ID を持つ
   （[ADR 0022](../decisions/0022-clip-content-and-placement.md)）
 - **Placement（配置）**: トラック上の窓。開始、長さ、内容オフセット、自動か固定か、線形ゲイン、入りと出のフェード。
@@ -25,8 +25,8 @@ Phase 0 の履歴の別モデル・形式・Git 保存は、`echode-history` の
   表情の曲線（Pitch、Timbre、Pressure）は中身の別配列にノート ID で置く
   （[ADR 0027](../decisions/0027-note-expression.md)）
 - **Device**: プラグイン、内蔵デバイス、コンテナ、モジュレーター、レシーバー。それぞれパラメータを持つ。
-  Phase 1 のトラックは CLAP デバイスを挿入順に並べ、末尾をミキサーにする
-  （[ADR 0048](../decisions/0048-clap-device.md)）。
+  トラックは CLAP デバイスを挿入順に並べ、末尾をミキサーにする。CLAP デバイスはサイドチェイン（`SidechainRoute`）を持てる
+  （[ADR 0048](../decisions/0048-clap-device.md)、[ADR 0391](../decisions/0391-model-routes-and-pdc-projection.md)）。
   再生はデバイスごとにヘルパーへ通し、内蔵シンセの前で処理する（[ADR 0049](../decisions/0049-hosted-playback.md)）
 - **Parameter**: ベース値（固定値かオートメーション）と、変調の割り当て
 - **Marker**: テンポ（瞬時の変化か直線的な変化）、拍子、キー（主音と旋法）、汎用のマーカー
@@ -351,13 +351,12 @@ MySong.echode/
   （[ADR 0074](../decisions/0074-package-entry-io.md)）
 - キー順序を固定し、時間は整数、1 ノート 1 行で出力する。スキーマは 1 段ずつマイグレーションして読む
   （[ADR 0028](../decisions/0028-package-schema.md)）
-- 現行スキーマは 6。デバイスの `bypassed`・`offline` と、一覧の最上部に固定する CLAP パラメーター ID の `pinned` を保存する
-  （[ADR 0131](../decisions/0131-device-view-and-responsive-parameters.md)）。
-  3 以前はバイパス解除、4 以前はオンライン、5 以前はピン留めなしとして段階変換する。
-  旧リーダーが新しい音声状態を無視しないよう版を進める
-  （[ADR 0120](../decisions/0120-device-bypass.md)、[ADR 0125](../decisions/0125-device-offline.md)）。
-- 配置ゲインとミキサーパラメーターの浮動小数点は、読み戻して元の値を保つ十進表記にする。
-  旧表記が正確な時はそのバイトを保ち、小さい正の値を 0 に丸めない。0 の正規化とスキーマ 6 は維持する
+- 現行スキーマは 7。トラックの `sends` と CLAP デバイスの `sidechains` を保存し、6 以前は空配列として段階変換する
+  （[ADR 0391](../decisions/0391-model-routes-and-pdc-projection.md)）。
+  デバイスの `bypassed`・`offline` と `pinned` は 3〜5 以前から段階変換し、旧リーダーが新しい音声状態を無視しないよう版を進める
+  （[ADR 0120](../decisions/0120-device-bypass.md)、[ADR 0125](../decisions/0125-device-offline.md)、[ADR 0131](../decisions/0131-device-view-and-responsive-parameters.md)）。
+- 配置ゲイン・ミキサーパラメーター・経路ゲインの浮動小数点は、読み戻して元の値を保つ十進表記にする。
+  旧表記が正確な時はそのバイトを保ち、小さい正の値を 0 に丸めない
   （[ADR 0196](../decisions/0196-lossless-package-floats.md)）。
 - スキーマ移行と読込みの検証は `document_parse.rs` を作業ファイルと Git の版で共有する。
   `PackageError::Validation(PackageValidationError)` は JSON・版・移行の段階・意味上の拒否を分け、JSON とモデルの元の原因を保持する。

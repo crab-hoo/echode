@@ -197,6 +197,27 @@ impl Latencies {
             })
             .collect()
     }
+
+    #[cfg(test)]
+    pub(crate) fn from_tracks(
+        entries: impl IntoIterator<Item = (u32, Vec<DeviceLatency>)>,
+    ) -> Self {
+        let mut devices = Vec::new();
+        let mut routed = Vec::new();
+        let mut tracks = Vec::new();
+        for (key, stages) in entries {
+            let from = devices.len();
+            routed.extend(std::iter::repeat_n(None, stages.len()));
+            devices.extend(stages);
+            tracks.push((key, from, devices.len()));
+        }
+        tracks.sort_unstable_by_key(|entry| entry.0);
+        Self {
+            devices,
+            routed,
+            tracks,
+        }
+    }
 }
 
 struct TrackHost {

@@ -79,6 +79,11 @@ impl Project {
             content_bounds.insert(content.id, (content, bounds));
         }
         for track in self.tracks() {
+            for send in &track.sends {
+                if !ids.insert(send.id) {
+                    return Err(InvariantError::DuplicateId { id: send.id });
+                }
+            }
             if !ids.insert(track.id) {
                 return Err(InvariantError::DuplicateId { id: track.id });
             }
@@ -119,6 +124,11 @@ impl Project {
             for device in &track.devices {
                 if !ids.insert(device.id) {
                     return Err(InvariantError::DuplicateId { id: device.id });
+                }
+                for sidechain in &device.sidechains {
+                    if !ids.insert(sidechain.id) {
+                        return Err(InvariantError::DuplicateId { id: sidechain.id });
+                    }
                 }
             }
             if mixer.parameters.len() != crate::device::ParamKey::ORDER.len() {
@@ -250,6 +260,7 @@ impl Project {
             }
             crate::hierarchy::ForestError::Cycle { track } => InvariantError::TrackCycle { track },
         })?;
+        crate::routing::check_route_invariants(self.tracks())?;
         if let Some(error) = arrange_fault(self.tracks()) {
             return Err(InvariantError::Order(Box::new(error)));
         }

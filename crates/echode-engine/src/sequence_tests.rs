@@ -38,6 +38,7 @@ fn project() -> Project {
             parent: None,
             order: echode_model::initial_order(),
             devices: vec![echode_model::test_mixer(1)],
+            sends: Vec::new(),
             clips: vec![Placement {
                 id: Id::from_raw(2),
                 content: Id::from_raw(4),
@@ -126,6 +127,7 @@ fn two_tracks() -> Project {
                 parent: None,
                 order: low_order,
                 devices: vec![echode_model::test_mixer(10)],
+                sends: Vec::new(),
                 clips: vec![Placement {
                     id: Id::from_raw(11),
                     content: Id::from_raw(12),
@@ -146,6 +148,7 @@ fn two_tracks() -> Project {
                 parent: None,
                 order: high_order,
                 devices: vec![echode_model::test_mixer(20)],
+                sends: Vec::new(),
                 clips: vec![Placement {
                     id: Id::from_raw(21),
                     content: Id::from_raw(22),
@@ -314,6 +317,7 @@ fn a_hundred_thousand_notes_schedule_one_block_under_the_engine_budget() {
             parent: None,
             order: echode_model::initial_order(),
             devices: vec![echode_model::test_mixer(1)],
+            sends: Vec::new(),
             clips: vec![Placement {
                 id: Id::from_raw(2),
                 content: Id::from_raw(3),
@@ -398,6 +402,7 @@ fn same_start_tracks(count: usize) -> Project {
             parent: None,
             order: orders[index].clone(),
             devices: vec![echode_model::test_mixer(3_000 + index as u128)],
+            sends: Vec::new(),
             clips: vec![Placement {
                 id: Id::from_raw(4_000 + index as u128),
                 content: Id::from_raw(1_000 + index as u128),

@@ -137,6 +137,7 @@ fn check_roundtrip(before: Settings, after: Settings) {
         expected_fields.push(field(Property::PluginState, Value::Text(state)));
     }
     expected_fields.push(field(Property::ParamOrder, Value::Ids(Vec::new())));
+    expected_fields.push(field(Property::SidechainOrder, Value::Ids(Vec::new())));
     assert_eq!(
         creation(&created, id),
         expected_fields,
@@ -245,6 +246,7 @@ fn device_changesets_keep_legacy_creation_defaults_and_validate_fields() {
         Property::Bypassed,
         Property::Offline,
         Property::PinnedParameters,
+        Property::SidechainOrder,
     ] {
         let legacy = without(&fields, property);
         assert_eq!(
@@ -256,6 +258,7 @@ fn device_changesets_keep_legacy_creation_defaults_and_validate_fields() {
     let legacy = without(&fields, Property::Bypassed);
     let legacy = without(&legacy, Property::Offline);
     let legacy = without(&legacy, Property::PinnedParameters);
+    let legacy = without(&legacy, Property::SidechainOrder);
     assert_eq!(
         replay(&empty, &replace_creation(&created, id, legacy)),
         base
@@ -287,6 +290,7 @@ fn device_changesets_keep_legacy_creation_defaults_and_validate_fields() {
         Property::Plugin,
         Property::PluginState,
         Property::ParamOrder,
+        Property::SidechainOrder,
     ]
     .map(|property| (property, Value::Tick(echode_model::Tick::new(0))));
     for (property, value) in invalid.into_iter().chain(wrong_types) {

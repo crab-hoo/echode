@@ -100,7 +100,7 @@ impl Package {
                 .parent
                 .map_or_else(|| "null".to_owned(), |id| format!("\"{id}\""));
             let expected = format!(
-                "{{\n  \"schema\":6,\n  \"id\":\"{}\",\n  \"name\":{},\n  \"parent\":{},\n  \"order\":{},\n  \"devices\":[\n",
+                "{{\n  \"schema\":7,\n  \"id\":\"{}\",\n  \"name\":{},\n  \"parent\":{},\n  \"order\":{},\n  \"devices\":[\n",
                 track.id,
                 serde_json::to_string(&track.name).unwrap(),
                 parent,
@@ -156,6 +156,7 @@ fn track_metadata_decodes_shape_without_validating_a_project() {
         original.id,
         original.clips.to_vec(),
         original.devices.clone(),
+        original.sends.clone(),
     );
     assert_eq!(&restored, original);
     let mut value = package.json(package.target);
@@ -367,7 +368,7 @@ fn track_package_rejects_invalid_tree_keys_identity_and_children() {
 fn track_package_keeps_legacy_migrations_and_subtree_history_recovery() {
     let package = Package::new();
     let original = package.json(package.target);
-    for schema in 1..=6 {
+    for schema in 1..=7 {
         let mut value = original.clone();
         value["schema"] = json!(schema);
         for device in value["devices"].as_array_mut().unwrap() {
@@ -381,6 +382,12 @@ fn track_package_keeps_legacy_migrations_and_subtree_history_recovery() {
             if schema < 6 {
                 device.remove("pinned");
             }
+            if schema < 7 {
+                device.remove("sidechains");
+            }
+        }
+        if schema < 7 {
+            value.as_object_mut().unwrap().remove("sends");
         }
         std::fs::write(
             package.path(package.target),

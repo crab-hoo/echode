@@ -5,9 +5,12 @@
 //! descendant, a solo opens the track and every descendant. Each fader closes
 //! when its own path is silent, so moving a track between folders never lets
 //! a fader that a silent ancestor used to cover play at once.
+use std::collections::HashMap;
+
 use echode_model::{Id, Project};
 use echode_realtime::Plan;
 
+use crate::compensation::SendFlow;
 use crate::{PlaybackError, TrackFader};
 
 /// One track's gates.
@@ -20,10 +23,21 @@ pub(super) struct TrackGate {
     pub(super) own: bool,
 }
 
-/// Gates and the position of each track's parent, in plan order.
+/// A model sidechain resolved to track positions, matched to its hosted device
+/// stage when delay compensation runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct PreparedSidechain {
+    pub(super) from: usize,
+    pub(super) track: usize,
+    pub(super) device: u128,
+}
+
+/// Gates, folder parents, and model routes in plan order.
 pub(super) struct Routing {
     pub(super) gates: Vec<TrackGate>,
     pub(super) parents: Vec<Option<usize>>,
+    pub(super) sends: Vec<SendFlow>,
+    pub(super) sidechains: Vec<PreparedSidechain>,
 }
 
 struct Ancestor {
@@ -41,6 +55,7 @@ pub(super) fn track_routing(project: &Project, plan: &Plan) -> Result<Routing, P
     let any_solo = plan.tracks.iter().any(|track| track.solo != 0.0);
     let mut ancestors: Vec<Ancestor> = Vec::new();
     let mut parents = Vec::with_capacity(count);
+    let mut positions = HashMap::with_capacity(count);
     // (muted by itself or an ancestor, soloed by itself or an ancestor)
     let mut inherited = Vec::with_capacity(count);
     // The model's preorder puts each parent before its contiguous subtree.
@@ -58,6 +73,7 @@ pub(super) fn track_routing(project: &Project, plan: &Plan) -> Result<Routing, P
         let mute = parent.is_some_and(|parent| parent.mute) || planned.mute != 0.0;
         let solo = parent.is_some_and(|parent| parent.solo) || planned.solo != 0.0;
         parents.push(parent.map(|parent| parent.position));
+        positions.insert(track.id, position);
         inherited.push((mute, solo));
         ancestors.push(Ancestor {
             id: track.id,
@@ -104,5 +120,35 @@ pub(super) fn track_routing(project: &Project, plan: &Plan) -> Result<Routing, P
             }
         })
         .collect();
-    Ok(Routing { gates, parents })
+    let mut sends = Vec::new();
+    let mut sidechains = Vec::new();
+    for (position, track) in project.tracks().iter().enumerate() {
+        for send in &track.sends {
+            let &to = positions
+                .get(&send.target)
+                .ok_or(PlaybackError::InvalidFader)?;
+            sends.push(SendFlow { from: position, to });
+        }
+        for device in &track.devices {
+            if device.offline {
+                continue;
+            }
+            for sidechain in &device.sidechains {
+                let &from = positions
+                    .get(&sidechain.source)
+                    .ok_or(PlaybackError::InvalidFader)?;
+                sidechains.push(PreparedSidechain {
+                    from,
+                    track: position,
+                    device: device.id.raw(),
+                });
+            }
+        }
+    }
+    Ok(Routing {
+        gates,
+        parents,
+        sends,
+        sidechains,
+    })
 }

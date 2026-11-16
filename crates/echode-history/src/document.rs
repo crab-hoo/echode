@@ -624,6 +624,8 @@ fn render_track(track: &Track) -> String {
     }
     out.push_str("  ],\n  \"clips\":[\n");
     push_json_lines(&mut out, "    ", track.clips.iter().map(to_json));
+    out.push_str("  ],\n  \"sends\":[\n");
+    push_json_lines(&mut out, "    ", track.sends.iter().map(to_json));
     out.push_str("  ]\n}\n");
     out
 }

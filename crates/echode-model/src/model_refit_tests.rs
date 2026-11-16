@@ -23,6 +23,7 @@ fn linked_project(count: usize, auto_first: bool, has_auto: bool) -> Project {
         order: crate::initial_order(),
         clips: Default::default(),
         devices: vec![crate::test_mixer(id)],
+        sends: Vec::new(),
     };
     let mut linked = track(1000);
     for index in 0..count {

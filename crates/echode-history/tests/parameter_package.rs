@@ -79,7 +79,7 @@ fn parameter_package_keeps_schema_six_field_order_and_canonical_bytes() {
         expected.join(",\n"),
         "parameter package field order or spelling changed"
     );
-    assert_eq!(package.track_json()["schema"], 6);
+    assert_eq!(package.track_json()["schema"], 7);
     let reopened = read_package(&package.root).unwrap();
     assert_eq!(reopened, project);
     write_package(&package.root, &reopened).unwrap();
@@ -150,7 +150,7 @@ fn parameter_package_keeps_invariant_validation_after_decoding() {
 fn parameter_package_keeps_legacy_migrations_and_commit_recovery() {
     let package = Package::new();
     let original = package.track_json();
-    for schema in 1..=6 {
+    for schema in 1..=7 {
         let mut track = original.clone();
         track["schema"] = json!(schema);
         let device = track["devices"][0].as_object_mut().unwrap();
@@ -165,6 +165,12 @@ fn parameter_package_keeps_legacy_migrations_and_commit_recovery() {
         }
         if schema < 6 {
             device.remove("pinned");
+        }
+        if schema < 7 {
+            device.remove("sidechains");
+        }
+        if schema < 7 {
+            track.as_object_mut().unwrap().remove("sends");
         }
         std::fs::write(&package.track, serde_json::to_vec(&track).unwrap()).unwrap();
         assert_eq!(

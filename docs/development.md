@@ -296,6 +296,12 @@ Phase 0 の履歴モデル（`echode-history/src/project.rs`・`format.rs`・`st
 所有の列を足す時は表に `Ownership` を加え、下書きの解決・差分の生成・`from_project` を合わせて変える。
 未列挙・所有者違い・重複・ID の衝突の反例は `echode-model/tests/ownership.rs` が表から生成する。
 新しい種類はフィクスチャにも足す（[ADR 0376](decisions/0376-typed-changeset-ownership.md)）。
+センドとサイドチェインは `routing.rs`・`route_fields.rs`・`changeset_route.rs` にあり、
+`TRACK_SENDS`（`Track::sends`）と `DEVICE_SIDECHAINS`（CLAP `Device::sidechains`）で所有する。
+パッケージのスキーマ 7 の段階変換（`add_route_fields`）は `document_parse.rs`、
+RPC / MCP の経路照会は `project.routing`（`echode://project/routing`）、
+PDC の `Routes` への投影は `playback_faders.rs::track_routing` と `playback.rs::compensate_plan` に置く
+（[ADR 0391](decisions/0391-model-routes-and-pdc-projection.md)）。
 
 ### JSON-RPC・MCP
 

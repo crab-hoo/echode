@@ -635,6 +635,7 @@ fn schema_1_project() -> Project {
             parent: None,
             order: initial_order(),
             devices: vec![Device::unity(MixerIds::from_base(0x10))],
+            sends: Vec::new(),
             clips: vec![Placement {
                 id: clip_id,
                 content: content_id,
@@ -703,8 +704,8 @@ fn a_schema_other_than_the_current_one_is_rejected() {
             _ => unreachable!(),
         };
         let original = std::fs::read_to_string(&path).unwrap();
-        for schema in ["7", "0", "2.0"] {
-            let text = original.replacen("\"schema\":6", &format!("\"schema\":{schema}"), 1);
+        for schema in ["8", "0", "2.0"] {
+            let text = original.replacen("\"schema\":7", &format!("\"schema\":{schema}"), 1);
             std::fs::write(&path, &text).unwrap();
             let error = read_package(&directory).unwrap_err().to_string();
             assert!(
@@ -712,7 +713,7 @@ fn a_schema_other_than_the_current_one_is_rejected() {
                 "{kind} {schema}: {error}"
             );
         }
-        let missing = original.replacen("\"schema\":6,", "", 1);
+        let missing = original.replacen("\"schema\":7,", "", 1);
         std::fs::write(&path, missing).unwrap();
         let error = read_package(&directory).unwrap_err().to_string();
         assert!(

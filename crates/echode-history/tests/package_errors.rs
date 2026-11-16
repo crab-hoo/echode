@@ -202,7 +202,7 @@ fn schema_refusals_keep_kind_number_and_legacy_text() {
                 format!("{kind} schema is not an integer"),
             ),
             (
-                json!({"schema": "6"}),
+                json!({"schema": "7"}),
                 Invalid::NonIntegerSchema(kind),
                 format!("{kind} schema is not an integer"),
             ),
@@ -219,7 +219,7 @@ fn schema_refusals_keep_kind_number_and_legacy_text() {
             assert_eq!(error.to_string(), text);
             fs::write(&path, &original).unwrap();
         }
-        for schema in [0, 7, u64::from(u32::MAX) + 1, u64::MAX] {
+        for schema in [0, 8, u64::from(u32::MAX) + 1, u64::MAX] {
             let error = fixture.reject_file(&path, &json!({"schema": schema}).to_string());
             assert!(
                 matches!(error, PackageError::Validation(Invalid::UnsupportedSchema {
@@ -266,7 +266,7 @@ fn legacy_migration_refusals_keep_the_failing_step_and_shape() {
     let fixture = Fixture::new();
     let (_, path) = &fixture.files()[1];
     let original = fs::read_to_string(path).unwrap();
-    for schema in 1..6 {
+    for schema in 1..7 {
         for (devices, expected) in [
             (json!(null), MigrationError::DevicesNotArray),
             (json!([false]), MigrationError::DeviceNotObject),

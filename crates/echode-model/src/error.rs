@@ -161,6 +161,23 @@ pub enum InvariantError {
     TrackCycle {
         track: Id,
     },
+    RouteGain {
+        route: Id,
+    },
+    MissingRouteTarget {
+        route: Id,
+        track: Id,
+    },
+    MissingRouteSource {
+        route: Id,
+        track: Id,
+    },
+    DuplicateRoute {
+        route: Id,
+    },
+    RouteCycle {
+        track: Id,
+    },
     Order(Box<ArrangeError>),
 }
 
@@ -249,6 +266,26 @@ impl fmt::Display for InvariantError {
                 write!(f, "track {track} names a missing parent {parent}")
             }
             Self::TrackCycle { track } => write!(f, "track {track} is its own ancestor"),
+            Self::RouteGain { route } => write!(
+                f,
+                "route {route} gain must be finite, at least zero, and at most {}",
+                crate::device::GAIN_MAX
+            ),
+            Self::MissingRouteTarget { route, track } => {
+                write!(f, "send {route} names a missing target track {track}")
+            }
+            Self::MissingRouteSource { route, track } => {
+                write!(f, "sidechain {route} names a missing source track {track}")
+            }
+            Self::DuplicateRoute { route } => {
+                write!(
+                    f,
+                    "route {route} duplicates an existing route on the same endpoints"
+                )
+            }
+            Self::RouteCycle { track } => {
+                write!(f, "track {track} lies on a signal-routing feedback cycle")
+            }
             Self::Order(error) => write!(f, "{error}"),
         }
     }

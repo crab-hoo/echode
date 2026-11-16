@@ -180,6 +180,11 @@ fn property_names_are_the_legacy_vocabulary_not_the_model_field_names() {
         (Property::Bypassed, "bypassed"),
         (Property::Offline, "offline"),
         (Property::PinnedParameters, "pinned_parameters"),
+        (Property::SendOrder, "send_order"),
+        (Property::SidechainOrder, "sidechain_order"),
+        (Property::Target, "target"),
+        (Property::Source, "source"),
+        (Property::Tap, "tap"),
     ];
     for (property, text) in cases {
         assert_eq!(property.as_str(), text);

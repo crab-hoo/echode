@@ -24,14 +24,21 @@ fn fixture() -> Project {
         Tick::quarters(16).unwrap(),
         Tempo::quarters_per_minute(90).unwrap(),
     );
-    for name in ["first", "second"] {
+    let mut tracks = Vec::new();
+    let mut effects = Vec::new();
+    for name in ["first", "second", "third"] {
         let (next, track) = project.add_track(name);
         let (next, _) = next.insert_note(track, note(0)).unwrap();
         let (next, _) = next.insert_note(track, note(1)).unwrap();
-        project = next
-            .add_clap_device(track, Id::generate(), "org.example.fx")
-            .unwrap();
+        let fx = Id::generate();
+        project = next.add_clap_device(track, fx, "org.example.fx").unwrap();
+        tracks.push(track);
+        effects.push(fx);
     }
+    let (project, _) = project.add_send(tracks[0], tracks[1], 1.0).unwrap();
+    let (project, _) = project.add_send(tracks[1], tracks[2], 0.5).unwrap();
+    let (project, _) = project.add_sidechain(tracks[0], effects[1], 1.0).unwrap();
+    let (project, _) = project.add_sidechain(tracks[1], effects[2], 0.75).unwrap();
     project.check_invariants().unwrap();
     project
 }

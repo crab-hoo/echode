@@ -175,6 +175,30 @@ enum Step {
         track: usize,
         start: i64,
     },
+    AddSend {
+        source: usize,
+        target: usize,
+        gain: Option<f32>,
+    },
+    SetSendGain {
+        send: usize,
+        gain: f32,
+    },
+    RemoveSend {
+        send: usize,
+    },
+    AddSidechain {
+        source: usize,
+        device: usize,
+        gain: Option<f32>,
+    },
+    SetSidechainGain {
+        sidechain: usize,
+        gain: f32,
+    },
+    RemoveSidechain {
+        sidechain: usize,
+    },
     Undo,
     Redo,
 }
@@ -287,6 +311,24 @@ fn step() -> impl Strategy<Value = Step> {
         1 => Just(Step::LinkNearEnd),
         1 => Just(Step::StretchSharedNote),
         2 => (any::<usize>(), 0i64..16).prop_map(|(track, start)| Step::PlaceAudio { track, start }),
+        2 => (
+            any::<usize>(),
+            any::<usize>(),
+            proptest::option::of(prop_oneof![Just(0.0f32), Just(0.5), Just(1.0), Just(4.0), Just(-0.5)]),
+        )
+            .prop_map(|(source, target, gain)| Step::AddSend { source, target, gain }),
+        1 => (any::<usize>(), prop_oneof![Just(0.0f32), Just(-0.0), Just(0.25), Just(1.0), Just(4.0), Just(5.0)])
+            .prop_map(|(send, gain)| Step::SetSendGain { send, gain }),
+        1 => any::<usize>().prop_map(|send| Step::RemoveSend { send }),
+        2 => (
+            any::<usize>(),
+            any::<usize>(),
+            proptest::option::of(prop_oneof![Just(0.0f32), Just(0.75), Just(1.0), Just(4.0), Just(-1.0)]),
+        )
+            .prop_map(|(source, device, gain)| Step::AddSidechain { source, device, gain }),
+        1 => (any::<usize>(), prop_oneof![Just(0.0f32), Just(-0.0), Just(0.5), Just(1.0), Just(4.0), Just(5.0)])
+            .prop_map(|(sidechain, gain)| Step::SetSidechainGain { sidechain, gain }),
+        1 => any::<usize>().prop_map(|sidechain| Step::RemoveSidechain { sidechain }),
         2 => Just(Step::Undo),
         1 => Just(Step::Redo),
     ]
@@ -734,6 +776,75 @@ fn command(project: &Project, step: &Step) -> Option<Command> {
             channels: 1,
             frames: 48_000,
         },
+        Step::AddSend {
+            source,
+            target,
+            gain,
+        } => Command::AddSend {
+            source: track(*source)?,
+            target: track(*target)?,
+            gain: *gain,
+        },
+        Step::SetSendGain { send, gain } => {
+            let sends: Vec<Id> = project
+                .tracks()
+                .iter()
+                .flat_map(|track| track.sends.iter().map(|route| route.id))
+                .collect();
+            Command::SetSendGain {
+                send: pick(&sends, *send)?,
+                gain: *gain,
+            }
+        }
+        Step::RemoveSend { send } => {
+            let sends: Vec<Id> = project
+                .tracks()
+                .iter()
+                .flat_map(|track| track.sends.iter().map(|route| route.id))
+                .collect();
+            Command::RemoveSend {
+                send: pick(&sends, *send)?,
+            }
+        }
+        Step::AddSidechain {
+            source,
+            device,
+            gain,
+        } => {
+            let devices: Vec<Id> = project
+                .tracks()
+                .iter()
+                .flat_map(|track| track.devices.iter().map(|item| item.id))
+                .collect();
+            Command::AddSidechain {
+                source: track(*source)?,
+                device: pick(&devices, *device)?,
+                gain: *gain,
+            }
+        }
+        Step::SetSidechainGain { sidechain, gain } => {
+            let sidechains: Vec<Id> = project
+                .tracks()
+                .iter()
+                .flat_map(|track| track.devices.iter())
+                .flat_map(|device| device.sidechains.iter().map(|route| route.id))
+                .collect();
+            Command::SetSidechainGain {
+                sidechain: pick(&sidechains, *sidechain)?,
+                gain: *gain,
+            }
+        }
+        Step::RemoveSidechain { sidechain } => {
+            let sidechains: Vec<Id> = project
+                .tracks()
+                .iter()
+                .flat_map(|track| track.devices.iter())
+                .flat_map(|device| device.sidechains.iter().map(|route| route.id))
+                .collect();
+            Command::RemoveSidechain {
+                sidechain: pick(&sidechains, *sidechain)?,
+            }
+        }
         Step::Undo | Step::Redo => return None,
     })
 }

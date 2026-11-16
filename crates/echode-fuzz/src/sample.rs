@@ -160,6 +160,22 @@ fn write(package: &Path) -> (Project, Vec<JournalLine>) {
             state: Some(state),
         },
     );
+    perform(
+        &mut session,
+        Command::AddSend {
+            source: lead,
+            target: folder,
+            gain: None,
+        },
+    );
+    perform(
+        &mut session,
+        Command::AddSidechain {
+            device,
+            source: drums,
+            gain: None,
+        },
+    );
     if let Some(parameter) = first_parameter(session.project(), drums) {
         perform(
             &mut session,
@@ -198,6 +214,8 @@ fn write(package: &Path) -> (Project, Vec<JournalLine>) {
             bypassed: true,
         },
     );
+    let send = track_of(session.project(), lead).sends[0].id;
+    perform(&mut session, Command::SetSendGain { send, gain: 0.75 });
     let mut lines: Vec<JournalLine> = session.journal()[saved..]
         .iter()
         .enumerate()

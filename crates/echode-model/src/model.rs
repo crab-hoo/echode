@@ -52,6 +52,8 @@ pub enum ModelError {
     InvalidParameter,
     InvalidDevice,
     InvalidAudio,
+    MissingRoute,
+    DuplicateRoute,
     /// [`Project::check_invariants`] failed, retaining the broken rule.
     Invariant(InvariantError),
     /// Track keys cannot produce the required arrange order.
@@ -82,6 +84,8 @@ impl fmt::Display for ModelError {
             Self::InvalidParameter => "parameter value is outside its range",
             Self::InvalidDevice => "plugin id is unusable or the device cannot be removed",
             Self::InvalidAudio => "audio reference is not a mono or stereo file",
+            Self::MissingRoute => "route is not in the project",
+            Self::DuplicateRoute => "a route already connects those endpoints",
         };
         formatter.write_str(message)
     }
@@ -404,6 +408,8 @@ macro_rules! define_track {
             pub clips: crate::Placements,
             /// Devices in processing order, ending with one mixer.
             pub devices: Vec<Device>,
+            /// Post-FX, pre-fader sends leaving this track.
+            pub sends: Vec<crate::routing::SendRoute>,
         }
 
         /// Track scalars without identity or children, for package assembly.
@@ -425,8 +431,14 @@ macro_rules! define_track {
         impl TrackMetadata {
             /// Joins decoded scalars to their separately resolved identity and children.
             /// This does not validate a project or repair its order.
-            pub fn into_track(self, id: Id, clips: Vec<Placement>, devices: Vec<Device>) -> Track {
-                Track { id, $($field: self.$field,)+ clips: clips.into(), devices }
+            pub fn into_track(
+                self,
+                id: Id,
+                clips: Vec<Placement>,
+                devices: Vec<Device>,
+                sends: Vec<crate::routing::SendRoute>,
+            ) -> Track {
+                Track { id, $($field: self.$field,)+ clips: clips.into(), devices, sends }
             }
         }
     };
@@ -566,6 +578,7 @@ impl Project {
             order,
             clips: crate::Placements::new(),
             devices: vec![Device::unity(mixer)],
+            sends: Vec::new(),
         }));
         Ok(Self {
             meter: self.meter,
@@ -602,6 +615,7 @@ impl Project {
             order,
             clips: crate::Placements::new(),
             devices: vec![Device::unity(mixer)],
+            sends: Vec::new(),
         }));
         Ok(Self {
             meter: self.meter,
@@ -786,6 +800,14 @@ impl Project {
         let target = self.track_index(target)?;
         let mut device = self.tracks[owner].devices[index].clone();
         device.id = copy;
+        let mut created_ids = HashSet::from([copy]);
+        for sidechain in &mut device.sidechains {
+            let next_id = crate::duplicate::copy_device_sidechain_id(copy, sidechain.id);
+            if !created_ids.insert(next_id) || self.id_in_use(next_id) {
+                return Err(ModelError::DuplicateId);
+            }
+            sidechain.id = next_id;
+        }
         let mut track = (*self.tracks[target]).clone();
         let at = match before {
             Some(anchor) => track
@@ -800,7 +822,9 @@ impl Project {
                 .ok_or(ModelError::InvalidDevice)?,
         };
         track.devices.insert(at, device);
-        Ok(self.write_track(target, track))
+        let next = self.write_track(target, track);
+        crate::routing::check_routing_acyclic(&next.tracks).map_err(|_| ModelError::Cycle)?;
+        Ok(next)
     }
 
     fn clap_location(&self, device_id: Id) -> Result<(usize, usize), ModelError> {
@@ -875,6 +899,7 @@ impl Project {
             order,
             clips: crate::Placements::new(),
             devices: vec![Device::unity(mixer)],
+            sends: Vec::new(),
         }));
         Ok(Self {
             meter: self.meter,
@@ -906,6 +931,7 @@ impl Project {
         // Validate the changed forest once instead of searching the whole track
         // list at every ancestor of the destination folder.
         validate_forest(&tracks)?;
+        crate::routing::check_routing_acyclic(&tracks).map_err(|_| ModelError::Cycle)?;
         Ok(Self {
             meter: self.meter,
             tempo: self.tempo.clone(),
@@ -1378,7 +1404,7 @@ impl Project {
         !self.any_id_matches(|candidate| candidates.binary_search(&candidate).is_ok())
     }
 
-    fn id_in_use(&self, id: Id) -> bool {
+    pub(crate) fn id_in_use(&self, id: Id) -> bool {
         self.any_id_matches(|candidate| candidate == id)
     }
 
@@ -1396,8 +1422,13 @@ impl Project {
         }) || self.tracks.iter().any(|track| {
             matches(track.id)
                 || track.clips.iter().any(|clip| matches(clip.id))
+                || track.sends.iter().any(|send| matches(send.id))
                 || track.devices.iter().any(|device| {
                     matches(device.id)
+                        || device
+                            .sidechains
+                            .iter()
+                            .any(|sidechain| matches(sidechain.id))
                         || device
                             .parameters
                             .iter()
@@ -1520,9 +1551,11 @@ impl Project {
                 return Err(ModelError::Overlap);
             }
             crate::device::validate_devices(&track.devices, &mut seen)?;
+            crate::routing::validate_sends(&track.sends, &mut seen)?;
             assembled.push(Arc::new(track));
         }
         validate_forest(&assembled)?;
+        crate::routing::validate_routes(&assembled)?;
         if let Some(error) = arrange_fault(&assembled) {
             return Err(ModelError::Order(Box::new(error)));
         }
@@ -1543,7 +1576,7 @@ impl Project {
         Ok(project)
     }
 
-    fn write_track(&self, index: usize, track: Track) -> Self {
+    pub(crate) fn write_track(&self, index: usize, track: Track) -> Self {
         let mut tracks = self.tracks.clone();
         tracks[index] = Arc::new(track);
         Self {

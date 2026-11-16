@@ -28,5 +28,11 @@
   {"type":"device.remove","device":"00000000-0000-0000-0000-000000000004"},
   {"type":"history.restore","revision":"0123456789abcdef"},
   {"type":"audio.place","track":"00000000-0000-0000-0000-000000000001","start":25,"hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","sample_rate":48000,"channels":2,"frames":18446744073709551615},
-  {"type":"audio.import","track":"00000000-0000-0000-0000-000000000001","start":26,"path":"/tmp/音声 \"one\".wav"}
+  {"type":"audio.import","track":"00000000-0000-0000-0000-000000000001","start":26,"path":"/tmp/音声 \"one\".wav"},
+  {"type":"send.add","source":"00000000-0000-0000-0000-000000000001","target":"00000000-0000-0000-0000-000000000005","gain":null},
+  {"type":"send.set_gain","send":"00000000-0000-0000-0000-000000000006","gain":0.5},
+  {"type":"send.remove","send":"00000000-0000-0000-0000-000000000006"},
+  {"type":"sidechain.add","source":"00000000-0000-0000-0000-000000000001","device":"00000000-0000-0000-0000-000000000004","gain":0.75},
+  {"type":"sidechain.set_gain","sidechain":"00000000-0000-0000-0000-000000000007","gain":0.25},
+  {"type":"sidechain.remove","sidechain":"00000000-0000-0000-0000-000000000007"}
 ]

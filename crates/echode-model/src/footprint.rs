@@ -176,12 +176,14 @@ fn track_bytes(track: &Track) -> usize {
         + track.clips.runs().len() * size_of::<usize>()
         + track.devices.capacity() * size_of::<Device>()
         + track.devices.iter().map(device_heap).sum::<usize>()
+        + track.sends.capacity() * size_of::<crate::SendRoute>()
 }
 
 fn device_heap(device: &Device) -> usize {
     device.plugin.as_ref().map_or(0, String::capacity)
         + device.state.as_ref().map_or(0, String::capacity)
         + device.pinned.capacity() * size_of::<u32>()
+        + device.sidechains.capacity() * size_of::<crate::SidechainRoute>()
         + device.parameters.capacity() * size_of::<Parameter>()
 }
 
