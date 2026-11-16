@@ -97,10 +97,24 @@ fn main_reply_mismatches_report_expected_and_actual_payloads() {
     }
 }
 
+/// ADR 0389: listing presets is `[main-thread]` in CLAP. The main loop serves
+/// it with the processor running instead of waiting for a restart.
+#[test]
+fn audio_config_lists_are_served_while_active() {
+    let mailbox = MainRequests::default();
+    let call = mailbox.begin(MainRequest::AudioConfigs).unwrap();
+    let (running, request) = mailbox.take(false).unwrap();
+    assert!(!request.requires_inactive());
+    assert!(matches!(request, MainRequest::AudioConfigs));
+    assert!(Arc::ptr_eq(&running, &call));
+    mailbox.complete(&running, Ok(MainReply::Done));
+    assert!(matches!(call.take_reply(), Some(Ok(MainReply::Done))));
+    assert!(!mailbox.is_busy());
+}
+
 #[test]
 fn inactive_requests_remain_owned_until_the_processor_is_deactivated() {
     for request in [
-        MainRequest::AudioConfigs,
         MainRequest::SelectAudioConfig(206),
         MainRequest::CanApplyAudioPorts(vec![]),
         MainRequest::ApplyAudioPorts(vec![]),

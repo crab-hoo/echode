@@ -962,6 +962,7 @@ class PolicyTests(unittest.TestCase):
             ("plugin-audio-port-mapping", "isolation", "crates/echode-plugin-host/src/threads.rs"),
             ("plugin-audio-config-selection", "isolation", "crates/echode-plugin-host/src/audio_configs.rs"),
             ("plugin-audio-config-routing", "hosted_playback", "crates/echode-engine/src/plugins.rs"),
+            ("plugin-audio-config-live-list", "hosted_playback", "crates/echode-plugin-host/src/main_requests.rs"),
             ("plugin-configurable-audio-ports", "isolation", "crates/echode-plugin-host/src/audio_configs.rs"),
             ("plugin-configurable-port-routing", "hosted_playback", "crates/echode-engine/src/plugins.rs"),
         ):
@@ -2855,6 +2856,7 @@ class PolicyTests(unittest.TestCase):
                 "device-audio-port-details-ui",
                 "plugin-audio-config-selection",
                 "plugin-audio-config-routing",
+                "plugin-audio-config-live-list",
                 "plugin-configurable-audio-ports",
                 "plugin-configurable-port-routing",
                 "plugin-state-poll",

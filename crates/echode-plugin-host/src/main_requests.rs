@@ -27,13 +27,13 @@ pub(crate) enum MainRequest {
 }
 
 impl MainRequest {
+    /// CLAP marks `select`, `can_apply_configuration` and
+    /// `apply_configuration` `[main-thread & !active]`. Listing presets and
+    /// their info is `[main-thread]` only, so it keeps the processor (ADR 0389).
     pub(crate) fn requires_inactive(&self) -> bool {
         matches!(
             self,
-            Self::AudioConfigs
-                | Self::SelectAudioConfig(_)
-                | Self::CanApplyAudioPorts(_)
-                | Self::ApplyAudioPorts(_)
+            Self::SelectAudioConfig(_) | Self::CanApplyAudioPorts(_) | Self::ApplyAudioPorts(_)
         )
     }
 }

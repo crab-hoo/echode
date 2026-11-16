@@ -101,7 +101,7 @@ extension ProjectController {
             }
         }
         // Descriptions and latency can change with the configuration. This is
-        // a parameter read, not another interrupting preset enumeration.
+        // a parameter read, not another preset enumeration.
         if self.session === session { await listParameters(parameters, in: session) }
         return changed
     }

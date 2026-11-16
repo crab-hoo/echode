@@ -136,6 +136,38 @@ fn audio_config_presets_select_ids_and_exchange_exact_ports_under_rtsan() {
     check_audio(&mut host);
 }
 
+/// ADR 0389: CLAP marks `count`, `get` and the config-info calls
+/// `[main-thread]`; only `select` and configurable ports need the plugin
+/// deactivated. Reading the list keeps the processor: no activation, no port
+/// reread, no lifecycle probe and no restart notice.
+#[test]
+fn reading_audio_configs_keeps_the_plugin_active_under_rtsan() {
+    let mut host = spawn_plugin(Some("audio-ports"), SessionLayout::stereo());
+    wait_probe(&mut host, [3, 1, 2, 0]);
+    check_audio(&mut host);
+    for _ in 0..3 {
+        let list = host
+            .control_handle()
+            .audio_port_configs()
+            .expect("list presets while active");
+        assert_eq!(list.current_id, Some(100));
+        assert_eq!(list.configs.len(), 3);
+        check_audio(&mut host);
+    }
+    assert_eq!(
+        host.control_handle().capture_state().unwrap(),
+        [3, 1, 2, 0],
+        "reading audio configurations deactivated the plugin; {}",
+        host.stderr_log()
+    );
+    while let Some(notice) = host.poll_notice().expect("notice") {
+        assert!(
+            !matches!(notice, PluginNotice::PluginRestarted { .. }),
+            "reading audio configurations restarted the plugin"
+        );
+    }
+}
+
 #[test]
 fn missing_audio_config_extension_is_a_typed_refusal_and_audio_resumes_under_rtsan() {
     use echode_sandbox::{AudioPortRequest, PluginFailure};

@@ -294,8 +294,11 @@ cargo test -q -p echode-plugin-host --test hosted_playback audio_ports::
 
 ### CLAP の音声構成の一覧・選択・任意変更に失敗する
 
-`PluginControl::audio_port_configs`・`select_audio_port_config`・`can_apply_audio_port_configuration`・`apply_audio_port_configuration` は無効化中の主スレッドで実行する（[ADR 0384](../decisions/0384-clap-audio-port-config-selection.md)、[ADR 0385](../decisions/0385-clap-configurable-audio-ports-and-config-info.md)）。
-一覧や変更可否の取得だけでも再有効化するため音声を中断する。周期的には呼ばず、デバイス列の「音声構成を読み込む」で明示して読む。
+`PluginControl::select_audio_port_config`・`can_apply_audio_port_configuration`・`apply_audio_port_configuration` は無効化中の主スレッドで実行する（[ADR 0384](../decisions/0384-clap-audio-port-config-selection.md)、[ADR 0385](../decisions/0385-clap-configurable-audio-ports-and-config-info.md)）。
+`audio_port_configs` は処理器を止めずに主スレッドで読む（[ADR 0389](../decisions/0389-live-clap-audio-config-listing.md)）。変更可否の取得は再有効化するため音声を中断する。
+周期的には呼ばず、デバイス列の「音声構成を読み込む」で明示して読む。
+一覧の読込みで音が途切れる、または検査用プラグインの状態の有効化回数（2 バイト目）が増える時は、`requires_inactive` が一覧を無効化専用に戻していないかを調べる。
+有効化回数が増えずに途切れるなら、第三者プラグインの `count`・`get` が音声処理を止めている可能性がある。同じ操作を検査用プラグインで比べ、UC-97 に名前と版を残す。
 拡張（`/1` と互換 draft を含む）・各 callback の欠落、記述の拒否、未知の現在構成 ID、重複・主ポートの矛盾、`apply` の拒否は `PluginFailure` で区別する（`can_apply` が `false` の時は `Ok(false)`）。
 `rescan` の通知から再入せず、一覧も保持しない。次の明示要求で最新の記述を読む。
 選択や変更の応答より前に `PortsChanged` が届く。成功なのに古い構成なら、`follow_ports` またはエンジンの計画交換を調べる。

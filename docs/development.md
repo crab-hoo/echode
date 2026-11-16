@@ -412,7 +412,8 @@ CLAP の構成一覧・`audio-ports-config-info`・ID 選択・`configurable-aud
 `MainRequests` の無効化専用の要求は既存の再起動世代で処理器を返してから実行する（[ADR 0384](decisions/0384-clap-audio-port-config-selection.md)、[ADR 0385](decisions/0385-clap-configurable-audio-ports-and-config-info.md)）。
 デバイス列からの明示読込みと ID 選択は `DeviceAudioConfigs.swift`・`DeviceAudioConfigView.swift`、文書コマンドの選択・取得と編集の保留は `echode-document/src/device.rs` に置く。
 画面の回帰は `DeviceAudioConfigTests.swift`、実ヘルパーのバイト・Undo/Redo・再オープンは `device_config_tests.rs` を使う（[ADR 0386](decisions/0386-device-audio-configuration-controls.md)）。
-回帰は上の `audio_ports.rs` と各 `audio_configs_tests.rs` を使う。一覧や変更可否の取得も再有効化で音声を中断するため、周期的に問い合わせない。
+回帰は上の `audio_ports.rs` と各 `audio_configs_tests.rs` を使う。変更可否の取得は再有効化で音声を中断するため、周期的に問い合わせない。
+一覧の要求は `MainRequest::requires_inactive` に含めず、処理器を止めない。再生中の読込みの回帰は `hosted_playback/audio_ports.rs` にある（[ADR 0389](decisions/0389-live-clap-audio-config-listing.md)）。
 実ヘルパーの通知・再マップは `tests/isolation/audio_ports.rs`、再生中の切替と書出し再開・拒否は `tests/hosted_playback/audio_ports.rs` を使う（[ADR 0374](decisions/0374-dimension-preserving-audio-port-rescans.md)、[ADR 0382](decisions/0382-audio-port-changes-exchange-mapping-and-routing.md)）。
 CLAP のノート形式の対応の公開とポートごとの規則（`NoteInputs`）は `echode-plugin-host/src/note_ports.rs`、有効化前の読直しは `threads.rs::activate` に置く。
 一覧は `Processor<P>` が処理器とともに渡し、`render_plugin` が通常のイベントの前へ参照でつなぐ。

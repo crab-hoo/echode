@@ -51,12 +51,13 @@ CLAP の遅延は有効化の直後にメインスレッドで読み、初回の
 入出力ごとのチャンネル数の列（`PortLayout`）は有効化ごとに読み直して処理器へ渡し、`Remap` も対象の構成を運んで一致するブロックだけを処理する（不一致の間は無音でイベントを捨てる）。
 有効化で `PortLayout` が変われば `PortsChanged` で親へ知らせ、エンジンは最新の構成でルーティングの検証と共有領域の準備を行い、計画の採用で両者を同時に切り替えてリセットとノートの再送を行う。
 トラックが受けられない構成は `BusMapping` で計画を断る（[ADR 0382](../decisions/0382-audio-port-changes-exchange-mapping-and-routing.md)）。
-`clap.audio-ports-config` の明示した一覧要求・ID による選択は、既存の再起動世代で処理器を止め、無効化中の主スレッドで実行する。
-一覧は保持せず、`rescan` は次の要求で反映する。一覧を読むだけでも音声を中断するため、周期的には呼ばない。
+`clap.audio-ports-config` の ID による選択は、既存の再起動世代で処理器を止め、無効化中の主スレッドで実行する。
+明示した一覧要求（`count`・`get` と config-info）は CLAP の `[main-thread]` なので、処理器を動かしたまま主スレッドで読む（[ADR 0389](../decisions/0389-live-clap-audio-config-listing.md)）。
+一覧は保持せず、`rescan` は次の要求で反映する。一覧の読込みでは音声を中断しないが、暗黙には読まない。
 選択後と拒否後は共通の再有効化で正確なポートを読み直し、`PortsChanged` を応答より先に送る。
 成功した選択は dirty にし、保存はプラグイン自身の状態に依存する（[ADR 0384](../decisions/0384-clap-audio-port-config-selection.md)）。
 `clap.audio-ports-config-info`（`/1` と互換 `/draft-0`）がある時は現在選択中の構成 ID と各構成の個別ポート詳細も読み、無い時は未設定のまま一覧を返す。
-`clap.configurable-audio-ports`（`/1` と互換 `.draft1`）による任意変更の照会（`can_apply`）と適用（`apply`）も、無効化中の主スレッドで実行する（[ADR 0385](../decisions/0385-clap-configurable-audio-ports-and-config-info.md)）。
+`clap.configurable-audio-ports`（`/1` と互換 `.draft1`）による任意変更の照会（`can_apply`）と適用（`apply`）は、選択と同じく無効化中の主スレッドで実行する（[ADR 0385](../decisions/0385-clap-configurable-audio-ports-and-config-info.md)）。
 構成メニュー UI は [ADR 0386](../decisions/0386-device-audio-configuration-controls.md) で接続した。
 デバイス列の明示ボタンだけで一覧を読み、現在 ID がある時だけ選択中を示す。文書の publication 後は一覧を破棄し、暗黙には再取得しない。
 `device.audio_config.select` は背景保存を保留してから、デバイスレーンで ID 選択と状態取得を続けて行う。

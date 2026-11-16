@@ -114,21 +114,25 @@ unsafe impl ExtensionImplementation<TestGain> for PluginConfigurableAudioPorts {
         });
 }
 
-fn check(plugin: *const clap_plugin) -> bool {
+/// Listing presets and their info is `[main-thread]` in CLAP, active or not.
+fn on_main(plugin: *const clap_plugin) -> bool {
     // SAFETY: each callback receives the live plugin on the host's main thread.
     unsafe {
         PluginWrapper::<TestGain>::handle(plugin, |wrapper| {
-            Ok(
-                thread_check::check(wrapper.main_thread().host.shared(), 1).is_ok()
-                    && audio_ports::config_inactive(),
-            )
+            Ok(thread_check::check(wrapper.main_thread().host.shared(), 1).is_ok())
         })
     }
     .unwrap_or(false)
 }
 
+/// `select`, `can_apply_configuration` and `apply_configuration` also need
+/// the plugin deactivated.
+fn check(plugin: *const clap_plugin) -> bool {
+    on_main(plugin) && audio_ports::config_inactive()
+}
+
 unsafe extern "C" fn count(plugin: *const clap_plugin) -> u32 {
-    if check(plugin) {
+    if on_main(plugin) {
         u32::try_from(PRESETS.len()).unwrap_or(0)
     } else {
         0
@@ -140,7 +144,7 @@ unsafe extern "C" fn get(
     index: u32,
     info: *mut clap_audio_ports_config,
 ) -> bool {
-    if !check(plugin) || info.is_null() {
+    if !on_main(plugin) || info.is_null() {
         return false;
     }
     let Some(&(id, layout)) = PRESETS.get(index as usize) else {
@@ -176,7 +180,7 @@ unsafe extern "C" fn select(plugin: *const clap_plugin, id: u32) -> bool {
 }
 
 unsafe extern "C" fn current_config(plugin: *const clap_plugin) -> u32 {
-    if !check(plugin) {
+    if !on_main(plugin) {
         return CLAP_INVALID_ID;
     }
     audio_ports::config_current()
@@ -189,7 +193,7 @@ unsafe extern "C" fn info_get(
     is_input: bool,
     config: *mut clap_audio_port_info,
 ) -> bool {
-    if !check(plugin) || config.is_null() {
+    if !on_main(plugin) || config.is_null() {
         return false;
     }
     let Some(layout) = preset_layout(config_id) else {

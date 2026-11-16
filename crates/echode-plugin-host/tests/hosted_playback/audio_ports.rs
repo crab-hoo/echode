@@ -51,6 +51,71 @@ fn a_configurable_audio_port_change_uses_the_product_port_exchange_under_rtsan()
     check_port_change(PortAction::ConfigurePorts);
 }
 
+/// ADR 0389: listing presets is `[main-thread]` in CLAP, so a read while
+/// playing must not take the plugin's processor. A thread renders the product
+/// stream while the device control reads the list; every block keeps the
+/// processed level, and the plan and the export marker do not change.
+#[test]
+fn reading_audio_configs_while_playing_keeps_every_block_under_rtsan() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let device = Id::generate();
+    let (project, track) = Project::new().add_track("listing ports");
+    let project = project
+        .add_clap_device(track, device, "dev.echode.test-gain")
+        .unwrap();
+    let block = 64; // This test's scratch size, not an engine limit.
+    let (mut control, mut audio) =
+        playback_with_plugins(&project, 48_000, block, &host_bin(), &[ports_route(0)]).unwrap();
+    control.set_clip_loader(stereo_clips_of(track.raw(), 0.25, 0.125, CLIP));
+    control.replace(&project).unwrap();
+    control.command(PlaybackCommand::Play).unwrap();
+    let (mut left, mut right) = (vec![0.0; block], vec![0.0; block]);
+    render_content(&mut audio, &mut left, &mut right);
+    assert_close(&left, &vec![0.5; block]);
+    assert_close(&right, &vec![0.25; block]);
+    let before = control.compensation_changes();
+    let plugin = control.device_control_handle(device.raw()).unwrap();
+    let reading = Arc::new(AtomicBool::new(true));
+    let renderer = {
+        let reading = Arc::clone(&reading);
+        std::thread::spawn(move || {
+            // The clip bounds this fixture's run, not the engine.
+            let budget = CLIP / block - 1;
+            let mut rendered = 0;
+            while reading.load(Ordering::Acquire) {
+                assert!(rendered < budget, "the reads outlasted the clip");
+                render_content(&mut audio, &mut left, &mut right);
+                rendered += 1;
+                let heard = left
+                    .iter()
+                    .zip(&right)
+                    .all(|(l, r)| near(*l, 0.5) && near(*r, 0.25));
+                if !heard {
+                    return Err(format!("block {rendered}: {left:?} {right:?}"));
+                }
+            }
+            Ok(rendered)
+        })
+    };
+    let lists: Vec<_> = (0..3)
+        .map(|_| plugin.audio_port_configs().map(|list| list.current_id))
+        .collect();
+    reading.store(false, Ordering::Release);
+    let rendered = renderer.join().unwrap();
+    for list in lists {
+        assert_eq!(list.expect("product configuration list"), Some(100));
+    }
+    match rendered {
+        Ok(blocks) => assert!(blocks > 0),
+        Err(block) => panic!("a configuration read interrupted playback at {block}"),
+    }
+    control.service();
+    assert!(control.take_preparation_error().is_none());
+    assert!(!control.status().failed);
+    assert_eq!(control.compensation_changes(), before);
+    assert!(control.plugin_failure().is_none());
+}
+
 fn check_port_change(action: PortAction) {
     let device = Id::generate();
     let (project, track) = Project::new().add_track("changing ports");

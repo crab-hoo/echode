@@ -639,8 +639,8 @@
     },
     "Audio configuration interruption help": {
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Reading or selecting an audio configuration interrupts plugin processing. Selection is saved in the plugin's state and can be undone." } },
-        "ja": { "stringUnit": { "state": "translated", "value": "一覧の読込みと選択で音声処理を中断します。選択はプラグイン自身の状態に保存し、取り消せます。" } }
+        "en": { "stringUnit": { "state": "translated", "value": "Selecting or changing an audio configuration interrupts plugin processing; reading the list does not. Changes are saved in the plugin's state and can be undone." } },
+        "ja": { "stringUnit": { "state": "translated", "value": "構成の選択と変更で音声処理を中断します。一覧の読込みでは中断しません。変更はプラグイン自身の状態に保存し、取り消せます。" } }
       }
     },
     "Retry parameters": {

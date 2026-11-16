@@ -103,7 +103,7 @@ struct DeviceAudioConfigTests {
         }
         refresh()
         let view = try #require(strip.columns.first?.audioConfigs)
-        #expect(await plugin.reads == 0, "showing devices must not interrupt audio to enumerate presets")
+        #expect(await plugin.reads == 0, "showing devices must not call the plugin to enumerate presets")
         let before = controller.undoCount
         view.read.performClick(nil)
         await pending?.value

@@ -179,7 +179,7 @@ public enum DeviceCommand: Encodable, Sendable, Equatable {
     case showWindow(device: UUID, title: String)
     /// Closes the plugin's own window. Never starts a helper to do it.
     case closeWindow(device: UUID)
-    /// Explicitly reads presets; this interrupts plugin processing.
+    /// Explicitly reads presets on the plugin's main thread; audio keeps running.
     case audioConfigs(device: UUID)
     /// Selects a preset and records its state as one Undo step.
     case selectAudioConfig(device: UUID, id: UInt32)

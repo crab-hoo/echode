@@ -44,8 +44,8 @@ unsafe impl ExtensionImplementation<EchodeHost> for HostAudioConfigs {
         });
 }
 unsafe extern "C" fn rescan(_host: *const clap_host) {
-    // No list is cached. The next explicit query scans while inactive; do not
-    // reenter the plugin here or restart audio for a menu that is not open.
+    // No list is cached. The next explicit query reads it on main; do not
+    // reenter the plugin here for a menu that is not open.
 }
 
 fn extension(plugin: &clap_plugin) -> Result<&clap_plugin_audio_ports_config, PluginFailure> {
@@ -53,14 +53,15 @@ fn extension(plugin: &clap_plugin) -> Result<&clap_plugin_audio_ports_config, Pl
     unsafe { table(plugin, CLAP_EXT_AUDIO_PORTS_CONFIG) }.ok_or(PluginFailure::NoAudioConfigs)
 }
 
-/// Main thread only, after audio hands back its processor and deactivate returns.
+/// Main thread only. CLAP allows listing while active, so audio keeps running
+/// (ADR 0389). Selection still waits for the processor and deactivate.
 pub(crate) fn read(plugin: &clap_plugin) -> Result<AudioPortConfigs, PluginFailure> {
     let ports = extension(plugin)?;
     let count = ports.count.ok_or(PluginFailure::NoAudioConfigCount)?;
     let get = ports.get.ok_or(PluginFailure::NoAudioConfigInfo)?;
     let mut configs = Vec::new();
     let mut ids = HashSet::new();
-    // SAFETY: these are the plugin's callbacks, invoked on main while inactive.
+    // SAFETY: these are the plugin's `[main-thread]` callbacks, invoked on main.
     for index in 0..unsafe { count(plugin) } {
         let mut info = MaybeUninit::<clap_audio_ports_config>::zeroed();
         // SAFETY: the plugin receives writable storage for one descriptor.
@@ -130,7 +131,7 @@ fn read_config_info(
         .current_config
         .ok_or(PluginFailure::NoAudioConfigCurrent)?;
     let get = info_ext.get.ok_or(PluginFailure::NoAudioConfigPortInfo)?;
-    // SAFETY: this callback runs on main while the plugin is deactivated.
+    // SAFETY: this `[main-thread]` callback runs on main.
     let current = unsafe { current_config(plugin) };
     let current_id = if current == CLAP_INVALID_ID {
         None
@@ -144,7 +145,7 @@ fn read_config_info(
             crate::audio_ports::read_port_channels(
                 count,
                 |index, port_info| {
-                    // SAFETY: main-thread callback while inactive, with descriptor storage.
+                    // SAFETY: `[main-thread]` callback on main, with descriptor storage.
                     unsafe { get(plugin, config.id, index, is_input, port_info) }
                 },
                 |_| PluginFailure::AudioConfigUndescribed,

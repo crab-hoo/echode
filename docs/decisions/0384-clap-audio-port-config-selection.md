@@ -1,7 +1,7 @@
 # ADR 0384: CLAP の音声構成を明示要求で走査・選択する
 
 - 日付: 2026-11-16
-- 状態: 現行
+- 状態: 一部置換（[ADR 0389](0389-live-clap-audio-config-listing.md)）。CLAP は一覧を `[main-thread]` とし、一覧は処理器を止めずに読む
 - 領域: プラグイン・隔離
 - 対象: P2-03・F2・FCA-07 の `clap.audio-ports-config` の制御境界
 - 関連: [ADR 0382](0382-audio-port-changes-exchange-mapping-and-routing.md)、[ADR 0199](0199-owned-helper-control-requests.md)

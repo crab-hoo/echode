@@ -1,7 +1,7 @@
 # ADR 0385: CLAP の audio-ports-config-info と configurable-audio-ports を無効化中に接続する
 
 - 日付: 2026-11-16
-- 状態: 一部置換（[ADR 0388](0388-typed-clap-audio-port-details.md)）。標準のポート詳細は型付きで送る
+- 状態: 一部置換（[ADR 0388](0388-typed-clap-audio-port-details.md)・[ADR 0389](0389-live-clap-audio-config-listing.md)）。標準のポート詳細は型付きで送る。config-info は処理器を止めずに読む
 - 領域: プラグイン・隔離
 - 対象: P2-03・F2・FCA-07 の `clap.audio-ports-config-info` と `clap.configurable-audio-ports`
 - 関連: [ADR 0384](0384-clap-audio-port-config-selection.md)、[ADR 0382](0382-audio-port-changes-exchange-mapping-and-routing.md)、[ADR 0199](0199-owned-helper-control-requests.md)

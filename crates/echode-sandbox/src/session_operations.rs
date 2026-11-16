@@ -22,9 +22,9 @@ impl PluginControl {
         })
     }
 
-    /// Reads the current preset list while the helper is deactivated, then
-    /// reactivates it. Control-only; interrupts audio, even for a read. No cache
-    /// is kept, so a plugin's rescan is visible on the next explicit query.
+    /// Reads the current preset list on the helper's main thread while audio
+    /// keeps running (ADR 0389). Control-only. No cache is kept, so a plugin's
+    /// rescan is visible on the next explicit query.
     pub fn audio_port_configs(&self) -> Result<crate::AudioPortConfigs, SessionError> {
         match self.audio_config_call(ControlMessage::AudioConfigsRequest, |message| {
             matches!(message, ControlMessage::AudioConfigs(_))
