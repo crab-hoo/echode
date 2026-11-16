@@ -352,6 +352,9 @@ cargo test -q -p echode-engine musical_time
 `hosted_playback/pdc_notes.rs` の `PDC notes disagree with input audio` は音声とノートの時刻の不一致である。
 `a delayed note-off lost without a source event left a stuck voice` は段ごとの復帰の不足である。
 レート・ブロック長・申告遅延・開始位置・ループ範囲と、プラグインの応答設定を残す。第三者の解釈・聴感は UC-96（[ADR 0383](../decisions/0383-pdc-stage-notes.md)）。
+`a_missed_delayed_off_recovers_when_the_source_has_no_event_under_rtsan` の `read_exact` が `UnexpectedEof` になる場合は、波形の断定ではなく待機用フィクスチャとの接続が先に閉じている。
+2026-11-17 の `full`（run `43932204488`、`rtsan`）と変更前の `4c40ae1`（run `43918901455`）で同じ失敗があった。
+ヘルパーの stderr・終了状態と待機ソケットの送受信位置を収集し、RTSan の違反報告・時間切れ・ヘルパー終了を区別する。原因が確定する前に再生の復帰が失敗したと結論せず、未確認を合格にしない。
 
 ```sh
 cargo test -q -p echode-plugin-host --test hosted_playback pdc_notes::
