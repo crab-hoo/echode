@@ -209,7 +209,7 @@ unsafe fn resolve_requests(
     plugin: *const clap_plugin,
     requests: *const clap_audio_port_configuration_request,
     request_count: u32,
-) -> Option<u8> {
+) -> Option<(u8, u8)> {
     if !check(plugin) || request_count == 0 || requests.is_null() {
         return None;
     }
@@ -218,11 +218,38 @@ unsafe fn resolve_requests(
     let (cur_in, cur_out) = audio_ports::layout_ports(audio_ports::current_layout());
     let mut next_in = cur_in.to_vec();
     let mut next_out = cur_out.to_vec();
+    let mut details = 0;
     for req in requests {
         if !req.port_details.is_null() {
-            return None;
-        }
-        if !req.port_type.is_null() {
+            // This fixture deliberately accepts just two known detail values.
+            // SAFETY: the host lends the type-specific data for this callback.
+            let kind = unsafe { CStr::from_ptr(req.port_type) };
+            let valid = if kind == clap_sys::ext::surround::CLAP_PORT_SURROUND {
+                // SAFETY: surround details contain channel_count readable bytes.
+                let map = unsafe {
+                    std::slice::from_raw_parts(
+                        req.port_details.cast::<u8>(),
+                        req.channel_count as usize,
+                    )
+                };
+                details = 1;
+                req.channel_count == 1 && map == [2]
+            } else if kind == clap_sys::ext::ambisonic::CLAP_PORT_AMBISONIC {
+                // SAFETY: ambisonic details contain one aligned config.
+                let config = unsafe {
+                    &*req
+                        .port_details
+                        .cast::<clap_sys::ext::ambisonic::clap_ambisonic_config>()
+                };
+                details = 2;
+                req.channel_count == 1 && config.ordering == 1 && config.normalization == 1
+            } else {
+                false
+            };
+            if !valid {
+                return None;
+            }
+        } else if !req.port_type.is_null() {
             // SAFETY: host guarantees valid C string matching `port_type`.
             let port_type = unsafe { CStr::from_ptr(req.port_type) };
             let matches_type = match req.channel_count {
@@ -254,9 +281,12 @@ unsafe fn resolve_requests(
             return None;
         }
     }
-    [0u8, 2, 3, 6, 9].into_iter().find(|&layout| {
-        audio_ports::layout_ports(layout) == (next_in.as_slice(), next_out.as_slice())
-    })
+    [0u8, 2, 3, 6, 9]
+        .into_iter()
+        .find(|&layout| {
+            audio_ports::layout_ports(layout) == (next_in.as_slice(), next_out.as_slice())
+        })
+        .map(|layout| (layout, details))
 }
 
 unsafe extern "C" fn can_apply(
@@ -274,8 +304,13 @@ unsafe extern "C" fn apply(
     request_count: u32,
 ) -> bool {
     // SAFETY: host passed valid request slice for the call.
-    let Some(layout) = (unsafe { resolve_requests(plugin, requests, request_count) }) else {
+    let Some((layout, details)) = (unsafe { resolve_requests(plugin, requests, request_count) })
+    else {
         return false;
     };
-    audio_ports::config_select(layout, CLAP_INVALID_ID)
+    if !audio_ports::config_select(layout, CLAP_INVALID_ID) {
+        return false;
+    }
+    audio_ports::set_details(details);
+    true
 }

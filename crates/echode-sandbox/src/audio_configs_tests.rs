@@ -141,11 +141,22 @@ fn audio_port_requests_and_applicable_round_trip_and_reject_invalid_frames() {
             input: true,
             index: 0,
             channels: 1,
+            details: None,
         },
         AudioPortRequest {
             input: false,
             index: 2,
             channels: 6,
+            details: Some(AudioPortDetails::Surround(vec![0, 1, 2, 3, 4, 5])),
+        },
+        AudioPortRequest {
+            input: false,
+            index: u32::MAX,
+            channels: u32::MAX,
+            details: Some(AudioPortDetails::Ambisonic {
+                ordering: u32::MAX,
+                normalization: u32::MAX,
+            }),
         },
     ];
     let bytes = encode_requests(&requests);
@@ -170,6 +181,20 @@ fn audio_port_requests_and_applicable_round_trip_and_reject_invalid_frames() {
             value: 2,
         })
     );
+    let mut bad_details = bytes.clone();
+    bad_details[13] = 3;
+    assert_eq!(
+        decode_requests(&bad_details)
+            .unwrap_err()
+            .get_ref()
+            .unwrap()
+            .downcast_ref::<PayloadDecodeError>(),
+        Some(&PayloadDecodeError::UnknownPortDetails(3))
+    );
+    let mut huge_map = bytes.clone();
+    // First request is 10 bytes; second has its map count after 9 + 1 bytes.
+    huge_map[24..28].copy_from_slice(&u32::MAX.to_le_bytes());
+    assert!(decode_requests(&huge_map).is_err());
     assert!(decode_requests(&u32::MAX.to_le_bytes()).is_err());
     for value in [false, true] {
         let encoded = encode_applicable(value);

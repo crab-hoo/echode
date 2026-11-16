@@ -213,6 +213,23 @@ unsafe fn check_requests(
     let slice = unsafe { std::slice::from_raw_parts(requests, request_count as usize) };
     let valid_types = slice.iter().all(|req| {
         if !req.port_details.is_null() {
+            // SAFETY: the host lends the static type string for the callback.
+            let kind = unsafe { CStr::from_ptr(req.port_type) };
+            if kind == CLAP_PORT_SURROUND {
+                // SAFETY: the host must lend exactly channel_count readable bytes.
+                let map = unsafe {
+                    std::slice::from_raw_parts(
+                        req.port_details.cast::<u8>(),
+                        req.channel_count as usize,
+                    )
+                };
+                return map == [5, 0, 2];
+            }
+            if kind == CLAP_PORT_AMBISONIC {
+                // SAFETY: this type uses one aligned clap_ambisonic_config.
+                let config = unsafe { &*req.port_details.cast::<clap_ambisonic_config>() };
+                return req.channel_count == 4 && config.ordering == 1 && config.normalization == 2;
+            }
             return false;
         }
         match req.channel_count {
@@ -350,21 +367,40 @@ fn configurable_audio_ports_queries_and_applies_across_v1_and_compat() {
             input: true,
             index: 1,
             channels: 0,
+            details: None,
         },
         AudioPortRequest {
             input: true,
             index: 0,
             channels: 1,
+            details: None,
         },
         AudioPortRequest {
             input: false,
             index: 0,
             channels: 2,
+            details: None,
         },
         AudioPortRequest {
             input: false,
             index: 1,
             channels: 4,
+            details: None,
+        },
+        AudioPortRequest {
+            input: true,
+            index: 2,
+            channels: 3,
+            details: Some(AudioPortDetails::Surround(vec![5, 0, 2])),
+        },
+        AudioPortRequest {
+            input: false,
+            index: 2,
+            channels: 4,
+            details: Some(AudioPortDetails::Ambisonic {
+                ordering: 1,
+                normalization: 2,
+            }),
         },
     ];
     let missing = Fixture::new(0);
@@ -410,5 +446,31 @@ fn configurable_audio_ports_queries_and_applies_across_v1_and_compat() {
             Err(PluginFailure::ConfigurableAudioPortsRefused)
         );
         assert_eq!(refuse.configurable_seen.get(), 0b11);
+    }
+}
+
+#[test]
+fn invalid_surround_lengths_never_call_the_plugin() {
+    for (channels, map) in [(0, vec![]), (1, vec![]), (2, vec![0]), (1, vec![0, 1])] {
+        let fixture = Fixture::new(0).with_configurable(false, true);
+        let requests = [AudioPortRequest {
+            input: false,
+            index: 0,
+            channels,
+            details: Some(AudioPortDetails::Surround(map)),
+        }];
+        assert_eq!(
+            can_apply(&fixture.plugin(), &requests),
+            Err(PluginFailure::ConfigurableAudioPortsRefused)
+        );
+        assert_eq!(
+            apply(&fixture.plugin(), &requests),
+            Err(PluginFailure::ConfigurableAudioPortsRefused)
+        );
+        assert_eq!(
+            fixture.configurable_seen.get(),
+            0,
+            "invalid map must not cross the ABI"
+        );
     }
 }

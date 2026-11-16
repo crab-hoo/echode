@@ -96,10 +96,12 @@ public struct DeviceAudioPortChange: Encodable, Sendable, Equatable {
     public let input: Bool
     public let index: UInt32
     public let channels: UInt32
-    public init(input: Bool, index: UInt32, channels: UInt32) {
+    public let details: DeviceAudioPortDetails?
+    public init(input: Bool, index: UInt32, channels: UInt32, details: DeviceAudioPortDetails? = nil) {
         self.input = input
         self.index = index
         self.channels = channels
+        self.details = details
     }
 }
 

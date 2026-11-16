@@ -927,6 +927,7 @@ class PolicyTests(unittest.TestCase):
             "swift/EchodeApp/Sources/EchodeAppCore/DeviceAudioConfigs.swift",
             "swift/EchodeApp/Sources/EchodeAppCore/DeviceAudioConfigView.swift",
             "swift/EchodeApp/Sources/EchodeAppCore/DeviceAudioPortEditor.swift",
+            "swift/EchodeApp/Sources/EchodeAppCore/AudioPortDetailsEditor.swift",
             "swift/EchodeApp/Tests/EchodeAppTests/DeviceAudioPortTests.swift",
         ):
             self.assertTrue({"check", "check-product-contracts", "check-swift"} <= self.selected(path))
@@ -938,6 +939,19 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(
             ports_ui["negative_control"]["file"], "swift/EchodeApp/Sources/EchodeAppCore/DeviceAudioPortEditor.swift"
         )
+        details = contracts["device-audio-port-details-state"]
+        self.assertEqual((details["package"], details["target"]), ("echode-document", ["--lib"]))
+        self.assertEqual(details["negative_control"]["file"], "crates/echode-plugin-host/src/audio_configs.rs")
+        details_ui = contracts["device-audio-port-details-ui"]
+        self.assertEqual(details_ui["suite"], "DeviceAudioPortTests")
+        self.assertEqual(
+            details_ui["negative_control"]["file"], "swift/EchodeApp/Sources/EchodeAppCore/AudioPortDetailsEditor.swift"
+        )
+        for path in (
+            "swift/EchodeBridge/Sources/EchodeBridge/DeviceAudioPortDetails.swift",
+            "crates/echode-sandbox/src/audio_configs.rs",
+        ):
+            self.assertTrue({"check", "check-product-contracts", "check-swift"} <= self.selected(path))
         groups = self.policy["product_contract_inputs"]
         self.assertIn("echode-test-plugin", groups["rust:echode-document"]["packages"])
 
@@ -2837,6 +2851,8 @@ class PolicyTests(unittest.TestCase):
                 "device-audio-config-ui",
                 "device-audio-ports-state",
                 "device-audio-ports-ui",
+                "device-audio-port-details-state",
+                "device-audio-port-details-ui",
                 "plugin-audio-config-selection",
                 "plugin-audio-config-routing",
                 "plugin-configurable-audio-ports",

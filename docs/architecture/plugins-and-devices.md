@@ -56,7 +56,7 @@ CLAP の遅延は有効化の直後にメインスレッドで読み、初回の
 選択後と拒否後は共通の再有効化で正確なポートを読み直し、`PortsChanged` を応答より先に送る。
 成功した選択は dirty にし、保存はプラグイン自身の状態に依存する（[ADR 0384](../decisions/0384-clap-audio-port-config-selection.md)）。
 `clap.audio-ports-config-info`（`/1` と互換 `/draft-0`）がある時は現在選択中の構成 ID と各構成の個別ポート詳細も読み、無い時は未設定のまま一覧を返す。
-`clap.configurable-audio-ports`（`/1` と互換 `.draft1`）による任意のポート構成変更の問い合せ（`can_apply`）と適用（`apply`）も同じく無効化中の主スレッドで実行し、標準的なモノ／ステレオ種別だけを付けて特殊な `port_details` は null にする（[ADR 0385](../decisions/0385-clap-configurable-audio-ports-and-config-info.md)）。
+`clap.configurable-audio-ports`（`/1` と互換 `.draft1`）による任意変更の照会（`can_apply`）と適用（`apply`）も、無効化中の主スレッドで実行する（[ADR 0385](../decisions/0385-clap-configurable-audio-ports-and-config-info.md)）。
 構成メニュー UI は [ADR 0386](../decisions/0386-device-audio-configuration-controls.md) で接続した。
 デバイス列の明示ボタンだけで一覧を読み、現在 ID がある時だけ選択中を示す。文書の publication 後は一覧を破棄し、暗黙には再取得しない。
 `device.audio_config.select` は背景保存を保留してから、デバイスレーンで ID 選択と状態取得を続けて行う。
@@ -64,7 +64,12 @@ CLAP の遅延は有効化の直後にメインスレッドで読み、初回の
 選択 ID や任意の要求列は別に保存せず、プラグイン自身の状態・通常の保存と復元を正本にする。
 任意変更は「音声ポートを変更」の一時フォームで入出力・0 始まりの番号・チャンネル数（0 は無効化・削除）を入力し、全行を一度の `device.audio_ports.apply` と状態編集へ送る。
 入力・取消・フォームの表示はプラグインを呼ばず、publication 後や取消済みのフォームからは適用しない（[ADR 0387](../decisions/0387-device-audio-port-change-form.md)）。
-可否の事前照会はせず、適用の拒否を表示する。特殊な `port_details` 指定は未接続である。
+可否の事前照会はせず、適用の拒否を表示する。
+標準の `port_details` は [ADR 0388](../decisions/0388-typed-clap-audio-port-details.md) の所有する型でフォームから送る。
+`details` がなければ従来どおりチャンネル数からモノ／ステレオだけを推測する。
+サラウンドはバッファ順のチャンネルコード、Ambisonic は順序と正規化を明示し、ヘルパーだけが型に合う借用のポインターを作る。
+配置の長さ違い・空のサラウンド配置は呼出し前に拒否する。無効化・削除は自動モードの 0 を使い、意味上の可否はプラグインが判定する。
+配置を別に保存せず、プラグイン状態・既存のポート交換と単一 Undo の経路を使う。多チャンネル母線やチャンネルの並替えは追加しない。
 `clap.note-ports` は native CLAP・MIDI 1.0・MIDI 2.0・MPE を対応と答える。
 入力形式はこの順で選び、既存の経路を保つ（[ADR 0375](../decisions/0375-midi-1-notes-for-midi-only-clap-ports.md)、[ADR 0379](../decisions/0379-midi2-notes-for-clap-ports.md)）。
 MIDI 2.0 はグループ 0 の UMP で、16 bit のベロシティ（0 も発音）と 32 bit のポリプレッシャーを送る。

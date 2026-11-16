@@ -63,6 +63,11 @@ pub enum ParamField {
     PortSide,
     PortIndex,
     PortChannels,
+    PortDetails,
+    ChannelMapCount,
+    ChannelMap,
+    AmbisonicOrdering,
+    AmbisonicNormalization,
     Applicable,
 }
 
@@ -102,6 +107,7 @@ pub enum PayloadDecodeError {
         bits: u64,
     },
     UnknownParsedKind(u8),
+    UnknownPortDetails(u8),
     WindowReportSize {
         expected: usize,
         actual: usize,
@@ -147,6 +153,7 @@ impl std::fmt::Display for PayloadDecodeError {
                 "parameter value is not finite"
             }
             Self::UnknownParsedKind(_) => "unknown parameter text reply",
+            Self::UnknownPortDetails(_) => "unknown audio-port details kind",
             Self::WindowReportSize { .. } => "window report is the wrong size",
             Self::InvalidWindowFlag { .. } => "window report flag is not 0 or 1",
             Self::UnknownRelayFlags(_) => "relay flags are unknown",
@@ -248,6 +255,16 @@ impl<'a> Cursor<'a> {
             items.push(self.u32(item)?);
         }
         Ok(items)
+    }
+
+    /// A byte sequence whose allocation is bounded by the actual payload.
+    pub(crate) fn bytes(
+        &mut self,
+        count: ParamField,
+        item: ParamField,
+    ) -> Result<Vec<u8>, PayloadDecodeError> {
+        let count = self.u32(count)? as usize;
+        Ok(self.take(item, count)?.to_vec())
     }
 
     pub(crate) fn f64(&mut self, field: ParamField) -> Result<f64, PayloadDecodeError> {

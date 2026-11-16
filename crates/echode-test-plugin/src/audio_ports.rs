@@ -32,6 +32,7 @@ pub(crate) fn config_select(layout: u8, config_id: u32) -> bool {
     LAYOUT.store(layout, Ordering::Relaxed);
     WANTED.store(layout, Ordering::Relaxed);
     CONFIG_ID.store(config_id, Ordering::Relaxed);
+    set_details(0);
     true
 }
 
@@ -59,6 +60,11 @@ static READS: AtomicU8 = AtomicU8::new(0);
 static EXPECTED_READS: AtomicU8 = AtomicU8::new(0);
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 static LAYOUT: AtomicU8 = AtomicU8::new(0);
+static DETAILS: AtomicU8 = AtomicU8::new(0);
+
+pub(crate) fn set_details(value: u8) {
+    DETAILS.store(value, Ordering::Relaxed);
+}
 static WANTED: AtomicU8 = AtomicU8::new(0);
 static CONFIG_ID: AtomicU32 = AtomicU32::new(100);
 /// The layout `audio-ports:<layout>` restarts into. Zero when none is left.
@@ -120,6 +126,7 @@ pub(crate) fn deactivate(host: HostSharedHandle<'_>) {
 
 pub(crate) fn change(host: HostSharedHandle<'_>, layout: u8) {
     WANTED.store(layout, Ordering::Relaxed);
+    set_details(0);
     CONFIG_ID.store(
         crate::audio_configs::layout_preset(layout),
         Ordering::Relaxed,
@@ -204,13 +211,19 @@ pub(crate) fn get(index: u32, is_input: bool, info: &mut clap_audio_port_info) -
     true
 }
 
-pub(crate) fn snapshot() -> [u8; 4] {
-    [
+pub(crate) fn snapshot() -> Vec<u8> {
+    let mut bytes = vec![
         STAGES.load(Ordering::Relaxed),
         ACTIVATIONS.load(Ordering::Relaxed),
         READS.load(Ordering::Relaxed),
         LAYOUT.load(Ordering::Relaxed),
-    ]
+    ];
+    // Only the details fixture adds a byte. Existing probe snapshots stay intact.
+    let details = DETAILS.load(Ordering::Relaxed);
+    if details != 0 {
+        bytes.push(details);
+    }
+    bytes
 }
 
 pub(crate) fn name() -> [std::ffi::c_char; clap_sys::string_sizes::CLAP_NAME_SIZE] {

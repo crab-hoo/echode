@@ -235,7 +235,7 @@
 | 行 | 内容 | 番号 | 扱う単位・時期 |
 |---|---|---|---|
 | F1 | フォルダの音量・パン・FX（バス） | FCA-06 | P2-03。対応済み（ADR 0338）。意味は ADR 0277 |
-| F2 | PDC と CLAP のホスト拡張 | FCA-07 | P2-03。一部対応。範囲は [プラグイン設計書 §9.1](../architecture/plugins-and-devices.md#91-共通の抽象)。後段ノートの補正は ADR 0383。構成選択・config-info・configurable-audio-ports の制御 API は ADR 0384・0385。構成メニューと単一の状態編集は ADR 0386。任意変更のフォームは ADR 0387。非標準 `port_details`・曲からの表情生成等は残る |
+| F2 | PDC と CLAP のホスト拡張 | FCA-07 | P2-03。一部対応。範囲は [プラグイン設計書 §9.1](../architecture/plugins-and-devices.md#91-共通の抽象)。後段ノートの補正は ADR 0383。構成選択・config-info・configurable-audio-ports の制御 API は ADR 0384・0385。構成メニューと単一の状態編集は ADR 0386。任意変更のフォームは ADR 0387。標準のサラウンド・Ambisonic 詳細は ADR 0388。独自のポート詳細・曲からの表情生成等は残る |
 | F3 | 拍子の変化と小節の格子 | MOD-7 | P2-07 のテンポ・拍子マーカー |
 | F4 | テンポのランプの式 | MOD-14 | P2-07。今のテンポの索引はランプを持たない（`time.rs`） |
 | F5 | QWERTY の鍵盤を物理キーの位置で割り当てる | UI-4 | P2-07 の QWERTY 録音。指摘の場所は試作で、製品に該当の入力はない |

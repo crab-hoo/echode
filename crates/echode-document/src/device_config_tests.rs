@@ -3,7 +3,12 @@ use echode_sandbox::{PluginHost, SessionLayout, SpawnOptions};
 
 #[test]
 fn contract_audio_config_selection_records_plugin_state_once_and_releases_failures() {
-    check_edit("device.audio_config.select", r#", "id":206"#, r#", "id":1"#);
+    check_edit(
+        "device.audio_config.select",
+        r#", "id":206"#,
+        r#", "id":1"#,
+        None,
+    );
 }
 
 #[test]
@@ -12,10 +17,26 @@ fn contract_audio_port_changes_record_plugin_state_once_and_release_failures() {
         "device.audio_ports.apply",
         r#", "requests":[{"input":false,"index":0,"channels":1}]"#,
         r#", "requests":[{"input":false,"index":4294967295,"channels":1}]"#,
+        None,
+    );
+}
+#[test]
+fn contract_audio_port_details_cross_the_device_lane_and_state_history() {
+    check_edit(
+        "device.audio_ports.apply",
+        r#", "requests":[{"input":false,"index":0,"channels":1,"details":{"type":"surround","channel_map":[2]}}]"#,
+        r#", "requests":[{"input":false,"index":0,"channels":1,"details":{"type":"surround","channel_map":[0,1]}}]"#,
+        Some(1),
+    );
+    check_edit(
+        "device.audio_ports.apply",
+        r#", "requests":[{"input":false,"index":0,"channels":1,"details":{"type":"ambisonic","ordering":1,"normalization":1}}]"#,
+        r#", "requests":[{"input":false,"index":0,"channels":1,"details":{"type":"ambisonic","ordering":4294967295,"normalization":1}}]"#,
+        Some(2),
     );
 }
 
-fn check_edit(kind: &str, extra: &str, refused_extra: &str) {
+fn check_edit(kind: &str, extra: &str, refused_extra: &str, details_marker: Option<u8>) {
     let artifacts = std::env::current_exe()
         .unwrap()
         .parent()
@@ -62,7 +83,8 @@ fn check_edit(kind: &str, extra: &str, refused_extra: &str) {
     let mut editing = BTreeSet::new();
     let bytes = format!(r#"{{"type":"{kind}","device":"{device}"{extra}}}"#);
     let Resolution::Waiting(waiting) =
-        dispatch(&host, &mut audio, &mut editing, bytes.as_bytes(), true).unwrap()
+        dispatch(&host, &mut audio, &mut editing, bytes.as_bytes(), true)
+            .expect("typed audio-port details must reach the device lane")
     else {
         panic!("configuration edits must reach the device lane");
     };
@@ -78,6 +100,11 @@ fn check_edit(kind: &str, extra: &str, refused_extra: &str) {
         "change ports before capturing plugin-owned layout"
     );
     let selected = captured.as_ref().unwrap().clone();
+    assert_eq!(
+        captured.as_ref().unwrap().get(4).copied(),
+        details_marker,
+        "preserve typed details in plugin-owned state"
+    );
     let report = commit(&host, &mut audio, &mut editing, device, captured).unwrap();
     assert_eq!(report, br#"{"changed":true}"#);
     assert!(editing.is_empty());
@@ -101,12 +128,18 @@ fn check_edit(kind: &str, extra: &str, refused_extra: &str) {
         Some(hash.as_str())
     );
     control.restore_state(&initial).unwrap();
+    assert_eq!(control.capture_state().unwrap().get(4).copied(), None);
     let list: serde_json::Value =
         serde_json::from_slice(&round_trip(Some(&control), &Request::AudioConfigs).unwrap())
             .unwrap();
     assert_eq!(list["audio_configs"]["current_id"], 100);
     host.redo().unwrap();
     control.restore_state(&selected).unwrap();
+    assert_eq!(
+        control.capture_state().unwrap().get(4).copied(),
+        details_marker,
+        "restore typed details from the saved state"
+    );
     let list: serde_json::Value =
         serde_json::from_slice(&round_trip(Some(&control), &Request::AudioConfigs).unwrap())
             .unwrap();

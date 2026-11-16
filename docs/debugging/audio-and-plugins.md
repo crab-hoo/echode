@@ -308,6 +308,10 @@ Undo が増えない時は選択・取得・記録のどこが失敗したかと
 実ヘルパーの状態と再オープンは `device-audio-config-state`、実ボタンと ID・古い応答は `device-audio-config-ui` を使う。
 任意変更のフォームは `device.audio_ports.apply` で全行を一度に送り、選択と同じ状態取得・記録を使う（[ADR 0387](../decisions/0387-device-audio-port-change-form.md)）。
 入力・取消に IPC はない。古いフォームの拒否は既存の要求世代、入力欄は `DeviceAudioPortEditor.swift` を確認し、文書の publication 後は開き直す。
+標準の詳細は `AudioPortDetailsEditor.swift` と `AudioPortDetails` で扱う（[ADR 0388](../decisions/0388-typed-clap-audio-port-details.md)）。
+サラウンドはカンマ区切りのコードをバッファ順に入力し、チャンネル数と同じ数の 0〜255 の整数が必要である。空の配置は拒否する。無効化・削除は自動モードの 0 を使う。
+適用前に拒否される長さ違いと、プラグインが拒否する配置・Ambisonic の設定を区別する。コードは拡張の定数であり、ポート番号ではない。
+状態に残らない時はプラグインの state 対応を調べる。標準の詳細の通信と復元は `device-audio-port-details-state`、画面の一括要求は `device-audio-port-details-ui` を使う。
 フォームの破棄が画面へ届かない時は、`DeviceListChange.audioConfigRevision` と `DeviceAudioConfigState` の要求世代が Observation の対象かを調べる。一覧がない状態の無効化も通知する必要がある。
 拡張の有無や番号の適否は適用時に判定する。`device-audio-ports-state` と `device-audio-ports-ui` が状態と一括送信の境界を照合する。
 回帰は上の `audio_ports::` の 2 つの入口と `audio_configs_tests.rs`、第三者の保存・聴感は UC-97・UC-98 を使う。

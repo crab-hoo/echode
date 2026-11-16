@@ -104,6 +104,10 @@ fn check_port_change(action: PortAction) {
                 input: false,
                 index: 0,
                 channels: 1,
+                details: Some(echode_sandbox::AudioPortDetails::Ambisonic {
+                    ordering: 1,
+                    normalization: 1,
+                }),
             }];
             assert!(
                 plugin

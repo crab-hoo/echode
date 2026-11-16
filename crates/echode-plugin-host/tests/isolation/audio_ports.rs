@@ -155,6 +155,7 @@ fn missing_audio_config_extension_is_a_typed_refusal_and_audio_resumes_under_rts
         input: true,
         index: 0,
         channels: 1,
+        details: None,
     }];
     for result in [
         host.control_handle()
@@ -210,6 +211,7 @@ fn configurable_audio_ports_and_config_info_exchange_ports_under_rtsan() {
         input: true,
         index: 0,
         channels: 6,
+        details: None,
     }];
     assert!(
         !host
@@ -222,11 +224,13 @@ fn configurable_audio_ports_and_config_info_exchange_ports_under_rtsan() {
             input: true,
             index: 1,
             channels: 0,
+            details: None,
         },
         AudioPortRequest {
             input: true,
             index: 0,
             channels: 1,
+            details: None,
         },
     ];
     assert!(
@@ -264,6 +268,7 @@ fn configurable_audio_ports_and_config_info_exchange_ports_under_rtsan() {
         input: false,
         index: 0,
         channels: 1,
+        details: Some(echode_sandbox::AudioPortDetails::Surround(vec![2])),
     }];
     host.control_handle()
         .apply_audio_port_configuration(&mono_both)

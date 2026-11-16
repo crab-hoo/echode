@@ -74,6 +74,29 @@ struct PortChange {
     input: bool,
     index: u32,
     channels: u32,
+    #[serde(default)]
+    details: Option<PortDetails>,
+}
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+enum PortDetails {
+    Surround { channel_map: Vec<u8> },
+    Ambisonic { ordering: u32, normalization: u32 },
+}
+
+impl From<PortDetails> for echode_sandbox::AudioPortDetails {
+    fn from(details: PortDetails) -> Self {
+        match details {
+            PortDetails::Surround { channel_map } => Self::Surround(channel_map),
+            PortDetails::Ambisonic {
+                ordering,
+                normalization,
+            } => Self::Ambisonic {
+                ordering,
+                normalization,
+            },
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -177,6 +200,7 @@ pub(crate) fn dispatch(
                         input: request.input,
                         index: request.index,
                         channels: request.channels,
+                        details: request.details.map(Into::into),
                     })
                     .collect(),
             ),

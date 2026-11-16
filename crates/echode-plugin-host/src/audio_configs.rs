@@ -2,6 +2,7 @@
 use crate::extension::{table, table_with_compat};
 use crate::threads::EchodeHost;
 use clack_host::extensions::prelude::*;
+use clap_sys::ext::ambisonic::{CLAP_PORT_AMBISONIC, clap_ambisonic_config};
 use clap_sys::ext::audio_ports::{CLAP_PORT_MONO, CLAP_PORT_STEREO};
 use clap_sys::ext::audio_ports_config::{
     CLAP_EXT_AUDIO_PORTS_CONFIG, CLAP_EXT_AUDIO_PORTS_CONFIG_INFO,
@@ -12,11 +13,13 @@ use clap_sys::ext::configurable_audio_ports::{
     CLAP_EXT_CONFIGURABLE_AUDIO_PORTS, CLAP_EXT_CONFIGURABLE_AUDIO_PORTS_COMPAT,
     clap_audio_port_configuration_request, clap_plugin_configurable_audio_ports,
 };
+use clap_sys::ext::surround::CLAP_PORT_SURROUND;
 use clap_sys::host::clap_host;
 use clap_sys::id::CLAP_INVALID_ID;
 use clap_sys::plugin::clap_plugin;
 use echode_sandbox::{
-    AudioPortConfig, AudioPortConfigs, AudioPortRequest, PluginFailure, PortLayout,
+    AudioPortConfig, AudioPortConfigs, AudioPortDetails, AudioPortRequest, PluginFailure,
+    PortLayout,
 };
 use std::collections::HashSet;
 use std::ffi::{CStr, c_char};
@@ -212,16 +215,52 @@ fn invoke_requests(
 ) -> Result<bool, PluginFailure> {
     let count =
         u32::try_from(requests.len()).map_err(|_| PluginFailure::ConfigurableAudioPortsRefused)?;
-    let c_requests: Vec<_> = requests
+    // Own every ABI-specific value before building pointers; neither vector moves
+    // or grows during the callback. Surround maps remain borrowed from `requests`.
+    let ambisonic: Vec<_> = requests
         .iter()
-        .map(|request| clap_audio_port_configuration_request {
-            is_input: request.input,
-            port_index: request.index,
-            channel_count: request.channels,
-            port_type: port_type_ptr(request.channels),
-            port_details: ptr::null(),
+        .map(|request| match request.details {
+            Some(AudioPortDetails::Ambisonic {
+                ordering,
+                normalization,
+            }) => clap_ambisonic_config {
+                ordering,
+                normalization,
+            },
+            _ => clap_ambisonic_config {
+                ordering: 0,
+                normalization: 0,
+            },
         })
         .collect();
+    let c_requests: Vec<_> = requests
+        .iter()
+        .zip(&ambisonic)
+        .map(|(request, ambisonic)| {
+            let (port_type, port_details) = match &request.details {
+                None => (port_type_ptr(request.channels), ptr::null()),
+                Some(AudioPortDetails::Surround(map)) => {
+                    // CLAP reads channel_count bytes. Reject a short OR long map
+                    // before lending any pointer, including the empty map case.
+                    if map.len() != request.channels as usize || map.is_empty() {
+                        return Err(PluginFailure::ConfigurableAudioPortsRefused);
+                    }
+                    (CLAP_PORT_SURROUND.as_ptr(), map.as_ptr().cast())
+                }
+                Some(AudioPortDetails::Ambisonic { .. }) => (
+                    CLAP_PORT_AMBISONIC.as_ptr(),
+                    ptr::from_ref(ambisonic).cast(),
+                ),
+            };
+            Ok(clap_audio_port_configuration_request {
+                is_input: request.input,
+                port_index: request.index,
+                channel_count: request.channels,
+                port_type,
+                port_details,
+            })
+        })
+        .collect::<Result<_, _>>()?;
     let ptr = if c_requests.is_empty() {
         ptr::null()
     } else {

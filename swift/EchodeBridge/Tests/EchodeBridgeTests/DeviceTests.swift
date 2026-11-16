@@ -22,6 +22,24 @@ struct DeviceTests {
         #expect((ports[1]["channels"] as? NSNumber)?.uint32Value == .max)
     }
 
+    @Test func audioPortDetailsEncodeAsTaggedOwnedValues() throws {
+        let requests = [
+            DeviceAudioPortChange(input: true, index: 0, channels: 3, details: .surround(channelMap: [5, 0, 2])),
+            DeviceAudioPortChange(
+                input: false, index: 0, channels: 4, details: .ambisonic(ordering: 1, normalization: 2)),
+            DeviceAudioPortChange(input: false, index: 1, channels: 2),
+        ]
+        let data = try JSONEncoder().encode(DeviceCommand.applyAudioPorts(device: UUID(), requests: requests))
+        let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let ports = try #require(object["requests"] as? [[String: Any]])
+        let map = try #require(ports[0]["details"] as? [String: Any])
+        #expect(map["type"] as? String == "surround" && map["channel_map"] as? [Int] == [5, 0, 2])
+        let ambisonic = try #require(ports[1]["details"] as? [String: Any])
+        #expect(ambisonic["type"] as? String == "ambisonic")
+        #expect(ambisonic["ordering"] as? Int == 1 && ambisonic["normalization"] as? Int == 2)
+        #expect(ports[2]["details"] == nil, "automatic layout remains compatible with old requests")
+    }
+
     @Test func audioConfigCommandsAndReportsUsePluginIDs() throws {
         let device = UUID()
         for (command, kind, id) in [

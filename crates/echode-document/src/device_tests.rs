@@ -58,6 +58,12 @@ fn audio_config_commands_resolve_on_the_device_lane_and_selection_captures() {
         r#"[{"input":false,"index":0,"channels":4294967296}]"#,
         r#"[{"input":false,"index":0,"channels":1.5}]"#,
         r#"[{"input":false,"index":0,"channels":1,"extra":true}]"#,
+        r#"[{"input":false,"index":0,"channels":1,"details":{"type":"surround","channel_map":[256]}}]"#,
+        r#"[{"input":false,"index":0,"channels":1,"details":{"type":"surround","channel_map":[-1]}}]"#,
+        r#"[{"input":false,"index":0,"channels":1,"details":{"type":"surround"}}]"#,
+        r#"[{"input":false,"index":0,"channels":1,"details":{"type":"ambisonic","ordering":1}}]"#,
+        r#"[{"input":false,"index":0,"channels":1,"details":{"type":"ambisonic","ordering":1,"normalization":1,"extra":0}}]"#,
+        r#"[{"input":false,"index":0,"channels":1,"details":{"type":"unknown"}}]"#,
     ] {
         let bytes = format!(
             r#"{{"type":"device.audio_ports.apply","device":"{device}","requests":{requests}}}"#

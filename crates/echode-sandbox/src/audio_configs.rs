@@ -28,11 +28,18 @@ pub struct AudioPortConfig {
 }
 
 /// One requested port shape for `clap.configurable-audio-ports`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AudioPortRequest {
     pub input: bool,
     pub index: u32,
     pub channels: u32,
+    pub details: Option<AudioPortDetails>,
+}
+/// Owned control data. Only the helper turns these values into CLAP pointers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AudioPortDetails {
+    Surround(Vec<u8>),
+    Ambisonic { ordering: u32, normalization: u32 },
 }
 
 fn push_u32s(body: &mut Vec<u8>, values: &[u32]) {
@@ -118,12 +125,28 @@ pub(crate) fn decode(body: &[u8]) -> io::Result<AudioPortConfigs> {
 }
 
 pub(crate) fn encode_requests(requests: &[AudioPortRequest]) -> Vec<u8> {
-    let mut body = Vec::with_capacity(4 + requests.len() * 9);
+    let mut body = Vec::with_capacity(4 + requests.len() * 10);
     body.extend_from_slice(&len32(requests.len()).to_le_bytes());
     for request in requests {
         body.push(u8::from(request.input));
         body.extend_from_slice(&request.index.to_le_bytes());
         body.extend_from_slice(&request.channels.to_le_bytes());
+        match &request.details {
+            None => body.push(0),
+            Some(AudioPortDetails::Surround(map)) => {
+                body.push(1);
+                body.extend_from_slice(&len32(map.len()).to_le_bytes());
+                body.extend_from_slice(map);
+            }
+            Some(AudioPortDetails::Ambisonic {
+                ordering,
+                normalization,
+            }) => {
+                body.push(2);
+                body.extend_from_slice(&ordering.to_le_bytes());
+                body.extend_from_slice(&normalization.to_le_bytes());
+            }
+        }
     }
     body
 }
@@ -131,11 +154,22 @@ pub(crate) fn encode_requests(requests: &[AudioPortRequest]) -> Vec<u8> {
 pub(crate) fn decode_requests(body: &[u8]) -> io::Result<Vec<AudioPortRequest>> {
     use ParamField::*;
     let mut cursor = Cursor::new(ParamPayload::AudioPortRequests, body);
-    let requests = cursor.list(Count, 9, |cursor, _| {
+    let requests = cursor.list(Count, 10, |cursor, _| {
         Ok(AudioPortRequest {
             input: cursor.flag(PortSide)?,
             index: cursor.u32(PortIndex)?,
             channels: cursor.u32(PortChannels)?,
+            details: match cursor.u8(PortDetails)? {
+                0 => None,
+                1 => Some(AudioPortDetails::Surround(
+                    cursor.bytes(ChannelMapCount, ChannelMap)?,
+                )),
+                2 => Some(AudioPortDetails::Ambisonic {
+                    ordering: cursor.u32(AmbisonicOrdering)?,
+                    normalization: cursor.u32(AmbisonicNormalization)?,
+                }),
+                value => return Err(crate::PayloadDecodeError::UnknownPortDetails(value).into()),
+            },
         })
     })?;
     cursor.finish()?;

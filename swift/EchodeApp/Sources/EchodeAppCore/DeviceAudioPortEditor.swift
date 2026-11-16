@@ -66,9 +66,9 @@ final class DeviceAudioPortEditor: NSView {
         let width = max(0, bounds.width - 24)
         help.frame = CGRect(x: 12, y: 12, width: width, height: 74)
         scroll.frame = CGRect(x: 12, y: 94, width: width, height: max(0, bounds.height - 150))
-        contents.frame = CGRect(x: 0, y: 0, width: scroll.contentSize.width, height: Double(rows.count) * 34)
+        contents.frame = CGRect(x: 0, y: 0, width: scroll.contentSize.width, height: Double(rows.count) * 68)
         for (index, row) in rows.enumerated() {
-            row.frame = CGRect(x: 0, y: Double(index) * 34, width: contents.bounds.width, height: 32)
+            row.frame = CGRect(x: 0, y: Double(index) * 68, width: contents.bounds.width, height: 64)
         }
         add.frame = CGRect(x: 12, y: bounds.height - 44, width: 150, height: 30)
         cancel.frame = CGRect(x: bounds.width - 230, y: bounds.height - 44, width: 80, height: 30)
@@ -93,6 +93,7 @@ final class AudioPortChangeRow: NSView, NSTextFieldDelegate {
     let index = NSTextField(string: "0")
     let channels = NSTextField(string: "2")
     let remove = NSButton(title: text("Remove"), target: nil, action: nil)
+    let details = AudioPortDetailsEditor(frame: .zero)
     var onChange: (() -> Void)?
     var onRemove: (() -> Void)?
     override var isFlipped: Bool { true }
@@ -109,6 +110,8 @@ final class AudioPortChangeRow: NSView, NSTextFieldDelegate {
             field.toolTip = text(label)
             field.setAccessibilityLabel(text(label))
         }
+        details.onChange = { [weak self] in self?.onChange?() }
+        addSubview(details)
         remove.bezelStyle = .rounded
         remove.target = self
         remove.action = #selector(removeRow)
@@ -125,7 +128,8 @@ final class AudioPortChangeRow: NSView, NSTextFieldDelegate {
             return UInt32(value)
         }
         guard let index = number(index), let channels = number(channels) else { return nil }
-        return DeviceAudioPortChange(input: direction.indexOfSelectedItem == 0, index: index, channels: channels)
+        return details.applying(
+            to: DeviceAudioPortChange(input: direction.indexOfSelectedItem == 0, index: index, channels: channels))
     }
 
     override func layout() {
@@ -135,6 +139,7 @@ final class AudioPortChangeRow: NSView, NSTextFieldDelegate {
         index.frame = CGRect(x: 110, y: 4, width: fieldWidth, height: 24)
         channels.frame = CGRect(x: 116 + fieldWidth, y: 4, width: fieldWidth, height: 24)
         remove.frame = CGRect(x: bounds.width - 74, y: 2, width: 74, height: 28)
+        details.frame = CGRect(x: 0, y: 34, width: bounds.width, height: 28)
     }
 
     func controlTextDidChange(_ obj: Notification) { onChange?() }

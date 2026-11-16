@@ -567,8 +567,8 @@
     },
     "Audio port changes help": {
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Enter only the ports to change. Each row: direction, zero-based port index, channel count (0 requests disabling/removal). Unlisted ports stay unchanged. Apply interrupts audio, may be refused, and saves the plugin's state as one undoable edit. Special port types are not supported." } },
-        "ja": { "stringUnit": { "state": "translated", "value": "変更するポートだけ入力します。各行は入出力・0 始まりのポート番号・チャンネル数です（0 は無効化・削除の要求）。未指定のポートはそのままです。適用は音声を中断し、拒否される場合があります。状態を 1 回の取り消せる編集として保存します。特殊なポート種別は未対応です。" } }
+        "en": { "stringUnit": { "state": "translated", "value": "Enter only the ports to change. Each row: direction, zero-based port index, channel count (0 requests disabling/removal). Unlisted ports stay unchanged. Apply interrupts audio, may be refused, and saves the plugin's state as one undoable edit. Layout is automatic, surround (one channel code per channel), or Ambisonic (ordering and normalization)." } },
+        "ja": { "stringUnit": { "state": "translated", "value": "変更するポートだけ入力します。各行は入出力・0 始まりのポート番号・チャンネル数です（0 は無効化・削除の要求）。未指定のポートはそのままです。適用は音声を中断し、拒否される場合があります。状態を 1 回の取り消せる編集として保存します。配置は自動・サラウンド（各チャンネルのコード）・Ambisonic（順序と正規化）から選びます。" } }
       }
     },
     "Audio port input": {
@@ -599,6 +599,42 @@
       "localizations": {
         "en": { "stringUnit": { "state": "translated", "value": "Channels (0 to disable/remove)" } },
         "ja": { "stringUnit": { "state": "translated", "value": "チャンネル数（0 は無効化・削除）" } }
+      }
+    },
+    "Audio port automatic layout": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Automatic Layout" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "自動の配置" } }
+      }
+    },
+    "Audio port layout": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Port Layout" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "ポートの配置" } }
+      }
+    },
+    "Surround channel map": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Surround Channel Codes (comma separated)" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "サラウンドのチャンネルコード（カンマ区切り）" } }
+      }
+    },
+    "Surround channel map help": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Enter one CLAP channel code per channel, in buffer order. 0=FL, 1=FR, 2=FC, 3=LFE, 4=BL, 5=BR, 6=FLC, 7=FRC, 8=BC, 9=SL, 10=SR, 11=TC, 12=TFL, 13=TFC, 14=TFR, 15=TBL, 16=TBC, 17=TBR. The plugin decides which layouts it accepts." } },
+        "ja": { "stringUnit": { "state": "translated", "value": "バッファの順に各チャンネルの CLAP コードを入力します。0=FL, 1=FR, 2=FC, 3=LFE, 4=BL, 5=BR, 6=FLC, 7=FRC, 8=BC, 9=SL, 10=SR, 11=TC, 12=TFL, 13=TFC, 14=TFR, 15=TBL, 16=TBC, 17=TBR。受けられる配置はプラグインが判定します。" } }
+      }
+    },
+    "Ambisonic ordering": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Ambisonic Channel Ordering" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "Ambisonic のチャンネル順序" } }
+      }
+    },
+    "Ambisonic normalization": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Ambisonic Normalization" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "Ambisonic の正規化" } }
       }
     },
     "Audio configuration interruption help": {

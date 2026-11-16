@@ -22,6 +22,78 @@ struct DeviceAudioPortTests {
         #expect(fired.withLock { $0 }, "empty-state invalidation must notify the draft's revision observer")
     }
 
+    @Test func contractAudioPortDetailsFormPreservesMapsAndAmbisonicSettings() async throws {
+        let plugin = ConfigPlugin()
+        let (controller, document, track, device, url) = try await DeviceAudioConfigTests().project(plugin)
+        defer { removeTestFile(url) }
+        let state = try #require(controller.parameterState(device))
+        let strip = DeviceStripView(frame: CGRect(x: 0, y: 0, width: 640, height: 420))
+        var pending: Task<Void, Never>?
+        strip.onApplyAudioPorts = { id, requests in
+            pending = Task { await controller.applyAudioPorts(requests, device: id, documentID: document) }
+        }
+        strip.configure(
+            devices: controller.deviceRows(on: track), track: track, document: document,
+            busy: false, states: [device: state], collapsed: [])
+        let view = try #require(strip.columns.first?.audioConfigs)
+        view.change.performClick(nil)
+        let editor = try #require(view.portEditor)
+        let surround = try #require(editor.rows.first)
+        surround.channels.stringValue = "3"
+        surround.details.kind.selectItem(at: 1)
+        surround.details.channelMap.stringValue = "5, 0,2"
+        surround.details.changed()
+        editor.add.performClick(nil)
+        let ambisonic = try #require(editor.rows.last)
+        ambisonic.direction.selectItem(at: 1)
+        ambisonic.channels.stringValue = "4"
+        ambisonic.details.kind.selectItem(at: 2)
+        ambisonic.details.ordering.selectItem(at: 1)
+        ambisonic.details.normalization.selectItem(at: 2)
+        ambisonic.details.changed()
+        #expect(!surround.details.channelMap.isHidden && surround.details.ordering.isHidden)
+        #expect(ambisonic.details.channelMap.isHidden && !ambisonic.details.normalization.isHidden)
+        let expected = [
+            DeviceAudioPortChange(input: true, index: 0, channels: 3, details: .surround(channelMap: [5, 0, 2])),
+            DeviceAudioPortChange(
+                input: false, index: 0, channels: 4, details: .ambisonic(ordering: 1, normalization: 2)),
+        ]
+        #expect(editor.requests == expected)
+        let before = controller.undoCount
+        editor.apply.performClick(nil)
+        await pending?.value
+        #expect(await plugin.applications == [expected], "preserve both typed port details in one application")
+        #expect(await plugin.reads == 0, "selecting details must not enumerate or query capabilities")
+        #expect(controller.undoCount == before + 1)
+        await controller.undo()
+        #expect(controller.undoCount == before)
+        await controller.redo()
+        #expect(controller.undoCount == before + 1)
+        await controller.close()
+    }
+
+    @Test func surroundDraftRejectsInvalidMapsAndDoesNotNarrowChannelCodes() throws {
+        let editor = DeviceAudioPortEditor(frame: CGRect(x: 0, y: 0, width: 500, height: 320))
+        let row = try #require(editor.rows.first)
+        row.details.kind.selectItem(at: 1)
+        for map in ["", "0", "0,1,2", "0,", ",1", "0,,1", "-1,1", "0,256", "0,1.0", "٠,1"] {
+            row.details.channelMap.stringValue = map
+            row.details.changed()
+            #expect(editor.requests == nil && !editor.apply.isEnabled)
+        }
+        row.details.channelMap.stringValue = "255, 17"
+        row.details.changed()
+        #expect(editor.requests?.first?.details == .surround(channelMap: [255, 17]))
+        #expect(editor.apply.isEnabled)
+        row.channels.stringValue = "0"
+        row.controlTextDidChange(Notification(name: NSText.didChangeNotification))
+        #expect(editor.requests == nil && !editor.apply.isEnabled)
+        row.details.kind.selectItem(at: 0)
+        row.details.changed()
+        #expect(editor.requests?.first?.channels == 0 && editor.requests?.first?.details == nil)
+        #expect(editor.apply.isEnabled)
+    }
+
     @Test func contractAudioPortFormAppliesOneBatchAsOneEditWithoutEnumeration() async throws {
         let plugin = ConfigPlugin()
         let (controller, document, track, device, url) = try await DeviceAudioConfigTests().project(plugin)

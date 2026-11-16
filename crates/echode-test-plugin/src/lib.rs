@@ -1623,9 +1623,9 @@ unsafe extern "C" fn state_load(plugin: *const clap_plugin, stream: *const clap_
         return false;
     }
     if fault_now() == Fault::AudioPorts {
-        // One byte changes the fixture directly; four bytes restore its saved
-        // probe snapshot. This buffer sizes the fixture's state, not the host.
-        let mut bytes = [0u8; 5];
+        // One byte changes the fixture; four or five restore its saved probe.
+        // This buffer sizes only the fixture state and rejects a trailing byte.
+        let mut bytes = [0u8; 6];
         // SAFETY: stream is live and the buffer holds the requested bytes.
         let count = unsafe {
             let Some(read) = (*stream).read else {
@@ -1635,14 +1635,19 @@ unsafe extern "C" fn state_load(plugin: *const clap_plugin, stream: *const clap_
         };
         let layout = match count {
             1 => bytes[0],
-            4 => bytes[3],
+            4 | 5 => bytes[3],
             _ => return false,
         };
+        let details = if count == 5 { bytes[4] } else { 0 };
+        if details > 2 {
+            return false;
+        }
         // SAFETY: the host passes the live plugin on its main thread.
         return unsafe {
             PluginWrapper::<TestGain>::handle(plugin, |wrapper| {
                 wrapper.main_thread().mark_dirty();
                 audio_ports::change(wrapper.main_thread().host.shared(), layout);
+                audio_ports::set_details(details);
                 Ok(true)
             })
         }

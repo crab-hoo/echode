@@ -2,7 +2,7 @@
 
 <!-- scripts/documentation.py --write-adr-index で自動生成。直接編集せず、各 ADR の `- 状態:` / `- 領域:` を更新する。 -->
 
-全 387 件の設計判断を領域別・状態別に並べる。日々の作業で現在有効な制約を確かめる時は「現行・一部置換」を見る。
+全 388 件の設計判断を領域別・状態別に並べる。日々の作業で現在有効な制約を確かめる時は「現行・一部置換」を見る。
 
 ## 集計
 
@@ -11,10 +11,10 @@
 | [全体方針・計画](#全体方針計画) | 12 | 10 | 2 | 0 | 0 |
 | [モデル・履歴・保存・API](#モデル履歴保存api) | 82 | 73 | 8 | 0 | 1 |
 | [音声エンジン・書き出し](#音声エンジン書き出し) | 103 | 74 | 27 | 2 | 0 |
-| [プラグイン・隔離](#プラグイン隔離) | 74 | 61 | 13 | 0 | 0 |
+| [プラグイン・隔離](#プラグイン隔離) | 75 | 60 | 15 | 0 | 0 |
 | [UI・描画・入力](#ui描画入力) | 62 | 54 | 8 | 0 | 0 |
 | [ビルド・検査・開発基盤](#ビルド検査開発基盤) | 54 | 38 | 16 | 0 | 0 |
-| 合計 | 387 | 310 | 74 | 2 | 1 |
+| 合計 | 388 | 309 | 76 | 2 | 1 |
 
 ## 全体方針・計画
 
@@ -317,7 +317,7 @@
 | [0311](0311-typed-shared-memory-errors.md) | 現行 | 共有メモリの失敗で操作と errno を保持する |
 | [0312](0312-typed-control-text-errors.md) | 現行 | 制御メッセージの不正な UTF-8 の原因を保持する |
 
-#### ADR 0313〜0387
+#### ADR 0313〜0388
 
 | ADR | 状態 | 表題 |
 |---|---|---|
@@ -352,9 +352,10 @@
 | [0381](0381-mpe-note-expression.md) | 現行 | MPE の表情は単独所有中のメンバーへ送り、ノートオン前に初期値を送る |
 | [0382](0382-audio-port-changes-exchange-mapping-and-routing.md) | 現行 | 音声ポートの変更を、共有領域と親のルーティングの交換として接続する |
 | [0384](0384-clap-audio-port-config-selection.md) | 現行 | CLAP の音声構成を明示要求で走査・選択する |
-| [0385](0385-clap-configurable-audio-ports-and-config-info.md) | 現行 | CLAP の audio-ports-config-info と configurable-audio-ports を無効化中に接続する |
+| [0385](0385-clap-configurable-audio-ports-and-config-info.md) | 一部置換（[0388](0388-typed-clap-audio-port-details.md)） | CLAP の audio-ports-config-info と configurable-audio-ports を無効化中に接続する |
 | [0386](0386-device-audio-configuration-controls.md) | 現行 | 音声構成を明示読込みのデバイス操作と単一の状態編集へ接続する |
-| [0387](0387-device-audio-port-change-form.md) | 現行 | 任意の音声ポート変更を明示フォームと単一の状態編集へ接続する |
+| [0387](0387-device-audio-port-change-form.md) | 一部置換（[0388](0388-typed-clap-audio-port-details.md)） | 任意の音声ポート変更を明示フォームと単一の状態編集へ接続する |
+| [0388](0388-typed-clap-audio-port-details.md) | 現行 | CLAP の音声ポート詳細を所有する型としてフォームからヘルパーへ送る |
 
 ## UI・描画・入力
 

@@ -407,6 +407,8 @@ CLAP の音声ポートの対応フラグと `read_port_channels` は `echode-pl
 `Remap` は `SessionLayout` と `PortLayout` を運び、処理器と共有領域の構成が一致するブロックだけを処理する。
 有効化で構成が変われば `PortsChanged` で親の改訂を進め、`PluginHost::prepare_mapping_for` / `follow_ports` と `echode-engine/src/plugins.rs` が共有領域とルーティングを同じ計画で交換する。
 CLAP の構成一覧・`audio-ports-config-info`・ID 選択・`configurable-audio-ports` は `echode-plugin-host/src/audio_configs.rs`、互換表探索は `extension.rs::table_with_compat`、制御 API と本文の読書きは `echode-sandbox/src/session_operations.rs`・`audio_configs.rs` に置く。
+標準のサラウンド・Ambisonic 詳細は `AudioPortDetails` と同ファイルの符号化・復号、ABI の借用はホストの `invoke_requests`、画面は `AudioPortDetailsEditor.swift` に置く（[ADR 0388](decisions/0388-typed-clap-audio-port-details.md)）。
+長さ・型・本文境界は各 `audio_configs_tests.rs`、実状態の印と保存・復元は `device_config_tests.rs`、入力と一括送信は `DeviceAudioPortTests.swift` を使う。
 `MainRequests` の無効化専用の要求は既存の再起動世代で処理器を返してから実行する（[ADR 0384](decisions/0384-clap-audio-port-config-selection.md)、[ADR 0385](decisions/0385-clap-configurable-audio-ports-and-config-info.md)）。
 デバイス列からの明示読込みと ID 選択は `DeviceAudioConfigs.swift`・`DeviceAudioConfigView.swift`、文書コマンドの選択・取得と編集の保留は `echode-document/src/device.rs` に置く。
 画面の回帰は `DeviceAudioConfigTests.swift`、実ヘルパーのバイト・Undo/Redo・再オープンは `device_config_tests.rs` を使う（[ADR 0386](decisions/0386-device-audio-configuration-controls.md)）。
