@@ -34,6 +34,10 @@ pub enum PlaybackError {
     },
     /// An audio placement's content is neither mono nor stereo.
     ClipChannels,
+    /// No first auxiliary input, unsupported width, or implicit stereo -> mono.
+    SidechainMapping {
+        device: u128,
+    },
     /// The device's main ports are not a mono/stereo layout this host can run.
     BusMapping {
         device: u128,
@@ -112,6 +116,12 @@ impl fmt::Display for PlaybackError {
                 );
             }
             Self::ClipChannels => "audio placement requires a mono or stereo layout",
+            Self::SidechainMapping { device } => {
+                return write!(
+                    formatter,
+                    "device {device}: sidechain requires a compatible mono/stereo first auxiliary input"
+                );
+            }
             Self::BusMapping { device, clap_id } => {
                 return write!(
                     formatter,

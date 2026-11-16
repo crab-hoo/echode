@@ -15,8 +15,10 @@ pub(super) struct Bus {
     next_sibling: Vec<Option<usize>>,
     first_root: Option<usize>,
     children: Vec<u32>,
+    dependents: Vec<Vec<usize>>,
+    dependencies: Vec<usize>,
     /// Children of each track still running in this block.
-    waiting: Vec<u32>,
+    waiting: Vec<usize>,
     /// Tracks whose children have all finished, not yet started.
     ready: Vec<usize>,
     /// Keys of hosted tracks that finished, filled by `HostGraph::progress`.
@@ -68,7 +70,12 @@ impl Bus {
             }
         }
         Self {
-            waiting: children.clone(),
+            waiting: children.iter().map(|&n| n as usize).collect(),
+            dependencies: children.iter().map(|&n| n as usize).collect(),
+            dependents: parents
+                .iter()
+                .map(|parent| parent.iter().copied().collect())
+                .collect(),
             ready: Vec::with_capacity(count),
             finished: Vec::with_capacity(count),
             parents,
@@ -81,6 +88,47 @@ impl Bus {
         }
     }
 
+    /// Use the exact routes solved for PDC, including parallel edges. Each edge
+    /// increments and releases one dependency; folder membership stays separate.
+    pub(super) fn route(
+        &mut self,
+        routes: &crate::compensation::Routes<'_>,
+    ) -> Result<(), crate::PlaybackError> {
+        for links in &mut self.dependents {
+            links.clear();
+        }
+        self.dependencies.fill(0);
+        for (from, to) in routes
+            .tracks
+            .iter()
+            .enumerate()
+            .filter_map(|(from, track)| track.parent.map(|to| (from, to)))
+            .chain(routes.sends.iter().map(|route| (route.from, route.to)))
+            .chain(
+                routes
+                    .sidechains
+                    .iter()
+                    .map(|route| (route.from, route.track)),
+            )
+        {
+            self.dependents
+                .get_mut(from)
+                .ok_or(crate::PlaybackError::Misaligned)?
+                .push(to);
+            let count = self
+                .dependencies
+                .get_mut(to)
+                .ok_or(crate::PlaybackError::Misaligned)?;
+            *count = count
+                .checked_add(1)
+                .ok_or(crate::PlaybackError::Misaligned)?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn independent(&self, position: usize) -> bool {
+        self.dependencies.get(position) == Some(&0)
+    }
     /// Each track's parent position, in plan order.
     pub(super) fn parents(&self) -> &[Option<usize>] {
         &self.parents
@@ -105,8 +153,8 @@ impl Bus {
     }
 
     pub(super) fn begin(&mut self) {
-        for (waiting, children) in self.waiting.iter_mut().zip(&self.children) {
-            *waiting = *children;
+        for (waiting, dependencies) in self.waiting.iter_mut().zip(&self.dependencies) {
+            *waiting = *dependencies;
         }
         self.ready.clear();
         self.finished.clear();
@@ -118,25 +166,22 @@ impl Bus {
         self.started = self.started.saturating_add(1);
     }
 
-    /// A track has its output for this block. Its parent becomes ready with
-    /// the last child.
+    /// A source has its output. Each outgoing edge releases one dependency;
+    /// the last source makes the receiver ready.
     pub(super) fn finish(&mut self, position: usize) {
-        let Some(Some(parent)) = self.parents.get(position).copied() else {
-            return;
-        };
-        let Some(waiting) = self.waiting.get_mut(parent) else {
-            return;
-        };
-        *waiting = waiting.saturating_sub(1);
-        if *waiting != 0 {
-            return;
-        }
-        // Each parent is pushed once per block, and `ready` holds one place
-        // per track, so this never grows the vector.
-        if self.ready.len() < self.ready.capacity() {
-            self.ready.push(parent);
-        } else {
-            self.overflow = true;
+        for &target in self.dependents.get(position).into_iter().flatten() {
+            let Some(waiting) = self.waiting.get_mut(target) else {
+                continue;
+            };
+            *waiting = waiting.saturating_sub(1);
+            if *waiting == 0 {
+                // One ready entry per track; capacity is prepared on control.
+                if self.ready.len() < self.ready.capacity() {
+                    self.ready.push(target);
+                } else {
+                    self.overflow = true;
+                }
+            }
         }
     }
 

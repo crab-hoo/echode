@@ -387,6 +387,8 @@ struct Stage {
     /// Channels of the first output port. Those are the track's audio.
     main_outputs: usize,
     main_inputs: usize,
+    main_delay: Delay,
+    key_fault: Option<usize>,
     /// Two planes when this mono first instrument starts a stereo track source.
     /// Its output enters both at equal power and placed audio keeps its own
     /// channels, so no stereo source is folded to mono (ADR 0095, ADR 0337).
@@ -575,8 +577,12 @@ impl HostGraph {
 
     /// Clear per-block diagnostics before preparing the stages' event clocks.
     pub(crate) fn begin_block(&mut self) {
-        for stage in self.tracks.iter().flat_map(|track| &track.stages) {
+        for stage in self.tracks.iter_mut().flat_map(|track| &mut track.stages) {
             stage.instance.failure.store(0, Ordering::Release);
+            stage.key_fault = None;
+            for plane in stage.input.iter_mut().skip(stage.main_inputs) {
+                plane.fill(0.0);
+            }
         }
         self.report.export_reason = 0;
         self.report.misses.clear();
@@ -746,6 +752,7 @@ impl HostGraph {
         &self,
         mut instrument_delays: Vec<(u32, Delay)>,
         stage_inputs: &[(u128, u64)],
+        stage_delays: &[(u128, u64)],
         transport_capacity: usize,
         scores: &[(u32, crate::plugin_notes::Score)],
     ) -> Result<Self, PlaybackError> {
@@ -806,6 +813,14 @@ impl HostGraph {
                                 output: stage.output.clone(),
                                 main_outputs: stage.main_outputs,
                                 main_inputs: stage.main_inputs,
+                                main_delay: Delay::new(
+                                    stage_delays
+                                        .iter()
+                                        .find(|entry| entry.0 == stage.device)
+                                        .map_or(0, |entry| entry.1),
+                                    track.inject.len(),
+                                )?,
+                                key_fault: None,
                                 promoted: stage.promoted.clone(),
                                 routed: Vec::with_capacity(stage.routed.capacity()),
                                 input_latency,
@@ -878,6 +893,7 @@ impl HostGraph {
                     notes.carry(old_notes, trajectory, stage.input_latency)?;
                 }
                 stage.awaiting_notes = previous.awaiting_notes;
+                stage.main_delay.carry(&mut previous.main_delay);
                 stage.chase_in_buffer = previous.chase_in_buffer;
                 stage.chase_pending = previous.chase_pending;
                 stage.needs_restart = previous.needs_restart;
@@ -1029,6 +1045,9 @@ impl HostGraph {
     pub(crate) fn clear_delays(&mut self) {
         for track in self.tracks.iter_mut() {
             track.instrument_delay.clear();
+            for stage in &mut track.stages {
+                stage.main_delay.clear();
+            }
         }
     }
 
@@ -1259,8 +1278,80 @@ impl HostGraph {
         Ok(())
     }
 
+    /// Control-side output width after the validated chain, including promotion.
+    pub(crate) fn output_stereo(&self, key: u32, source: bool) -> bool {
+        self.tracks
+            .by_key(key)
+            .and_then(|track| track.stages.last())
+            .map_or(source, |stage| stage.rendered().len() == 2)
+    }
+
+    pub(crate) fn sidechain_channels(&self, device: u128) -> Result<usize, PlaybackError> {
+        // Control-side validation; only audio snapshots need a device index.
+        let channels = self
+            .tracks
+            .iter()
+            .flat_map(|track| &track.stages)
+            .find(|stage| stage.device == device)
+            .and_then(|stage| stage.ports.inputs.get(1))
+            .copied()
+            .unwrap_or(0);
+        if (1..=2).contains(&channels) {
+            Ok(channels as usize)
+        } else {
+            Err(PlaybackError::SidechainMapping { device })
+        }
+    }
+
+    pub(crate) fn supply_sidechain(
+        &mut self,
+        device: u128,
+        left: &[f64],
+        right: &[f64],
+    ) -> Result<(), PlaybackError> {
+        let index = self
+            .stage_index
+            .binary_search_by_key(&device, |entry| entry.0)
+            .map_err(|_| PlaybackError::Misaligned)?;
+        let &(_, track, stage) = self
+            .stage_index
+            .get(index)
+            .ok_or(PlaybackError::Misaligned)?;
+        let stage = self
+            .tracks
+            .get_mut(track)
+            .and_then(|track| track.stages.get_mut(stage))
+            .ok_or(PlaybackError::Misaligned)?;
+        let channels = stage.ports.inputs.get(1).copied().unwrap_or(0) as usize;
+        let fault = left.iter().zip(right).position(|(&l, &r)| {
+            !(l as f32).is_finite() || (channels == 2 && !(r as f32).is_finite())
+        });
+        stage.key_fault = match (stage.key_fault, fault) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        let ports = stage
+            .input
+            .get_mut(stage.main_inputs..)
+            .and_then(|planes| planes.get_mut(..channels))
+            .ok_or(PlaybackError::BufferTooSmall)?;
+        for (channel, plane) in ports.iter_mut().enumerate() {
+            let source = if channel == 0 { left } else { right };
+            let plane = plane
+                .get_mut(..source.len())
+                .ok_or(PlaybackError::BufferTooSmall)?;
+            for (frame, (output, &input)) in plane.iter_mut().zip(source).enumerate() {
+                *output = if stage.key_fault.is_none_or(|fault| frame < fault) {
+                    input as f32
+                } else {
+                    0.0
+                };
+            }
+        }
+        Ok(())
+    }
     /// Copies this track's input and publishes the first stage without waiting.
-    /// `clips` includes the children's bus and is added after a first instrument.
+    /// `clips` includes children and sends, added after a first instrument.
     /// `own` scales that instrument alone. Each stage prepared its own note clock.
     pub(crate) fn submit(
         &mut self,
@@ -1275,7 +1366,16 @@ impl HostGraph {
         track.heard = false;
         track.stage = 0;
         track.run = Run::Idle;
-        track.fault = None;
+        track.fault = track
+            .stages
+            .iter()
+            .filter_map(|stage| {
+                stage.key_fault.map(|frame| StageFault {
+                    device: None,
+                    frame,
+                })
+            })
+            .min_by_key(|fault| fault.frame);
         if track.stages.is_empty() || source.left.is_empty() {
             return Submitted::Unhosted;
         }
@@ -1510,6 +1610,25 @@ fn push_finished(finished: &mut Vec<u32>, key: u32, report: &mut BlockReport) {
 /// track up once; these methods reach its stages by `get`, so a stage index
 /// that does not exist misses the block instead of panicking (ADR 0284).
 impl TrackHost {
+    /// Holds only the main planes where they meet a key; auxiliaries are ready.
+    fn delay_main(&mut self, index: usize, frames: usize) -> Option<()> {
+        let stage = self.stages.get_mut(index)?;
+        let planes = if stage.bypassed {
+            &mut stage.bypass_output[..]
+        } else {
+            stage.input.get_mut(..stage.main_inputs)?
+        };
+        if let Some((left, rest)) = planes.split_first_mut() {
+            let left = left.get_mut(..frames)?;
+            let right = match rest.first_mut() {
+                Some(plane) => Some(plane.get_mut(..frames)?),
+                None => None,
+            };
+            stage.main_delay.process(left, right);
+        }
+        Some(())
+    }
+
     /// Marks this block missed at the current stage and names it for export.
     fn miss(&mut self, report: &mut BlockReport, reason: u8) {
         report.note_miss(self.stages.get(self.stage), reason);
@@ -1593,20 +1712,16 @@ impl TrackHost {
         // Notes still go out through `events`. Placed audio is not an input;
         // `arm_inject` puts it on this stage's output after the instrument runs.
         if stage.instrument && !heard {
-            for plane in &mut stage.input {
+            for plane in stage.input.iter_mut().take(stage.main_inputs) {
                 plane
                     .iter_mut()
                     .take(frames)
                     .for_each(|sample| *sample = 0.0);
             }
         } else {
-            for (channel, plane) in stage.input.iter_mut().enumerate() {
+            for (channel, plane) in stage.input.iter_mut().take(stage.main_inputs).enumerate() {
                 for (frame, sample) in plane.iter_mut().take(frames).enumerate() {
-                    *sample = if channel < stage.main_inputs {
-                        source.sample(channel, frame, stage.main_inputs == 2)
-                    } else {
-                        0.0
-                    };
+                    *sample = source.sample(channel, frame, stage.main_inputs == 2);
                 }
             }
         }
@@ -1672,6 +1787,9 @@ impl TrackHost {
         mut stage_index: usize,
         mut frames: usize,
     ) -> bool {
+        if self.delay_main(stage_index, frames).is_none() {
+            return false;
+        }
         // A run of bypassed stages consumes no helper deadline and no stack
         // frames. The number of devices is not limited by recursive calls.
         loop {
@@ -1695,6 +1813,9 @@ impl TrackHost {
                 return true;
             }
             copy_mix(&mut self.stages, stage_index, next, frames);
+            if self.delay_main(next, frames).is_none() {
+                return false;
+            }
             self.route_events(report, next);
             stage_index = next;
         }
@@ -2154,6 +2275,8 @@ fn spawn_stage(
         output: Vec::new(),
         main_outputs: 0,
         main_inputs: 0,
+        main_delay: Delay::default(),
+        key_fault: None,
         promoted: Vec::new(),
         routed: Vec::with_capacity(event_cap.max(1)),
         input_latency: 0,
@@ -2334,13 +2457,9 @@ fn copy_mix(stages: &mut [Stage], from: usize, to: usize, frames: usize) {
         left: output.first().map_or(&[], Vec::as_slice),
         right: output.get(1).filter(|_| main == 2).map(Vec::as_slice),
     };
-    for (channel, plane) in dest.input.iter_mut().enumerate() {
+    for (channel, plane) in dest.input.iter_mut().take(dest.main_inputs).enumerate() {
         for (frame, sample) in plane.iter_mut().take(frames).enumerate() {
-            *sample = if channel < dest.main_inputs {
-                signal.sample(channel, frame, dest.main_inputs == 2)
-            } else {
-                0.0
-            };
+            *sample = signal.sample(channel, frame, dest.main_inputs == 2);
         }
     }
 }

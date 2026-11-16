@@ -43,6 +43,8 @@ mod pdc_notes;
 mod plugin_gui;
 #[path = "hosted_playback/recorded_states.rs"]
 mod recorded_states;
+#[path = "hosted_playback/routes.rs"]
+mod routes;
 #[path = "hosted_playback/stopped_processing.rs"]
 mod stopped_processing;
 #[path = "hosted_playback/tail.rs"]

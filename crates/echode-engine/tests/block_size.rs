@@ -19,6 +19,8 @@ mod master_guard;
 mod overflow;
 #[path = "block_size/plugin_deadline.rs"]
 mod plugin_deadline;
+#[path = "block_size/routes.rs"]
+mod routes;
 #[path = "block_size/tempo.rs"]
 mod tempo;
 use echode_engine::{

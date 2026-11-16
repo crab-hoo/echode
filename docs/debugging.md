@@ -142,6 +142,7 @@ make debug-report
   - プラグインを使う書き出しが `did not finish before the deadline` で止まる・並列の書き出しで `missing plugin`
   - パラメーター一覧が出ない・値が音に反映しない・Undo で音が戻らない
   - パラメーターの変更通知で `RefCell already borrowed` が出てヘルパーが終了する
+  - センドが聞こえない・外部キーが反応しない・`sidechain requires a compatible ...` になる
   - プラグインの遅延表示が更新されない・音がずれる
   - PDC の再生ヘッドが音より先行する・停止で跳ぶ
 - 再生・停止・ループ

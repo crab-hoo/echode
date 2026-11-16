@@ -955,6 +955,28 @@ class PolicyTests(unittest.TestCase):
         groups = self.policy["product_contract_inputs"]
         self.assertIn("echode-test-plugin", groups["rust:echode-document"]["packages"])
 
+    def test_route_contracts_cover_product_buffers_and_isolated_auxiliary_inputs(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        for name, package, target, source in (
+            ("send-callback", "echode-engine", "block_size", "playback.rs"),
+            ("sidechain-callback", "echode-plugin-host", "hosted_playback", "playback_routes.rs"),
+            ("sidechain-main-line", "echode-plugin-host", "hosted_playback", "plugins.rs"),
+        ):
+            contract = contracts[name]
+            self.assertEqual(contract["package"], package)
+            self.assertEqual(contract["target"], ["--test", target])
+            self.assertTrue(contract["test"].startswith("routes::"))
+            self.assertTrue(contract["test"].endswith("under_rtsan"))
+            self.assertEqual(contract["negative_control"]["file"], "crates/echode-engine/src/" + source)
+        for path in (
+            "crates/echode-engine/src/playback_routes.rs",
+            "crates/echode-engine/src/playback_bus.rs",
+            "crates/echode-engine/tests/block_size/routes.rs",
+            "crates/echode-plugin-host/tests/hosted_playback/routes.rs",
+            "crates/echode-test-plugin/src/sidechain.rs",
+        ):
+            self.assertTrue({"check", "check-product-contracts", "rtsan"} <= self.selected(path))
+
     def test_audio_port_contracts_cover_dynamic_routing_and_mapping_guard(self):
         contracts = {item["id"]: item for item in self.policy["product_contracts"]}
         for name, target, file in (
@@ -2744,6 +2766,9 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(
             {c["id"] for c in contracts},
             {
+                "send-callback",
+                "sidechain-callback",
+                "sidechain-main-line",
                 "output-inventory-fault-isolation",
                 "hal-overload-log",
                 "plugin-musical-transport",

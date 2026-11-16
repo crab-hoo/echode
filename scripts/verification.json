@@ -16,7 +16,7 @@
   },
   "areas": {
     "bridge": ["crates/echode-log/**", "crates/echode-engine/src/audition*.rs", "crates/echode-engine/src/resample_stream*.rs", "spikes/bridge/**", "crates/echode-time/**", "crates/echode-model/**", "crates/echode-actions/**", "crates/echode-history/**", "crates/echode-document/**", "crates/echode-ffi/**", "crates/echode-audio-io/**", "swift/EchodeBridge/**", "swift/EchodeApp/**"],
-    "audio": ["crates/echode-log/**", "crates/echode-history/src/media.rs", "crates/echode-sine-pad/**", "crates/echode-dsp/**", "crates/echode-engine/**", "crates/echode-realtime/**", "crates/echode-time/**", "crates/echode-model/**", "crates/echode-sandbox/**", "crates/echode-audio-io/**", "crates/echode-document/**", "crates/echode-ffi/**", "swift/EchodeBridge/Sources/EchodeBridge/Audio.swift", "swift/EchodeBridge/Sources/EchodeBridge/Document.swift", "swift/EchodeApp/Sources/EchodeAppCore/ProjectController.swift", "swift/EchodeApp/Sources/EchodeAppCore/DocumentSession.swift", "swift/EchodeBridge/Sources/EchodeBridge/Device.swift", "swift/EchodeApp/Sources/EchodeAppCore/DeviceParameters.swift", "crates/echode-plugin-host/src/events*.rs", "crates/echode-plugin-host/src/note_ports*.rs", "crates/echode-plugin-host/src/mpe*.rs", "crates/echode-plugin-host/tests/isolation/midi_notes.rs", "crates/echode-test-plugin/src/midi_notes.rs", "crates/echode-plugin-host/src/audio_*.rs", "crates/echode-plugin-host/tests/isolation/audio_ports.rs", "crates/echode-test-plugin/src/audio_*.rs", "crates/echode-plugin-host/src/threads.rs", "crates/echode-plugin-host/src/main_requests*.rs", "crates/echode-plugin-host/src/relay.rs", "crates/echode-plugin-host/tests/hosted_playback.rs", "crates/echode-plugin-host/tests/hosted_playback/**"],
+    "audio": ["crates/echode-log/**", "crates/echode-history/src/media.rs", "crates/echode-sine-pad/**", "crates/echode-dsp/**", "crates/echode-engine/**", "crates/echode-realtime/**", "crates/echode-time/**", "crates/echode-model/**", "crates/echode-sandbox/**", "crates/echode-audio-io/**", "crates/echode-document/**", "crates/echode-ffi/**", "swift/EchodeBridge/Sources/EchodeBridge/Audio.swift", "swift/EchodeBridge/Sources/EchodeBridge/Document.swift", "swift/EchodeApp/Sources/EchodeAppCore/ProjectController.swift", "swift/EchodeApp/Sources/EchodeAppCore/DocumentSession.swift", "swift/EchodeBridge/Sources/EchodeBridge/Device.swift", "swift/EchodeApp/Sources/EchodeAppCore/DeviceParameters.swift", "crates/echode-plugin-host/src/events*.rs", "crates/echode-plugin-host/src/note_ports*.rs", "crates/echode-plugin-host/src/mpe*.rs", "crates/echode-plugin-host/tests/isolation/midi_notes.rs", "crates/echode-test-plugin/src/midi_notes.rs", "crates/echode-test-plugin/src/sidechain.rs", "crates/echode-plugin-host/src/audio_*.rs", "crates/echode-plugin-host/tests/isolation/audio_ports.rs", "crates/echode-test-plugin/src/audio_*.rs", "crates/echode-plugin-host/src/threads.rs", "crates/echode-plugin-host/src/main_requests*.rs", "crates/echode-plugin-host/src/relay.rs", "crates/echode-plugin-host/tests/hosted_playback.rs", "crates/echode-plugin-host/tests/hosted_playback/**"],
     "isolation": ["crates/echode-plugin-host/**", "crates/echode-test-plugin/**", "crates/echode-sine-pad/**", "crates/echode-dsp/**", "crates/echode-sandbox/**", "crates/echode-time/**", "crates/echode-realtime/**", "crates/echode-engine/**"],
     "drawing": ["crates/echode-draw/**", "spikes/draw/**", "crates/echode-time/**", "crates/echode-model/**", "swift/EchodeApp/Sources/EchodeAppCore/Arrange*.swift", "swift/EchodeApp/Sources/EchodeAppCore/Workspace*.swift", "swift/EchodeApp/Sources/EchodeAppCore/Canvas*.swift", "swift/EchodeApp/Sources/EchodeAppCore/Mix*.swift", "swift/EchodeApp/Sources/EchodeAppCore/FrameFeedbackGate.swift", "swift/EchodeApp/Sources/EchodeAppCore/FrameSlots.swift", "swift/EchodeApp/Sources/EchodeAppCore/Piano*.swift"],
     "history": ["crates/echode-history/**", "crates/echode-time/**", "crates/echode-model/**", "crates/echode-actions/**"],
@@ -86,6 +86,24 @@
     {"id": "spike-verification-failures", "mode": "manual", "extended": true, "areas": [], "timeout": 120, "purpose": "同じ選択集合へ失敗を注入し、旧配置と優先順・事前確認の検出遅延を比較。製品の実行時間とは区別", "inputs": ["scripts/measure_verification_failures.py", "scripts/verification.json", "scripts/checked_commands.py"]}
   ],
   "product_contracts": [
+    {
+      "id": "send-callback", "runner": "rust", "package": "echode-engine", "target": ["--test", "block_size"],
+      "test": "routes::sends_sum_before_return_faders_independently_of_blocks_under_rtsan", "timeout": 180,
+      "purpose": "送り元が後ろにあるセンドを FX 後・フェーダー前から取り、フォルダ内の受け側へ加算し、製品・書出し・ブロック長を照合する",
+      "negative_control": {"file": "crates/echode-engine/src/playback.rs", "old": "self.audio_routes.sum_sends(position, sum_left, sum_right)?;", "new": "let _ = (&self.audio_routes, position);"}
+    },
+    {
+      "id": "sidechain-callback", "runner": "rust", "package": "echode-plugin-host", "target": ["--test", "hosted_playback"],
+      "test": "routes::sends_and_keys_meet_the_main_at_the_device_for_every_block_under_rtsan", "timeout": 180,
+      "purpose": "同じ送り元からのセンドと鍵の依存を両方解き、ステレオ補助入力を実ヘルパーへ渡し、PDC の到着・振幅を製品バッファで照合する",
+      "negative_control": {"file": "crates/echode-engine/src/playback_routes.rs", "old": "hosts.supply_sidechain(key.device, left, right)?;", "new": "let _ = (key.device, &hosts);"}
+    },
+    {
+      "id": "sidechain-main-line", "runner": "rust", "package": "echode-plugin-host", "target": ["--test", "hosted_playback"],
+      "test": "routes::key_lines_and_downstream_main_lines_align_even_with_bypass_under_rtsan", "timeout": 180,
+      "purpose": "鍵を受ける後段の本線と複数の鍵の線を揃え、前段のバイパスでも時刻を保つ",
+      "negative_control": {"file": "crates/echode-engine/src/plugins.rs", "old": "if self.delay_main(stage_index, frames).is_none() {", "new": "if false {"}
+    },
     {
       "id": "output-inventory-fault-isolation", "runner": "rust", "package": "echode-audio-io", "target": ["--lib"],
       "test": "hardware::tests::audit_iqa06_one_unreadable_device_keeps_other_outputs_and_recovers", "timeout": 180,

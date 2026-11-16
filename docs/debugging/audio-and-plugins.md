@@ -746,6 +746,19 @@ I/O は `CliIoOperation` とパス・元の errno、引数は `ArgumentError` �
 テスト用 CLAP の故障 `slow-process` で遅いプラグインを再現する。`missing plugin` は走査キャッシュの読み違いで、
 キャッシュは置換で書くので切り詰められた内容は見えない。走査の出力が 64 MiB を超えたバンドルは `larger than` で走査を止める（[ADR 0231](../decisions/0231-offline-export-and-scan-cache.md)）。
 
+### センドが聞こえない・外部キーが反応しない・`sidechain requires a compatible ...` になる
+
+`project.routing` で接続 ID・両端・量を調べる。取り出しは FX 後・フェーダー前で、送り元の音量 0 は鍵を止めず、mute / solo のゲートは止める。
+ソロで関連リターンを自動開放する操作は未接続なので、切り分けではソロを解除する。
+`SidechainMapping` は最初の補助入力がない・幅が未対応・ステレオ→モノになる時の公開前の拒否で、前の計画は鳴り続ける。
+`take_preparation_error` と `device.parameters` の音声ポートを記録し、第三者の外部キー設定と、ポート 1 が目的の入力かを確かめる。
+未ホスト・オフライン・キャッシュ中のデバイスの鍵は、計画から除かれる。接続を作るだけで外部キーのプラグイン設定は変更しない。
+音の到着がずれる時は `compensate_with_latencies` の辺・`stage_delays` と `AudioRoutes` の線を調べる。
+`Block::finish` の取り出しは `mix_into` より前で、`Bus::route` の依存は同じ PDC の `Routes` に由来しなければならない。
+鍵の加算のあふれはプラグインの異常出力ではなく受け側の合流異常（`AutoMute.device == None`）で、書出しは `NonFiniteMix` になる。
+`tests/block_size/routes.rs` と `hosted_playback/routes.rs` が機器なしの再現入口で、`sidechain` fixture は主入力 + 鍵の 4 倍を出す。
+製品バッファは実機の期限とメーカー固有の検出器を証明しない（UC-102・103）。
+
 ### プラグインの遅延表示が更新されない・音がずれる
 
 値は出力レートのサンプル数で、再生と書出しはこの値で合流点を揃える（[ADR 0339](../decisions/0339-plugin-delay-compensation.md)、[ADR 0340](../decisions/0340-latency-graph.md)）。

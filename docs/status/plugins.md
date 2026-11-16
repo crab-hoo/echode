@@ -8,7 +8,7 @@
 - **CLAP の互換性**: 第三者のテンポ同期・聴感は UC-85、ほかの互換性は UC-80〜83。
   遅延のある前段と後段・フォルダ FX のテンポ同期の聴感は UC-91（[ADR 0378](../decisions/0378-pdc-stage-transport.md)）。
   遅延のある前段の後ろとフォルダ FX のノート応答・プリロール時の聴感は UC-96（[ADR 0383](../decisions/0383-pdc-stage-notes.md)）。
-  音声ポートのリスト・チャンネル数の変更中は新しい計画の採用まで無音となる。主ポート以外の接続は未対応（UC-95）。
+  音声ポートのリスト・チャンネル数の変更中は新しい計画の採用まで無音となる（UC-95）。補助入力の接続の制約は [音声領域](audio.md) と UC-103 を参照する。
   構成選択と任意変更はプラグイン自身の状態保存に依存する。標準のサラウンド配置と Ambisonic 設定は送れるが、独自のポート種別・詳細は未対応。
   一覧は明示した読込みだけで取得し、音声は中断しない（[ADR 0389](../decisions/0389-live-clap-audio-config-listing.md)）。文書の編集・復元後は一覧の再読込みが必要である。デバイス列の構成操作の実画面・VO は UC-99。
   任意変更は番号を明示入力し、未対応の拡張・番号・構成は適用で拒否される。編集後の古いフォームは破棄する。実画面・VO は UC-100。
@@ -43,7 +43,7 @@
   計画生成は残る。閉じる時は起動中のヘルパーを止める（UC-70、[ADR 0334](../decisions/0334-cancel-helper-starts-on-close.md)）。
   列の開閉と下部の積み方の実画面の操作感と VoiceOver はユーザー確認待ち（UC-26、[ADR 0146](../decisions/0146-independent-editor-stack.md)）。
 - **デバイスチェインの表示**: フォルダとデバイス列の開閉は文書内の表示状態で、保存・Undo の対象外である（[ADR 0128](../decisions/0128-folder-disclosure-and-row-projection.md)、[ADR 0137](../decisions/0137-device-disclosure.md)）。
-  トラックの複製でオートメーションとルーティングは引き継がない（[ADR 0129](../decisions/0129-track-duplication.md)）。
+  トラックの複製でオートメーションは引き継がない。ルーティングの複製は [ADR 0391](../decisions/0391-model-routes-and-pdc-projection.md) に従う。
   狭い幅・低い行・深い字下げでヘッダの FX 名を隠す時は、下部とインスペクターで全チェインを扱う（[ADR 0139](../decisions/0139-track-header-fx-names.md)）。
   インスペクターの FX 追加ボタンの実画面と VoiceOver はユーザー確認待ち（UC-27、[ADR 0165](../decisions/0165-inspector-fx-add-and-arrange-note-pitch.md)）。
 - **隔離・Workgroup・キャッシュ**: AUv3 の二重隔離の回避、走査の Seatbelt、Workgroup ポートの 2 ms ポーリングの置換は未実装（[ADR 0111](../decisions/0111-macos-helper-notices.md)）。

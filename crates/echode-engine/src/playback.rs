@@ -37,10 +37,13 @@ use preparation::GraphPreparation;
 #[path = "playback_faders.rs"]
 mod faders;
 use faders::{PreparedSidechain, Routing, track_routing};
+#[path = "playback_routes.rs"]
+mod audio_routes;
 #[path = "playback_bus.rs"]
 mod bus;
 use crate::compensation::{Routes, SendFlow, SidechainFlow, StageLine, TrackFlow, compensate};
 use crate::delay::Delay;
+use audio_routes::AudioRoutes;
 use bus::Bus;
 #[path = "playback_transport.rs"]
 pub(crate) mod musical_time;
@@ -312,6 +315,9 @@ struct Prepared {
     /// Which tracks feed which bus, and this block's start order.
     bus: Bus,
     sends: Vec<SendFlow>,
+    send_settings: Vec<(u128, f32)>,
+    audio_routes: AudioRoutes,
+    stage_delays: Vec<(u128, u64)>,
     sidechains: Vec<PreparedSidechain>,
     /// One bus's sum of its children's post-fader audio. One bus is summed
     /// at a time, so every parent shares these.
@@ -396,6 +402,7 @@ impl Prepared {
             gates,
             parents,
             sends,
+            send_settings,
             sidechains,
         } = track_routing(project, &plan)?;
         let bus = Bus::new(parents);
@@ -422,7 +429,8 @@ impl Prepared {
             let mut clips = placed.remove(&track.track).unwrap_or_default();
             clips.sort_by_key(|clip| clip.start_sample);
             // A parent's source includes its children's panned, stereo bus.
-            let parent = bus.has_children(position);
+            let parent =
+                bus.has_children(position) || sends.iter().any(|route| route.to == position);
             let clip_stereo = parent || clips.iter().any(|clip| clip.right.is_some());
             let demand = match ids.demand(track.track, loop_bounds, frames) {
                 Some((events, chase)) => TrackEventDemand {
@@ -507,6 +515,9 @@ impl Prepared {
             demands,
             bus,
             sends,
+            send_settings,
+            audio_routes: AudioRoutes::default(),
+            stage_delays: Vec::new(),
             sidechains,
             bus_left: vec![0.0; frames],
             bus_right: vec![0.0; frames],
@@ -599,6 +610,7 @@ impl Prepared {
                 }
             }
         }
+        self.audio_routes.carry(&mut previous.audio_routes, playing);
         self.clicks_delay.carry(&mut previous.clicks_delay);
     }
 
@@ -628,6 +640,7 @@ impl Prepared {
         let Prepared {
             tracks,
             bus,
+            audio_routes,
             track_indices,
             bus_left,
             bus_right,
@@ -638,6 +651,7 @@ impl Prepared {
         let mut block = Block {
             tracks,
             bus,
+            audio_routes,
             hosts: &mut *hosts,
             bus_left,
             bus_right,
@@ -730,6 +744,7 @@ impl Prepared {
             track.source_delay.clear();
             track.output_delay.clear();
         }
+        self.audio_routes.clear();
         self.clicks_delay.clear();
     }
 
@@ -853,16 +868,15 @@ impl Track {
     }
 }
 
-/// One block's tracks, started children first (ADR 0338).
-///
-/// Every track without children starts at once, so every helper runs in
-/// parallel as before. A parent starts when its last child has its output:
-/// its children's post-fader sum joins its clips, then its own chain runs.
-/// After the deadline a parent is still submitted, so its helper hears the
-/// block's events, and then abandoned like any late helper.
+/// One block's tracks, ordered by the same folder/send/key edges as PDC.
+/// Independent tracks start together. A receiver starts after its last source,
+/// adds children and sends, supplies keys, and runs its chain. After the
+/// deadline it is still submitted so its helper hears the block's events,
+/// then abandoned like any late helper.
 struct Block<'a> {
     tracks: &'a mut [Track],
     bus: &'a mut Bus,
+    audio_routes: &'a mut AudioRoutes,
     hosts: &'a mut HostGraph,
     bus_left: &'a mut [f64],
     bus_right: &'a mut [f64],
@@ -877,7 +891,7 @@ impl Block<'_> {
     fn run(&mut self, indices: &[(u32, usize)], deadline: Instant) -> Result<(), PlaybackError> {
         self.bus.begin();
         for position in 0..self.tracks.len() {
-            if !self.bus.has_children(position) {
+            if self.bus.independent(position) {
                 self.start(position)?;
             }
         }
@@ -927,9 +941,19 @@ impl Block<'_> {
 
     fn start(&mut self, position: usize) -> Result<(), PlaybackError> {
         self.bus.note_started();
-        if self.bus.has_children(position) {
-            self.sum_children(position)?;
+        if self.bus.has_children(position) || self.audio_routes.has_sends(position) {
+            self.sum_inputs(position)?;
         }
+        self.audio_routes.supply_keys(
+            position,
+            self.hosts,
+            self.bus_left
+                .get_mut(..self.frames)
+                .ok_or(PlaybackError::BufferTooSmall)?,
+            self.bus_right
+                .get_mut(..self.frames)
+                .ok_or(PlaybackError::BufferTooSmall)?,
+        )?;
         let frames = self.frames;
         let track = self
             .tracks
@@ -997,14 +1021,14 @@ impl Block<'_> {
         }
     }
 
-    /// Adds each child's post-fader block to the parent's clip planes, in
-    /// plan order, and publishes the children's meters.
+    /// Adds children post-fader, then sends pre-fader, in their planned orders
+    /// to the receiver's clip planes, and publishes the children's meters.
     ///
     /// The planes stay `f32`, the form the parent's plugins receive. A sum
     /// that is not a finite `f32` is the parent's fault, by the rule the
     /// master uses (NFA-03): the planes are 0 from that frame, so no plugin
     /// receives it, and [`Self::finish`] auto-mutes the parent there.
-    fn sum_children(&mut self, position: usize) -> Result<(), PlaybackError> {
+    fn sum_inputs(&mut self, position: usize) -> Result<(), PlaybackError> {
         let frames = self.frames;
         let release = self.range.meter_release;
         let sum_left = self
@@ -1023,6 +1047,7 @@ impl Block<'_> {
                 .ok_or(PlaybackError::BufferTooSmall)?
                 .mix_into(sum_left, sum_right, frames, release)?;
         }
+        self.audio_routes.sum_sends(position, sum_left, sum_right)?;
         let parent = self
             .tracks
             .get_mut(position)
@@ -1106,6 +1131,7 @@ impl Block<'_> {
                 at: block_sample(self.spans, self.range.started_before, fault.frame),
             });
         }
+        self.audio_routes.capture(position, track, frames)?;
         self.bus.finish(position);
         Ok(())
     }
@@ -1376,7 +1402,9 @@ fn compensate_plan(
     frames: usize,
 ) -> Result<(Vec<(u32, Delay)>, Compensated), PlaybackError> {
     let reported = hosts.latencies();
-    compensate_with_latencies(prepared, &reported, frames)
+    let result = compensate_with_latencies(prepared, &reported, frames)?;
+    prepared.audio_routes.configure(hosts, &prepared.tracks)?;
+    Ok(result)
 }
 
 fn compensate_with_latencies(
@@ -1403,26 +1431,43 @@ fn compensate_with_latencies(
     if flows.len() != prepared.tracks.len() {
         return Err(PlaybackError::BufferTooSmall);
     }
-    let sidechains: Vec<SidechainFlow> = prepared
+    let (active_keys, sidechains): (Vec<_>, Vec<_>) = prepared
         .sidechains
         .iter()
         .filter_map(|route| {
-            let devices = flows.get(route.track)?.devices;
-            let device = devices
+            let device = flows
+                .get(route.track)?
+                .devices
                 .iter()
                 .position(|item| item.device == route.device)?;
-            Some(SidechainFlow {
-                from: route.from,
-                track: route.track,
-                device,
-            })
+            Some((
+                *route,
+                SidechainFlow {
+                    from: route.from,
+                    track: route.track,
+                    device,
+                },
+            ))
         })
-        .collect();
-    let plan = compensate(Routes {
+        .unzip();
+    let routes = Routes {
         tracks: &flows,
         sends: &prepared.sends,
         sidechains: &sidechains,
-    })?;
+    };
+    let plan = compensate(routes)?;
+    prepared.bus.route(&routes)?;
+    prepared.stage_delays = plan
+        .stage_lines
+        .iter()
+        .map(|line| {
+            let device = flows
+                .get(line.track)
+                .and_then(|track| track.devices.get(line.device))
+                .ok_or(PlaybackError::Misaligned)?;
+            Ok((device.device, line.main))
+        })
+        .collect::<Result<_, PlaybackError>>()?;
     // Refused before anything is reserved: a helper may report any number.
     let mut footprint = 0u64;
     for delay in plan.lines() {
@@ -1433,6 +1478,13 @@ fn compensate_with_latencies(
     if footprint > crate::delay::budget() {
         return Err(PlaybackError::Latency(plan.latency));
     }
+    prepared.audio_routes = AudioRoutes::new(
+        prepared,
+        &active_keys,
+        &plan.sends,
+        &plan.sidechains,
+        frames,
+    )?;
     let mut instruments = Vec::new();
     for (track, delays) in prepared.tracks.iter_mut().zip(&plan.tracks) {
         track.source_delay = Delay::new(delays.source, frames)?;
@@ -1721,6 +1773,7 @@ pub fn playback(
         audio.hosts = Box::new(control.hosts.audio_snapshot(
             delays,
             &compensated.stage_inputs,
+            &audio.current.stage_delays,
             audio.current.timeline.capacity(),
             &audio.current.note_scores,
         )?);
@@ -2372,6 +2425,7 @@ impl PlaybackControl {
             hosts: Box::new(self.hosts.audio_snapshot(
                 delays,
                 &compensated.stage_inputs,
+                &pending.prepared.stage_delays,
                 pending.prepared.timeline.capacity(),
                 &pending.prepared.note_scores,
             )?),

@@ -53,6 +53,7 @@ mod midi_notes;
 mod note_ports;
 mod param_rescan;
 mod params;
+mod sidechain;
 mod tail;
 mod thread_check;
 mod timer_support;
@@ -254,6 +255,12 @@ pub struct TestMain {
 
 impl TestMain {
     fn ports(&self) -> (&'static [u32], &'static [u32]) {
+        if fault_now() == Fault::Sidechain {
+            return (&[2, 2, 1], &[2]);
+        }
+        if fault_now() == Fault::SidechainMono {
+            return (&[2, 1, 1], &[2]);
+        }
         if fault_now() == Fault::AudioPorts {
             return audio_ports::ports();
         }
@@ -375,6 +382,9 @@ enum Fault {
     /// [`Fault::Onset`] behind an MPE-only port. A note before the fifteen-channel
     /// Lower Zone configuration, on the manager channel, or in another dialect poisons it.
     OnsetMpe,
+    /// Exposes a key input and writes main + four times the key per channel.
+    Sidechain,
+    SidechainMono,
 }
 
 /// For [`Fault::RestartNested`]: activations so far, and whether the first
@@ -418,6 +428,8 @@ fn fault_code(text: &str) -> u8 {
         "onset-midi" => 33,
         "onset-midi2" => 34,
         "onset-mpe" => 35,
+        "sidechain" => 36,
+        "sidechain-mono" => 37,
         _ if text.starts_with("restart-nested:") => 22,
         _ if text.starts_with("delay:") => 19,
         // The event counter, with the second process call held as `process-wait`.
@@ -466,6 +478,8 @@ fn fault_from_code(code: u8) -> Fault {
         33 => Fault::OnsetMidi,
         34 => Fault::OnsetMidi2,
         35 => Fault::OnsetMpe,
+        36 => Fault::Sidechain,
+        37 => Fault::SidechainMono,
         _ => Fault::None,
     }
 }
@@ -830,6 +844,10 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
             }
         }
         match self.fault {
+            Fault::Sidechain | Fault::SidechainMono => {
+                sidechain::render(&mut audio)?;
+                return Ok(ProcessStatus::Continue);
+            }
             Fault::Process => return Err(PluginError::Message("process refused")),
             Fault::Crash => std::process::abort(),
             Fault::Segfault => loop {

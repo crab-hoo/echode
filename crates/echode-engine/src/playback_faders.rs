@@ -25,11 +25,13 @@ pub(super) struct TrackGate {
 
 /// A model sidechain resolved to track positions, matched to its hosted device
 /// stage when delay compensation runs.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct PreparedSidechain {
     pub(super) from: usize,
     pub(super) track: usize,
     pub(super) device: u128,
+    pub(super) id: u128,
+    pub(super) gain: f32,
 }
 
 /// Gates, folder parents, and model routes in plan order.
@@ -37,6 +39,7 @@ pub(super) struct Routing {
     pub(super) gates: Vec<TrackGate>,
     pub(super) parents: Vec<Option<usize>>,
     pub(super) sends: Vec<SendFlow>,
+    pub(super) send_settings: Vec<(u128, f32)>,
     pub(super) sidechains: Vec<PreparedSidechain>,
 }
 
@@ -121,6 +124,7 @@ pub(super) fn track_routing(project: &Project, plan: &Plan) -> Result<Routing, P
         })
         .collect();
     let mut sends = Vec::new();
+    let mut send_settings = Vec::new();
     let mut sidechains = Vec::new();
     for (position, track) in project.tracks().iter().enumerate() {
         for send in &track.sends {
@@ -128,6 +132,7 @@ pub(super) fn track_routing(project: &Project, plan: &Plan) -> Result<Routing, P
                 .get(&send.target)
                 .ok_or(PlaybackError::InvalidFader)?;
             sends.push(SendFlow { from: position, to });
+            send_settings.push((send.id.raw(), send.gain));
         }
         for device in &track.devices {
             if device.offline {
@@ -141,6 +146,8 @@ pub(super) fn track_routing(project: &Project, plan: &Plan) -> Result<Routing, P
                     from,
                     track: position,
                     device: device.id.raw(),
+                    id: sidechain.id.raw(),
+                    gain: sidechain.gain,
                 });
             }
         }
@@ -149,6 +156,7 @@ pub(super) fn track_routing(project: &Project, plan: &Plan) -> Result<Routing, P
         gates,
         parents,
         sends,
+        send_settings,
         sidechains,
     })
 }

@@ -11,7 +11,7 @@ use super::*;
 const SECTION: usize = 160;
 const BLOCKS: [usize; 4] = [1, 7, 64, 512];
 
-fn delay_route(clap_id: &str, frames: &str, instrument: bool) -> PluginRoute {
+pub(super) fn delay_route(clap_id: &str, frames: &str, instrument: bool) -> PluginRoute {
     PluginRoute {
         clap_id: clap_id.into(),
         path: plugin_dylib(),
@@ -21,7 +21,7 @@ fn delay_route(clap_id: &str, frames: &str, instrument: bool) -> PluginRoute {
     }
 }
 
-fn impulses(clips: Vec<(Id, i64, f32, f32)>) -> echode_engine::ClipLoader {
+pub(super) fn impulses(clips: Vec<(Id, i64, f32, f32)>) -> echode_engine::ClipLoader {
     Arc::new(move |_, _| {
         Ok(clips
             .iter()
@@ -42,7 +42,7 @@ fn impulses(clips: Vec<(Id, i64, f32, f32)>) -> echode_engine::ClipLoader {
 }
 
 /// Plays `frames` in blocks of `block` and returns both channels.
-fn play(
+pub(super) fn play(
     project: &Project,
     rate: u32,
     block: usize,
@@ -68,7 +68,7 @@ fn play(
     (control, heard_left, heard_right)
 }
 
-fn assert_impulse(heard: &[f32], at: usize, level: f32, context: &str) {
+pub(super) fn assert_impulse(heard: &[f32], at: usize, level: f32, context: &str) {
     for (frame, sample) in heard.iter().enumerate() {
         let expected = if frame == at { level } else { 0.0 };
         assert!(

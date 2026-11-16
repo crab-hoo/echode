@@ -214,7 +214,8 @@ PDC は、トラックとフォルダの合流点の遅延線で揃え、書出�
 計算は遅延グラフの最長経路で、計画ごとに検証してから公開し、循環と持てない遅延は断る（[ADR 0340](decisions/0340-latency-graph.md)）。
 センド・サイドチェイン・ドラム用の MIDI 配布は、遅延グラフへ写す経路（`Routes`）と線の計画を作り、バイパスの遅延は次の合流で使う（[ADR 0390](decisions/0390-routes-in-the-latency-graph.md)）。
 センドとサイドチェインのモデル・スキーマ 7 保存・Undo・アクション・`project.routing`（RPC / MCP）・PDC 計画への投影は [ADR 0391](decisions/0391-model-routes-and-pdc-projection.md) で接続した。
-コールバックの音声加算・鍵の入力ポート供給・ノートの振り分け・実行の依存、ミュート・ソロとの関係、画面は未接続である。
+コールバックのセンド加算・鍵の最初の補助入力への供給・実行の依存と本線の遅延は [ADR 0392](decisions/0392-callback-send-and-sidechain-audio.md) で接続した。
+ノートの振り分け・ソロによる関連リターンの自動開放・画面は未接続で、第三者・聴感の受入は UC-102・103 に残る。
 CLAP の遅延の取得とデバイス列の表示は [ADR 0246](decisions/0246-plugin-latency-reporting.md) で接続した。
 `clap.thread-check` と `clap.log` は [ADR 0347](decisions/0347-clap-thread-check.md)・[ADR 0349](decisions/0349-clap-log-relay.md) で接続した。
 `clap.timer-support` は停止中・窓なしでも主スレッドから通知し、callback 中の登録・解除を扱う（[ADR 0351](decisions/0351-clap-main-thread-timers.md)）。
