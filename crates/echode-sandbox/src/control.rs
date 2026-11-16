@@ -82,15 +82,25 @@ const AUDIO_CONFIGS: u32 = 40;
 const SELECT_AUDIO_CONFIG: u32 = 41;
 const AUDIO_CONFIG_SELECTED: u32 = 42;
 const AUDIO_CONFIG_REJECTED: u32 = 43;
+const CAN_APPLY_AUDIO_PORTS: u32 = 44;
+const AUDIO_PORTS_APPLICABLE: u32 = 45;
+const APPLY_AUDIO_PORTS: u32 = 46;
+const AUDIO_PORTS_APPLIED: u32 = 47;
 
 #[derive(Debug)]
 pub enum ControlMessage {
     /// Reads configuration presets on main while deactivated. Reactivates audio.
     AudioConfigsRequest,
-    AudioConfigs(Vec<crate::AudioPortConfig>),
+    AudioConfigs(crate::AudioPortConfigs),
     SelectAudioConfig(u32),
     AudioConfigSelected,
     AudioConfigRejected(Refusal),
+    /// Queries `clap.configurable-audio-ports::can_apply_configuration` on main while deactivated.
+    CanApplyAudioPorts(Vec<crate::AudioPortRequest>),
+    AudioPortsApplicable(bool),
+    /// Applies `clap.configurable-audio-ports::apply_configuration` on main while deactivated.
+    ApplyAudioPorts(Vec<crate::AudioPortRequest>),
+    AudioPortsApplied,
     Hello,
     SaveRequest,
     State(Vec<u8>),
@@ -622,6 +632,19 @@ fn encode(message: &ControlMessage) -> (u32, Cow<'_, [u8]>) {
         ControlMessage::AudioConfigRejected(refusal) => {
             (AUDIO_CONFIG_REJECTED, write_refusal(refusal))
         }
+        ControlMessage::CanApplyAudioPorts(requests) => (
+            CAN_APPLY_AUDIO_PORTS,
+            crate::audio_configs::encode_requests(requests),
+        ),
+        ControlMessage::AudioPortsApplicable(applicable) => (
+            AUDIO_PORTS_APPLICABLE,
+            crate::audio_configs::encode_applicable(*applicable),
+        ),
+        ControlMessage::ApplyAudioPorts(requests) => (
+            APPLY_AUDIO_PORTS,
+            crate::audio_configs::encode_requests(requests),
+        ),
+        ControlMessage::AudioPortsApplied => (AUDIO_PORTS_APPLIED, Vec::new()),
         ControlMessage::Hello => (HELLO, Vec::new()),
         ControlMessage::SaveRequest => (SAVE, Vec::new()),
         ControlMessage::Restored => (RESTORED, Vec::new()),
@@ -724,12 +747,12 @@ fn decode_body(
     }
     let body = owned.as_slice();
     let message = match typ {
-        AUDIO_CONFIGS_REQUEST | AUDIO_CONFIG_SELECTED => {
+        AUDIO_CONFIGS_REQUEST | AUDIO_CONFIG_SELECTED | AUDIO_PORTS_APPLIED => {
             read_fixed::<0>(body, ControlField::EmptyBody { message_type: typ })?;
-            if typ == AUDIO_CONFIGS_REQUEST {
-                ControlMessage::AudioConfigsRequest
-            } else {
-                ControlMessage::AudioConfigSelected
+            match typ {
+                AUDIO_CONFIGS_REQUEST => ControlMessage::AudioConfigsRequest,
+                AUDIO_CONFIG_SELECTED => ControlMessage::AudioConfigSelected,
+                _ => ControlMessage::AudioPortsApplied,
             }
         }
         AUDIO_CONFIGS => ControlMessage::AudioConfigs(crate::audio_configs::decode(body)?),
@@ -738,6 +761,15 @@ fn decode_body(
             ControlField::AudioConfigId,
         )?)),
         AUDIO_CONFIG_REJECTED => ControlMessage::AudioConfigRejected(read_refusal(body)?),
+        CAN_APPLY_AUDIO_PORTS => {
+            ControlMessage::CanApplyAudioPorts(crate::audio_configs::decode_requests(body)?)
+        }
+        AUDIO_PORTS_APPLICABLE => {
+            ControlMessage::AudioPortsApplicable(crate::audio_configs::decode_applicable(body)?)
+        }
+        APPLY_AUDIO_PORTS => {
+            ControlMessage::ApplyAudioPorts(crate::audio_configs::decode_requests(body)?)
+        }
         HELLO => ControlMessage::Hello,
         SAVE => ControlMessage::SaveRequest,
         RESTORED => ControlMessage::Restored,

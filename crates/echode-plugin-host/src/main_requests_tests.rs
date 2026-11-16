@@ -57,7 +57,14 @@ fn main_reply_mismatches_report_expected_and_actual_payloads() {
         (MainReply::State(vec![1]), State),
         (MainReply::Done, Done),
         (MainReply::Parameters(vec![]), Parameters),
-        (MainReply::AudioConfigs(vec![]), AudioConfigs),
+        (
+            MainReply::AudioConfigs(AudioPortConfigs {
+                current_id: None,
+                configs: vec![],
+            }),
+            AudioConfigs,
+        ),
+        (MainReply::Applicable(true), Applicable),
         (MainReply::Values(vec![]), Values),
         (MainReply::Parsed(ParamText::Unsupported), Parsed),
         (
@@ -78,6 +85,7 @@ fn main_reply_mismatches_report_expected_and_actual_payloads() {
             Parsed,
             Window,
             AudioConfigs,
+            Applicable,
         ] {
             if expected != actual {
                 assert_eq!(
@@ -94,6 +102,8 @@ fn inactive_requests_remain_owned_until_the_processor_is_deactivated() {
     for request in [
         MainRequest::AudioConfigs,
         MainRequest::SelectAudioConfig(206),
+        MainRequest::CanApplyAudioPorts(vec![]),
+        MainRequest::ApplyAudioPorts(vec![]),
     ] {
         let mailbox = MainRequests::default();
         let call = mailbox.begin(request).unwrap();

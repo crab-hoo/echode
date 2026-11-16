@@ -919,6 +919,8 @@ class PolicyTests(unittest.TestCase):
             ("plugin-audio-port-mapping", "isolation", "crates/echode-plugin-host/src/threads.rs"),
             ("plugin-audio-config-selection", "isolation", "crates/echode-plugin-host/src/audio_configs.rs"),
             ("plugin-audio-config-routing", "hosted_playback", "crates/echode-engine/src/plugins.rs"),
+            ("plugin-configurable-audio-ports", "isolation", "crates/echode-plugin-host/src/audio_configs.rs"),
+            ("plugin-configurable-port-routing", "hosted_playback", "crates/echode-engine/src/plugins.rs"),
         ):
             contract = contracts[name]
             self.assertEqual(contract["package"], "echode-plugin-host")
@@ -2804,6 +2806,8 @@ class PolicyTests(unittest.TestCase):
                 "plugin-audio-port-mapping",
                 "plugin-audio-config-selection",
                 "plugin-audio-config-routing",
+                "plugin-configurable-audio-ports",
+                "plugin-configurable-port-routing",
                 "plugin-state-poll",
                 "transport-declick",
                 "output-safety-deadline",

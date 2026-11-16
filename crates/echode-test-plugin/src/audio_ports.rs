@@ -13,8 +13,9 @@ use clap_sys::ext::audio_ports::{
     CLAP_AUDIO_PORTS_RESCAN_NAMES, CLAP_AUDIO_PORTS_RESCAN_PORT_TYPE, CLAP_EXT_AUDIO_PORTS,
     CLAP_PORT_MONO, CLAP_PORT_STEREO, clap_audio_port_info, clap_host_audio_ports,
 };
+use clap_sys::id::CLAP_INVALID_ID;
 use std::ffi::CStr;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
 const FAILED: u8 = 0x80;
 pub(crate) fn config_probe(host: HostSharedHandle<'_>) {
@@ -23,14 +24,19 @@ pub(crate) fn config_probe(host: HostSharedHandle<'_>) {
     }
 }
 
-pub(crate) fn config_select(layout: u8) -> bool {
+pub(crate) fn config_select(layout: u8, config_id: u32) -> bool {
     if ACTIVE.load(Ordering::Relaxed) {
         STAGES.fetch_or(FAILED, Ordering::Relaxed);
         return false;
     }
     LAYOUT.store(layout, Ordering::Relaxed);
     WANTED.store(layout, Ordering::Relaxed);
+    CONFIG_ID.store(config_id, Ordering::Relaxed);
     true
+}
+
+pub(crate) fn config_current() -> u32 {
+    CONFIG_ID.load(Ordering::Relaxed)
 }
 
 pub(crate) fn config_inactive() -> bool {
@@ -54,6 +60,7 @@ static EXPECTED_READS: AtomicU8 = AtomicU8::new(0);
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 static LAYOUT: AtomicU8 = AtomicU8::new(0);
 static WANTED: AtomicU8 = AtomicU8::new(0);
+static CONFIG_ID: AtomicU32 = AtomicU32::new(100);
 /// The layout `audio-ports:<layout>` restarts into. Zero when none is left.
 static SCHEDULED: AtomicU8 = AtomicU8::new(0);
 
@@ -113,6 +120,10 @@ pub(crate) fn deactivate(host: HostSharedHandle<'_>) {
 
 pub(crate) fn change(host: HostSharedHandle<'_>, layout: u8) {
     WANTED.store(layout, Ordering::Relaxed);
+    CONFIG_ID.store(
+        crate::audio_configs::layout_preset(layout),
+        Ordering::Relaxed,
+    );
     host.request_restart();
 }
 
@@ -136,14 +147,38 @@ pub(crate) fn ports() -> (&'static [u32], &'static [u32]) {
     layout_ports(LAYOUT.load(Ordering::Relaxed))
 }
 
-fn layout_ports(layout: u8) -> (&'static [u32], &'static [u32]) {
+pub(crate) fn layout_ports(layout: u8) -> (&'static [u32], &'static [u32]) {
     match layout {
         2 => (&[1], &[2]),
         3 => (&[1, 1], &[2]), // Same flattened size, different port boundaries.
         6 => (&[2], &[1]),
         7 => (&[], &[]),
+        9 => (&[1], &[1]),
         _ => (&[2], &[2]),
     }
+}
+
+pub(crate) fn current_layout() -> u8 {
+    LAYOUT.load(Ordering::Relaxed)
+}
+
+pub(crate) fn fill_port_info(index: u32, channels: u32, info: &mut clap_audio_port_info) {
+    *info = clap_audio_port_info {
+        id: index,
+        name: name(),
+        flags: if index == 0 {
+            CLAP_AUDIO_PORT_IS_MAIN
+        } else {
+            0
+        },
+        channel_count: channels,
+        port_type: if channels == 1 {
+            CLAP_PORT_MONO.as_ptr()
+        } else {
+            CLAP_PORT_STEREO.as_ptr()
+        },
+        in_place_pair: CLAP_INVALID_ID,
+    };
 }
 
 pub(crate) fn get(index: u32, is_input: bool, info: &mut clap_audio_port_info) -> bool {
@@ -157,30 +192,15 @@ pub(crate) fn get(index: u32, is_input: bool, info: &mut clap_audio_port_info) -
         return false;
     }
     let changed = layout == 1;
-    *info = clap_audio_port_info {
-        id: index + u32::from((layout == 4 && is_input) || (layout == 8 && !is_input)),
-        name: name(),
-        flags: if index == 0 {
-            CLAP_AUDIO_PORT_IS_MAIN
-        } else {
-            0
-        } | if changed {
-            CLAP_AUDIO_PORT_SUPPORTS_64BITS
-                | CLAP_AUDIO_PORT_PREFERS_64BITS
-                | CLAP_AUDIO_PORT_REQUIRES_COMMON_SAMPLE_SIZE
-        } else {
-            0
-        },
-        channel_count: channels,
-        port_type: if changed {
-            std::ptr::null()
-        } else if channels == 1 {
-            CLAP_PORT_MONO.as_ptr()
-        } else {
-            CLAP_PORT_STEREO.as_ptr()
-        },
-        in_place_pair: if changed { 0 } else { u32::MAX },
-    };
+    fill_port_info(index, channels, info);
+    info.id = index + u32::from((layout == 4 && is_input) || (layout == 8 && !is_input));
+    if changed {
+        info.flags |= CLAP_AUDIO_PORT_SUPPORTS_64BITS
+            | CLAP_AUDIO_PORT_PREFERS_64BITS
+            | CLAP_AUDIO_PORT_REQUIRES_COMMON_SAMPLE_SIZE;
+        info.port_type = std::ptr::null();
+        info.in_place_pair = 0;
+    }
     true
 }
 

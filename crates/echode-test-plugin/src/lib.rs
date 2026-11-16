@@ -187,6 +187,8 @@ impl Plugin for TestGain {
         }
         if fault_now() == Fault::AudioPorts {
             builder.register::<audio_configs::PluginAudioConfigs>();
+            builder.register::<audio_configs::PluginAudioConfigsInfo>();
+            builder.register::<audio_configs::PluginConfigurableAudioPorts>();
         }
     }
 }

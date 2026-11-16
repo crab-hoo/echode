@@ -118,6 +118,12 @@ pub enum PluginFailure {
     NoAudioConfigSelect,
     AudioConfigUndescribed,
     AudioConfigRefused,
+    NoAudioConfigCurrent,
+    NoAudioConfigPortInfo,
+    NoConfigurableAudioPorts,
+    NoConfigurableAudioPortsCanApply,
+    NoConfigurableAudioPortsApply,
+    ConfigurableAudioPortsRefused,
 }
 
 impl std::fmt::Display for PluginFailure {
@@ -154,6 +160,16 @@ impl std::fmt::Display for PluginFailure {
             Self::NoAudioConfigSelect => "plugin cannot select an audio configuration",
             Self::AudioConfigUndescribed => "plugin rejected an audio configuration description",
             Self::AudioConfigRefused => "plugin refused the audio configuration",
+            Self::NoAudioConfigCurrent => "plugin audio configuration info has no current callback",
+            Self::NoAudioConfigPortInfo => {
+                "plugin audio configuration info has no port description"
+            }
+            Self::NoConfigurableAudioPorts => "plugin does not support configurable audio ports",
+            Self::NoConfigurableAudioPortsCanApply => {
+                "plugin cannot check configurable audio ports"
+            }
+            Self::NoConfigurableAudioPortsApply => "plugin cannot apply configurable audio ports",
+            Self::ConfigurableAudioPortsRefused => "plugin refused the audio port configuration",
         };
         f.write_str(text)
     }
@@ -284,6 +300,12 @@ fn failure_code(failure: PluginFailure) -> u8 {
         PluginFailure::NoAudioConfigSelect => 28,
         PluginFailure::AudioConfigUndescribed => 29,
         PluginFailure::AudioConfigRefused => 30,
+        PluginFailure::NoAudioConfigCurrent => 31,
+        PluginFailure::NoAudioConfigPortInfo => 32,
+        PluginFailure::NoConfigurableAudioPorts => 33,
+        PluginFailure::NoConfigurableAudioPortsCanApply => 34,
+        PluginFailure::NoConfigurableAudioPortsApply => 35,
+        PluginFailure::ConfigurableAudioPortsRefused => 36,
     }
 }
 
@@ -338,6 +360,12 @@ fn read_plugin_failure(payload: &[u8]) -> Result<PluginFailure, RefusalDecodeErr
         28 => PluginFailure::NoAudioConfigSelect,
         29 => PluginFailure::AudioConfigUndescribed,
         30 => PluginFailure::AudioConfigRefused,
+        31 => PluginFailure::NoAudioConfigCurrent,
+        32 => PluginFailure::NoAudioConfigPortInfo,
+        33 => PluginFailure::NoConfigurableAudioPorts,
+        34 => PluginFailure::NoConfigurableAudioPortsCanApply,
+        35 => PluginFailure::NoConfigurableAudioPortsApply,
+        36 => PluginFailure::ConfigurableAudioPortsRefused,
         _ => return Err(RefusalDecodeError::UnknownPluginKind(code)),
     };
     fixed::<0>(rest, RefusalField::PluginPayload { kind: code })?;

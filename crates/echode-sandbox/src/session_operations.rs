@@ -9,18 +9,25 @@ use crate::{AppliedState, GuiReport, ParamChange, ParamInfo, ParamText, ParamVal
 use std::time::Instant;
 
 impl PluginControl {
+    fn audio_config_call(
+        &self,
+        request: ControlMessage,
+        accept: fn(&ControlMessage) -> bool,
+    ) -> Result<ControlMessage, SessionError> {
+        let mut state = self.lock();
+        let deadline = Instant::now() + STATE_REPLY;
+        let id = state.request(request, deadline)?;
+        state.wait_reply(id, deadline, |message| {
+            accept(message) || matches!(message, ControlMessage::AudioConfigRejected(_))
+        })
+    }
+
     /// Reads the current preset list while the helper is deactivated, then
     /// reactivates it. Control-only; interrupts audio, even for a read. No cache
     /// is kept, so a plugin's rescan is visible on the next explicit query.
-    pub fn audio_port_configs(&self) -> Result<Vec<crate::AudioPortConfig>, SessionError> {
-        let mut state = self.lock();
-        let deadline = Instant::now() + STATE_REPLY;
-        let id = state.request(ControlMessage::AudioConfigsRequest, deadline)?;
-        match state.wait_reply(id, deadline, |message| {
-            matches!(
-                message,
-                ControlMessage::AudioConfigs(_) | ControlMessage::AudioConfigRejected(_)
-            )
+    pub fn audio_port_configs(&self) -> Result<crate::AudioPortConfigs, SessionError> {
+        match self.audio_config_call(ControlMessage::AudioConfigsRequest, |message| {
+            matches!(message, ControlMessage::AudioConfigs(_))
         })? {
             ControlMessage::AudioConfigs(configs) => Ok(configs),
             ControlMessage::AudioConfigRejected(refusal) => Err(refusal.into()),
@@ -33,18 +40,45 @@ impl PluginControl {
     /// exchange; standalone callers use `PluginHost::follow_ports`. A timeout
     /// has an unknown outcome and must not be automatically retried.
     pub fn select_audio_port_config(&self, config_id: u32) -> Result<(), SessionError> {
-        let mut state = self.lock();
-        let deadline = Instant::now() + STATE_REPLY;
-        let id = state.request(ControlMessage::SelectAudioConfig(config_id), deadline)?;
-        match state.wait_reply(id, deadline, |message| {
-            matches!(
-                message,
-                ControlMessage::AudioConfigSelected | ControlMessage::AudioConfigRejected(_)
-            )
+        match self.audio_config_call(ControlMessage::SelectAudioConfig(config_id), |message| {
+            matches!(message, ControlMessage::AudioConfigSelected)
         })? {
             ControlMessage::AudioConfigSelected => Ok(()),
             ControlMessage::AudioConfigRejected(refusal) => Err(refusal.into()),
             _ => Err(ProtocolError::UnexpectedReply("select audio configuration").into()),
+        }
+    }
+
+    /// Asks `clap.configurable-audio-ports` whether `requests` can be applied
+    /// while deactivated, then rereads ports and reactivates audio.
+    pub fn can_apply_audio_port_configuration(
+        &self,
+        requests: &[crate::AudioPortRequest],
+    ) -> Result<bool, SessionError> {
+        match self.audio_config_call(
+            ControlMessage::CanApplyAudioPorts(requests.to_vec()),
+            |message| matches!(message, ControlMessage::AudioPortsApplicable(_)),
+        )? {
+            ControlMessage::AudioPortsApplicable(applicable) => Ok(applicable),
+            ControlMessage::AudioConfigRejected(refusal) => Err(refusal.into()),
+            _ => Err(ProtocolError::UnexpectedReply("check configurable audio ports").into()),
+        }
+    }
+
+    /// Applies `requests` via `clap.configurable-audio-ports` while deactivated,
+    /// then rereads audio ports before reactivating audio. A timeout has an
+    /// unknown outcome and must not be automatically retried.
+    pub fn apply_audio_port_configuration(
+        &self,
+        requests: &[crate::AudioPortRequest],
+    ) -> Result<(), SessionError> {
+        match self.audio_config_call(
+            ControlMessage::ApplyAudioPorts(requests.to_vec()),
+            |message| matches!(message, ControlMessage::AudioPortsApplied),
+        )? {
+            ControlMessage::AudioPortsApplied => Ok(()),
+            ControlMessage::AudioConfigRejected(refusal) => Err(refusal.into()),
+            _ => Err(ProtocolError::UnexpectedReply("apply configurable audio ports").into()),
         }
     }
     /// Queries the live tail on the helper's main thread. Control-only: waits

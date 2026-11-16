@@ -29,29 +29,45 @@ fn near(heard: f32, expected: f32) -> bool {
 /// plan routes the track for that, the helper keeps the old mapping silent;
 /// then the mapping and the routing change together, and the mono output is
 /// heard at equal power on both sides. No block mixes the two routings.
+#[derive(Clone, Copy)]
+enum PortAction {
+    Restart,
+    SelectPreset,
+    ConfigurePorts,
+}
+
 #[test]
 fn a_port_change_while_playing_moves_the_mapping_and_the_routing_together_under_rtsan() {
-    check_port_change(false);
+    check_port_change(PortAction::Restart);
 }
 
 #[test]
 fn an_audio_config_selection_uses_the_product_port_exchange_under_rtsan() {
-    check_port_change(true);
+    check_port_change(PortAction::SelectPreset);
 }
 
-fn check_port_change(select_config: bool) {
+#[test]
+fn a_configurable_audio_port_change_uses_the_product_port_exchange_under_rtsan() {
+    check_port_change(PortAction::ConfigurePorts);
+}
+
+fn check_port_change(action: PortAction) {
     let device = Id::generate();
     let (project, track) = Project::new().add_track("changing ports");
     let project = project
         .add_clap_device(track, device, "dev.echode.test-gain")
         .unwrap();
     let block = 64; // This test's scratch size, not an engine limit.
+    let initial_layout = match action {
+        PortAction::Restart => 6,
+        PortAction::SelectPreset | PortAction::ConfigurePorts => 0,
+    };
     let (mut control, mut audio) = playback_with_plugins(
         &project,
         48_000,
         block,
         &host_bin(),
-        &[ports_route(if select_config { 0 } else { 6 })],
+        &[ports_route(initial_layout)],
     )
     .unwrap();
     control.set_clip_loader(stereo_clips_of(track.raw(), 0.25, 0.125, CLIP));
@@ -62,15 +78,49 @@ fn check_port_change(select_config: bool) {
     assert_close(&left, &vec![0.5; block]);
     assert_close(&right, &vec![0.25; block]);
     let before = control.compensation_changes();
-    if select_config {
-        let plugin = control.device_control_handle(device.raw()).unwrap();
-        let configs = plugin
-            .audio_port_configs()
-            .expect("product configuration list");
-        assert_eq!(configs[1].id, 206);
-        plugin
-            .select_audio_port_config(configs[1].id)
-            .expect("product configuration selection");
+    match action {
+        PortAction::Restart => {}
+        PortAction::SelectPreset => {
+            let plugin = control.device_control_handle(device.raw()).unwrap();
+            let configs = plugin
+                .audio_port_configs()
+                .expect("product configuration list")
+                .configs;
+            assert_eq!(configs[1].id, 206);
+            plugin
+                .select_audio_port_config(configs[1].id)
+                .expect("product configuration selection");
+        }
+        PortAction::ConfigurePorts => {
+            let plugin = control.device_control_handle(device.raw()).unwrap();
+            assert_eq!(
+                plugin
+                    .audio_port_configs()
+                    .expect("product configuration list")
+                    .current_id,
+                Some(100)
+            );
+            let request = [echode_sandbox::AudioPortRequest {
+                input: false,
+                index: 0,
+                channels: 1,
+            }];
+            assert!(
+                plugin
+                    .can_apply_audio_port_configuration(&request)
+                    .expect("query product configurable layout")
+            );
+            plugin
+                .apply_audio_port_configuration(&request)
+                .expect("apply product configurable layout");
+            assert_eq!(
+                plugin
+                    .audio_port_configs()
+                    .expect("updated configuration list")
+                    .current_id,
+                None
+            );
+        }
     }
     // A hung-helper guard, not a latency threshold.
     let deadline = Instant::now() + Duration::from_secs(10);

@@ -19,9 +19,10 @@ use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
 use echode_sandbox::{
-    AudioPort, ControlMessage, GuiReport, LaunchFailure, LaunchFailureKind, MainReplyKind,
-    ParamChange, ParamEvent, ParamEventKind, ParamInfo, ParamRelay, ParamText, ParamValue, Pending,
-    PluginCommand, PluginFailure, PortLayout, Refusal, SessionLayout, Socket,
+    AudioPort, AudioPortConfigs, AudioPortRequest, ControlMessage, GuiReport, LaunchFailure,
+    LaunchFailureKind, MainReplyKind, ParamChange, ParamEvent, ParamEventKind, ParamInfo,
+    ParamRelay, ParamText, ParamValue, Pending, PluginCommand, PluginFailure, PortLayout, Refusal,
+    SessionLayout, Socket,
 };
 
 use crate::bytes::Bytes;
@@ -210,6 +211,7 @@ pub(crate) fn seeds() -> Vec<Vec<u8>> {
         Parsed,
         Window,
         AudioConfigs,
+        Applicable,
     ] {
         for actual in [
             State,
@@ -219,6 +221,7 @@ pub(crate) fn seeds() -> Vec<Vec<u8>> {
             Parsed,
             Window,
             AudioConfigs,
+            Applicable,
         ] {
             messages.push(ControlMessage::StateRejected(
                 Refusal::UnexpectedMainReply { expected, actual },
@@ -237,6 +240,12 @@ pub(crate) fn seeds() -> Vec<Vec<u8>> {
         PluginFailure::NoAudioConfigSelect,
         PluginFailure::AudioConfigUndescribed,
         PluginFailure::AudioConfigRefused,
+        PluginFailure::NoAudioConfigCurrent,
+        PluginFailure::NoAudioConfigPortInfo,
+        PluginFailure::NoConfigurableAudioPorts,
+        PluginFailure::NoConfigurableAudioPortsCanApply,
+        PluginFailure::NoConfigurableAudioPortsApply,
+        PluginFailure::ConfigurableAudioPortsRefused,
     ] {
         messages.push(ControlMessage::AudioConfigRejected(Refusal::Plugin(
             failure,
@@ -369,6 +378,16 @@ pub(crate) fn seeds() -> Vec<Vec<u8>> {
         (31, vec![0, 1, 0, 0, 0, 8, 0, 0, 0, 3]),
         (31, [&[0, 0, 0, 0, 0][..], &huge].concat()),
         (31, vec![0; 10]),
+        (40, vec![2]),
+        (40, vec![1, 0, 0]),
+        (40, [&[0][..], &huge].concat()),
+        (44, huge.to_vec()),
+        (44, vec![1, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 1]),
+        (45, vec![]),
+        (45, vec![2]),
+        (45, vec![0, 1]),
+        (46, huge.to_vec()),
+        (47, vec![0]),
     ] {
         let mut bytes = (12 + payload.len() as u32).to_le_bytes().to_vec();
         bytes.extend_from_slice(&typ.to_le_bytes());
@@ -492,17 +511,41 @@ fn sample_messages() -> Vec<ControlMessage> {
     vec![
         ControlMessage::Hello,
         ControlMessage::AudioConfigsRequest,
-        ControlMessage::AudioConfigs(vec![echode_sandbox::AudioPortConfig {
-            id: 206,
-            name: "Mono 出力".into(),
-            input_ports: 1,
-            output_ports: 1,
-            main_input_channels: 2,
-            main_output_channels: 1,
-        }]),
+        ControlMessage::AudioConfigs(AudioPortConfigs {
+            current_id: Some(206),
+            configs: vec![echode_sandbox::AudioPortConfig {
+                id: 206,
+                name: "Mono 出力".into(),
+                input_ports: 1,
+                output_ports: 1,
+                main_input_channels: 2,
+                main_output_channels: 1,
+                ports: Some(PortLayout::new(vec![2], vec![1])),
+            }],
+        }),
         ControlMessage::SelectAudioConfig(206),
         ControlMessage::AudioConfigSelected,
         ControlMessage::AudioConfigRejected(Refusal::Plugin(PluginFailure::AudioConfigRefused)),
+        ControlMessage::CanApplyAudioPorts(vec![
+            AudioPortRequest {
+                input: true,
+                index: 0,
+                channels: 1,
+            },
+            AudioPortRequest {
+                input: false,
+                index: 0,
+                channels: 2,
+            },
+        ]),
+        ControlMessage::AudioPortsApplicable(true),
+        ControlMessage::AudioPortsApplicable(false),
+        ControlMessage::ApplyAudioPorts(vec![AudioPortRequest {
+            input: true,
+            index: 0,
+            channels: 1,
+        }]),
+        ControlMessage::AudioPortsApplied,
         ControlMessage::SaveRequest,
         ControlMessage::State(b"plugin state".to_vec()),
         ControlMessage::Restore(b"plugin state".to_vec()),

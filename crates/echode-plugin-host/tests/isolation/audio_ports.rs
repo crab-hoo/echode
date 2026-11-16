@@ -66,7 +66,8 @@ fn audio_config_presets_select_ids_and_exchange_exact_ports_under_rtsan() {
     let configs = host
         .control_handle()
         .audio_port_configs()
-        .expect("audio configuration presets");
+        .expect("audio configuration presets")
+        .configs;
     assert_eq!(
         configs.iter().map(|config| config.id).collect::<Vec<_>>(),
         [100, 206, 303]
@@ -137,7 +138,7 @@ fn audio_config_presets_select_ids_and_exchange_exact_ports_under_rtsan() {
 
 #[test]
 fn missing_audio_config_extension_is_a_typed_refusal_and_audio_resumes_under_rtsan() {
-    use echode_sandbox::PluginFailure;
+    use echode_sandbox::{AudioPortRequest, PluginFailure};
     let mut host = spawn_plugin(None, SessionLayout::stereo());
     for result in [
         host.control_handle().audio_port_configs().map(|_| ()),
@@ -150,7 +151,145 @@ fn missing_audio_config_extension_is_a_typed_refusal_and_audio_resumes_under_rts
             )))
         ));
     }
+    let request = [AudioPortRequest {
+        input: true,
+        index: 0,
+        channels: 1,
+    }];
+    for result in [
+        host.control_handle()
+            .can_apply_audio_port_configuration(&request)
+            .map(|_| ()),
+        host.control_handle()
+            .apply_audio_port_configuration(&request),
+    ] {
+        assert!(matches!(
+            result,
+            Err(SessionError::Refused(Refusal::Plugin(
+                PluginFailure::NoConfigurableAudioPorts
+            )))
+        ));
+    }
     check_audio(&mut host);
+}
+
+#[test]
+fn configurable_audio_ports_and_config_info_exchange_ports_under_rtsan() {
+    use echode_sandbox::{AudioPortRequest, PluginFailure};
+    let mut host = spawn_plugin(Some("audio-ports"), SessionLayout::stereo());
+    wait_probe(&mut host, [3, 1, 2, 0]);
+    let initial = host
+        .control_handle()
+        .audio_port_configs()
+        .expect("audio configuration presets and info");
+    assert_eq!(initial.current_id, Some(100));
+    assert_eq!(
+        initial
+            .configs
+            .iter()
+            .map(|config| &config.ports)
+            .collect::<Vec<_>>(),
+        [
+            &Some(PortLayout::new(vec![2], vec![2])),
+            &Some(PortLayout::new(vec![2], vec![1])),
+            &Some(PortLayout::new(vec![1, 1], vec![2])),
+        ]
+    );
+    host.control_handle()
+        .select_audio_port_config(303)
+        .expect("select split preset");
+    assert!(host.follow_ports().unwrap());
+    assert_eq!(
+        host.control_handle()
+            .audio_port_configs()
+            .unwrap()
+            .current_id,
+        Some(303)
+    );
+    let unsupported = [AudioPortRequest {
+        input: true,
+        index: 0,
+        channels: 6,
+    }];
+    assert!(
+        !host
+            .control_handle()
+            .can_apply_audio_port_configuration(&unsupported)
+            .expect("query unsupported configurable layout")
+    );
+    let mono_in = [
+        AudioPortRequest {
+            input: true,
+            index: 1,
+            channels: 0,
+        },
+        AudioPortRequest {
+            input: true,
+            index: 0,
+            channels: 1,
+        },
+    ];
+    assert!(
+        host.control_handle()
+            .can_apply_audio_port_configuration(&mono_in)
+            .expect("query custom mono input configuration")
+    );
+    host.control_handle()
+        .apply_audio_port_configuration(&mono_in)
+        .expect("apply custom mono input configuration");
+    let custom_ports = PortLayout::new(vec![1], vec![2]);
+    assert_eq!(host.control_handle().audio_ports().1, custom_ports);
+    assert!(
+        process_ports(&mut host, 32)
+            .iter()
+            .flatten()
+            .all(|sample| *sample == 0.0),
+        "configurable ports processed a stale mapping"
+    );
+    assert!(host.follow_ports().unwrap());
+    for frames in [1, 32, 127, 256] {
+        let output = process_ports(&mut host, frames);
+        assert!(output[0].iter().all(|s| (*s - 0.25).abs() < 1e-6));
+        assert!(output[1].iter().all(|s| *s == 0.0));
+    }
+    assert_eq!(
+        host.control_handle()
+            .audio_port_configs()
+            .unwrap()
+            .current_id,
+        None,
+        "custom configurable port layout must clear preset current_config"
+    );
+    let mono_both = [AudioPortRequest {
+        input: false,
+        index: 0,
+        channels: 1,
+    }];
+    host.control_handle()
+        .apply_audio_port_configuration(&mono_both)
+        .expect("apply mono input and mono output configuration");
+    assert!(host.follow_ports().unwrap());
+    for frames in [1, 32, 127, 256] {
+        let output = process_ports(&mut host, frames);
+        assert_eq!(output.len(), 1);
+        assert!(output[0].iter().all(|s| (*s - 0.25).abs() < 1e-6));
+    }
+    assert!(matches!(
+        host.control_handle()
+            .apply_audio_port_configuration(&unsupported),
+        Err(SessionError::Refused(Refusal::Plugin(
+            PluginFailure::ConfigurableAudioPortsRefused
+        )))
+    ));
+    let output = process_ports(&mut host, 32);
+    assert_eq!(output.len(), 1);
+    assert!(output[0].iter().all(|s| (*s - 0.25).abs() < 1e-6));
+    let state = host.control_handle().capture_state().unwrap();
+    assert_eq!(
+        state[0] & 0x80,
+        0,
+        "configurable audio ports lifecycle probe failed: {state:?}"
+    );
 }
 
 #[test]

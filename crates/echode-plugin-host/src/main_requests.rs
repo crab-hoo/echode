@@ -3,13 +3,18 @@
 //! A timed-out caller leaves its call alive until the main thread completes it.
 //! Later callers get an explicit busy refusal rather than replacing its input.
 
-use echode_sandbox::{GuiReport, MainReplyKind, ParamInfo, ParamText, ParamValue, Refusal};
+use echode_sandbox::{
+    AudioPortConfigs, AudioPortRequest, GuiReport, MainReplyKind, ParamInfo, ParamText, ParamValue,
+    Refusal,
+};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 pub(crate) enum MainRequest {
     AudioConfigs,
     SelectAudioConfig(u32),
+    CanApplyAudioPorts(Vec<AudioPortRequest>),
+    ApplyAudioPorts(Vec<AudioPortRequest>),
     Save,
     Load(Vec<u8>),
     PrepareCapacity(u32),
@@ -23,11 +28,18 @@ pub(crate) enum MainRequest {
 
 impl MainRequest {
     pub(crate) fn requires_inactive(&self) -> bool {
-        matches!(self, Self::AudioConfigs | Self::SelectAudioConfig(_))
+        matches!(
+            self,
+            Self::AudioConfigs
+                | Self::SelectAudioConfig(_)
+                | Self::CanApplyAudioPorts(_)
+                | Self::ApplyAudioPorts(_)
+        )
     }
 }
 pub(crate) enum MainReply {
-    AudioConfigs(Vec<echode_sandbox::AudioPortConfig>),
+    AudioConfigs(AudioPortConfigs),
+    Applicable(bool),
     State(Vec<u8>),
     Done,
     Parameters(Vec<ParamInfo>),
@@ -40,6 +52,7 @@ impl MainReply {
     pub(crate) fn unexpected(&self, expected: MainReplyKind) -> Refusal {
         let actual = match self {
             Self::AudioConfigs(_) => MainReplyKind::AudioConfigs,
+            Self::Applicable(_) => MainReplyKind::Applicable,
             Self::State(_) => MainReplyKind::State,
             Self::Done => MainReplyKind::Done,
             Self::Parameters(_) => MainReplyKind::Parameters,

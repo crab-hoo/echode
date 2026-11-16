@@ -17,3 +17,16 @@ pub(crate) unsafe fn table<'a, T>(plugin: &'a clap_plugin, id: &CStr) -> Option<
     // borrows.
     unsafe { table.cast::<T>().as_ref() }
 }
+
+/// The plugin's table for `primary` or `compat`, or `None` when it has neither.
+///
+/// # Safety
+/// `T` is the `#[repr(C)]` table the CLAP headers declare for both identifiers.
+pub(crate) unsafe fn table_with_compat<'a, T>(
+    plugin: &'a clap_plugin,
+    primary: &CStr,
+    compat: &CStr,
+) -> Option<&'a T> {
+    // SAFETY: caller guarantees `T` matches both `primary` and `compat`.
+    unsafe { table(plugin, primary) }.or_else(|| unsafe { table(plugin, compat) })
+}

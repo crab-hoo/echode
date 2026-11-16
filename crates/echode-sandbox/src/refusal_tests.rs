@@ -20,7 +20,7 @@ const OUTPUT: AudioPort = AudioPort {
     index: u32::MAX,
 };
 
-fn every_failure() -> [PluginFailure; 33] {
+fn every_failure() -> [PluginFailure; 39] {
     use PluginFailure::*;
     [
         NoState,
@@ -56,6 +56,12 @@ fn every_failure() -> [PluginFailure; 33] {
         NoAudioConfigSelect,
         AudioConfigUndescribed,
         AudioConfigRefused,
+        NoAudioConfigCurrent,
+        NoAudioConfigPortInfo,
+        NoConfigurableAudioPorts,
+        NoConfigurableAudioPortsCanApply,
+        NoConfigurableAudioPortsApply,
+        ConfigurableAudioPortsRefused,
     ]
 }
 
@@ -141,8 +147,8 @@ fn malformed_refusals_are_invalid_data() {
         vec![UNEXPECTED_MAIN_REPLY],
         vec![UNEXPECTED_MAIN_REPLY, 0],
         vec![UNEXPECTED_MAIN_REPLY, 0, 0, 0],
-        vec![UNEXPECTED_MAIN_REPLY, 7, 0],
-        vec![UNEXPECTED_MAIN_REPLY, 0, 7],
+        vec![UNEXPECTED_MAIN_REPLY, 8, 0],
+        vec![UNEXPECTED_MAIN_REPLY, 0, 8],
     ] {
         let error = read_refusal(&bytes).expect_err("a malformed refusal was accepted");
         assert_eq!(error.kind(), ErrorKind::InvalidData, "{bytes:?}");
@@ -165,6 +171,7 @@ fn internal_helper_failures_keep_kinds_metadata_and_diagnostics() {
         Parsed,
         Window,
         AudioConfigs,
+        Applicable,
     ];
     for (expected, diagnostic) in kinds.into_iter().zip([
         "unexpected main-thread reply",
@@ -174,6 +181,7 @@ fn internal_helper_failures_keep_kinds_metadata_and_diagnostics() {
         "unexpected main-thread reply to parameter text",
         "unexpected main-thread reply",
         "unexpected main-thread reply to audio configurations",
+        "unexpected main-thread reply to configurable audio ports",
     ]) {
         for actual in kinds {
             let refusal = Refusal::UnexpectedMainReply { expected, actual };

@@ -19,8 +19,12 @@ pub enum ParamPayload {
     ParsedText,
     /// Changes the plugin made on its own.
     Relay,
-    /// Audio-port configuration presets.
+    /// Audio-port configuration presets and optional per-port details.
     AudioConfigs,
+    /// Configurable audio-port change requests.
+    AudioPortRequests,
+    /// Applicability reply for configurable audio-port requests.
+    AudioPortsApplicable,
 }
 
 /// A field of a control payload. Sizes count only this field's bytes.
@@ -50,6 +54,16 @@ pub enum ParamField {
     OutputPorts,
     MainInputChannels,
     MainOutputChannels,
+    CurrentPresent,
+    PortsPresent,
+    InputPortCount,
+    InputPortChannels,
+    OutputPortCount,
+    OutputPortChannels,
+    PortSide,
+    PortIndex,
+    PortChannels,
+    Applicable,
 }
 
 /// One flag byte of a window report, in wire order.
@@ -103,17 +117,28 @@ pub enum PayloadDecodeError {
         id: u32,
         kind: u8,
     },
+    InvalidConfigFlag {
+        payload: ParamPayload,
+        field: ParamField,
+        value: u8,
+    },
 }
 
 impl std::fmt::Display for PayloadDecodeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::Truncated {
-                payload: ParamPayload::AudioConfigs,
+                payload:
+                    ParamPayload::AudioConfigs
+                    | ParamPayload::AudioPortRequests
+                    | ParamPayload::AudioPortsApplicable,
                 ..
             } => "audio configuration message is truncated",
             Self::TrailingBytes {
-                payload: ParamPayload::AudioConfigs,
+                payload:
+                    ParamPayload::AudioConfigs
+                    | ParamPayload::AudioPortRequests
+                    | ParamPayload::AudioPortsApplicable,
                 ..
             } => "audio configuration message has trailing bytes",
             Self::Truncated { .. } => "parameter message is truncated",
@@ -126,6 +151,7 @@ impl std::fmt::Display for PayloadDecodeError {
             Self::InvalidWindowFlag { .. } => "window report flag is not 0 or 1",
             Self::UnknownRelayFlags(_) => "relay flags are unknown",
             Self::UnknownEventKind { .. } => "relay event kind is unknown",
+            Self::InvalidConfigFlag { .. } => "audio configuration flag is not 0 or 1",
         })
     }
 }
@@ -192,8 +218,36 @@ impl<'a> Cursor<'a> {
         Ok(byte)
     }
 
+    pub(crate) fn flag(&mut self, field: ParamField) -> Result<bool, PayloadDecodeError> {
+        match self.u8(field)? {
+            0 => Ok(false),
+            1 => Ok(true),
+            value => Err(PayloadDecodeError::InvalidConfigFlag {
+                payload: self.payload,
+                field,
+                value,
+            }),
+        }
+    }
+
     pub(crate) fn u32(&mut self, field: ParamField) -> Result<u32, PayloadDecodeError> {
         Ok(u32::from_le_bytes(self.array(field)?))
+    }
+
+    /// A counted sequence of 32-bit values, preserving any active `self.entry`
+    /// while bounding reservation by unread payload bytes.
+    pub(crate) fn u32_vec(
+        &mut self,
+        count: ParamField,
+        item: ParamField,
+    ) -> Result<Vec<u32>, PayloadDecodeError> {
+        let count = self.u32(count)? as usize;
+        let room = self.unread().len() / 4;
+        let mut items = Vec::with_capacity(count.min(room));
+        for _ in 0..count {
+            items.push(self.u32(item)?);
+        }
+        Ok(items)
     }
 
     pub(crate) fn f64(&mut self, field: ParamField) -> Result<f64, PayloadDecodeError> {

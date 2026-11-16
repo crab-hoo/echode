@@ -95,6 +95,7 @@ fn malformed_control_metadata_retains_a_structural_cause() {
         GUI_CLOSED,
         AUDIO_CONFIGS_REQUEST,
         AUDIO_CONFIG_SELECTED,
+        AUDIO_PORTS_APPLIED,
     ] {
         for actual in 1..=4 {
             assert_cause(
@@ -109,7 +110,7 @@ fn malformed_control_metadata_retains_a_structural_cause() {
         }
     }
     // The next type past the most recent notice is still unknown.
-    for typ in [0, AUDIO_CONFIG_REJECTED + 1, 256, u32::MAX] {
+    for typ in [0, AUDIO_PORTS_APPLIED + 1, 256, u32::MAX] {
         assert_cause(
             receive(typ, &[1, 2, 3]).unwrap_err(),
             ControlDecodeError::UnknownMessageType(typ),

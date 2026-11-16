@@ -42,14 +42,18 @@ fn text_messages(text: &str) -> Vec<ControlMessage> {
             values: vec![value],
             ..Default::default()
         }),
-        ControlMessage::AudioConfigs(vec![crate::AudioPortConfig {
-            id: 7,
-            name: text.into(),
-            input_ports: 1,
-            output_ports: 1,
-            main_input_channels: 2,
-            main_output_channels: 2,
-        }]),
+        ControlMessage::AudioConfigs(crate::AudioPortConfigs {
+            current_id: Some(7),
+            configs: vec![crate::AudioPortConfig {
+                id: 7,
+                name: text.into(),
+                input_ports: 1,
+                output_ports: 1,
+                main_input_channels: 2,
+                main_output_channels: 2,
+                ports: Some(crate::PortLayout::new(vec![2], vec![2])),
+            }],
+        }),
     ]
 }
 

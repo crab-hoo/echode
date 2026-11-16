@@ -45,7 +45,7 @@ fn malformed_cases() -> Vec<(Vec<u8>, RefusalDecodeError, &'static str)> {
             ));
         }
     }
-    for code in 7..=u8::MAX {
+    for code in 8..=u8::MAX {
         cases.push((
             vec![10, code, 0],
             UnknownExpectedReply(code),
@@ -58,7 +58,7 @@ fn malformed_cases() -> Vec<(Vec<u8>, RefusalDecodeError, &'static str)> {
         ));
     }
     cases.push((vec![7], MissingPluginKind, "plugin failure is malformed"));
-    for kind in 0..=24 {
+    for kind in 0..=36 {
         let expected = if matches!(kind, 18 | 19) { 5 } else { 0 };
         for actual in (0..=8).filter(|size| *size != expected) {
             let mut payload = vec![7, kind];
@@ -74,7 +74,7 @@ fn malformed_cases() -> Vec<(Vec<u8>, RefusalDecodeError, &'static str)> {
             ));
         }
     }
-    for kind in 31..=u8::MAX {
+    for kind in 37..=u8::MAX {
         cases.push((
             vec![7, kind],
             UnknownPluginKind(kind),

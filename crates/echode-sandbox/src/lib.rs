@@ -47,7 +47,7 @@ mod wire;
 mod workgroup;
 
 pub use applied::AppliedState;
-pub use audio_configs::AudioPortConfig;
+pub use audio_configs::{AudioPortConfig, AudioPortConfigs, AudioPortRequest};
 pub use control::{ControlMessage, Socket};
 pub use control_decode::{ControlDecodeError, ControlField};
 pub use control_text::ControlTextError;

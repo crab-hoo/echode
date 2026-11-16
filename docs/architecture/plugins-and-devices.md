@@ -55,7 +55,9 @@ CLAP の遅延は有効化の直後にメインスレッドで読み、初回の
 一覧は保持せず、`rescan` は次の要求で反映する。一覧を読むだけでも音声を中断するため、周期的には呼ばない。
 選択後と拒否後は共通の再有効化で正確なポートを読み直し、`PortsChanged` を応答より先に送る。
 成功した選択は dirty にし、保存はプラグイン自身の状態に依存する（[ADR 0384](../decisions/0384-clap-audio-port-config-selection.md)）。
-構成メニュー・`audio-ports-config-info`・`configurable-audio-ports` は未接続である。
+`clap.audio-ports-config-info`（`/1` と互換 `/draft-0`）がある時は現在選択中の構成 ID と各構成の個別ポート詳細も読み、無い時は未設定のまま一覧を返す。
+`clap.configurable-audio-ports`（`/1` と互換 `.draft1`）による任意のポート構成変更の問い合せ（`can_apply`）と適用（`apply`）も同じく無効化中の主スレッドで実行し、標準的なモノ／ステレオ種別だけを付けて特殊な `port_details` は null にする（[ADR 0385](../decisions/0385-clap-configurable-audio-ports-and-config-info.md)）。
+構成メニュー UI と選択状態の保存・特殊な `port_details` 指定は未接続である。
 `clap.note-ports` は native CLAP・MIDI 1.0・MIDI 2.0・MPE を対応と答える。
 入力形式はこの順で選び、既存の経路を保つ（[ADR 0375](../decisions/0375-midi-1-notes-for-midi-only-clap-ports.md)、[ADR 0379](../decisions/0379-midi2-notes-for-clap-ports.md)）。
 MIDI 2.0 はグループ 0 の UMP で、16 bit のベロシティ（0 も発音）と 32 bit のポリプレッシャーを送る。

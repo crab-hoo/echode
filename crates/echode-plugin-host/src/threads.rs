@@ -1871,19 +1871,50 @@ fn handle_control(
     message: ControlMessage,
 ) -> Result<(), HostError> {
     match message {
-        ControlMessage::AudioConfigsRequest | ControlMessage::SelectAudioConfig(_) => {
-            let request = match message {
-                ControlMessage::SelectAudioConfig(id) => MainRequest::SelectAudioConfig(id),
-                _ => MainRequest::AudioConfigs,
-            };
-            let expected = if matches!(request, MainRequest::AudioConfigs) {
-                MainReplyKind::AudioConfigs
-            } else {
-                MainReplyKind::Done
+        ControlMessage::AudioConfigsRequest
+        | ControlMessage::SelectAudioConfig(_)
+        | ControlMessage::CanApplyAudioPorts(_)
+        | ControlMessage::ApplyAudioPorts(_) => {
+            enum Kind {
+                ReadConfigs,
+                SelectConfig,
+                CanApply,
+                Apply,
+            }
+            let (kind, request, expected) = match message {
+                ControlMessage::SelectAudioConfig(id) => (
+                    Kind::SelectConfig,
+                    MainRequest::SelectAudioConfig(id),
+                    MainReplyKind::Done,
+                ),
+                ControlMessage::CanApplyAudioPorts(requests) => (
+                    Kind::CanApply,
+                    MainRequest::CanApplyAudioPorts(requests),
+                    MainReplyKind::Applicable,
+                ),
+                ControlMessage::ApplyAudioPorts(requests) => (
+                    Kind::Apply,
+                    MainRequest::ApplyAudioPorts(requests),
+                    MainReplyKind::Done,
+                ),
+                _ => (
+                    Kind::ReadConfigs,
+                    MainRequest::AudioConfigs,
+                    MainReplyKind::AudioConfigs,
+                ),
             };
             let reply = match call_main(bridge, request) {
                 Ok(MainReply::AudioConfigs(configs)) => ControlMessage::AudioConfigs(configs),
-                Ok(MainReply::Done) => ControlMessage::AudioConfigSelected,
+                Ok(MainReply::Applicable(applicable)) => {
+                    ControlMessage::AudioPortsApplicable(applicable)
+                }
+                Ok(MainReply::Done) => match kind {
+                    Kind::SelectConfig => ControlMessage::AudioConfigSelected,
+                    Kind::Apply => ControlMessage::AudioPortsApplied,
+                    Kind::ReadConfigs | Kind::CanApply => {
+                        ControlMessage::AudioConfigRejected(MainReply::Done.unexpected(expected))
+                    }
+                },
                 Ok(reply) => ControlMessage::AudioConfigRejected(reply.unexpected(expected)),
                 Err(error) => ControlMessage::AudioConfigRejected(error),
             };
@@ -2382,6 +2413,14 @@ fn perform_main_request_with(
         }
         MainRequest::SelectAudioConfig(id) => {
             crate::audio_configs::select(instance.raw_instance(), id)?;
+            bridge.plugin_dirty.store(true, Ordering::Release);
+            MainReply::Done
+        }
+        MainRequest::CanApplyAudioPorts(requests) => MainReply::Applicable(
+            crate::audio_configs::can_apply(instance.raw_instance(), &requests)?,
+        ),
+        MainRequest::ApplyAudioPorts(requests) => {
+            crate::audio_configs::apply(instance.raw_instance(), &requests)?;
             bridge.plugin_dirty.store(true, Ordering::Release);
             MainReply::Done
         }
@@ -3036,32 +3075,26 @@ fn read_port_list(
 ) -> Result<Vec<u32>, PluginFailure> {
     // SAFETY: the plugin's own function, called on the main thread while the plugin is inactive.
     let port_count = unsafe { count(plugin, is_input) };
-    let mut counts = Vec::with_capacity(port_count as usize);
-    for index in 0..port_count {
-        let mut info = clap_audio_port_info {
-            id: 0,
-            name: [0; clap_sys::string_sizes::CLAP_NAME_SIZE],
-            flags: 0,
-            channel_count: 0,
-            port_type: ptr::null(),
-            in_place_pair: u32::MAX,
-        };
-        let port = AudioPort {
-            input: is_input,
-            index,
-        };
-        // SAFETY: the plugin's own function, called on the main thread while the plugin is
-        // inactive, with storage for one descriptor.
-        let ok = unsafe { get(plugin, index, is_input, &mut info) };
-        if !ok {
-            return Err(PluginFailure::PortUndescribed(port));
-        }
-        if info.channel_count == 0 {
-            return Err(PluginFailure::PortWithoutChannels(port));
-        }
-        counts.push(info.channel_count);
-    }
-    Ok(counts)
+    crate::audio_ports::read_port_channels(
+        port_count,
+        |index, info| {
+            // SAFETY: the plugin's own function, called on the main thread while the plugin is
+            // inactive, with storage for one descriptor.
+            unsafe { get(plugin, index, is_input, info) }
+        },
+        |index| {
+            PluginFailure::PortUndescribed(AudioPort {
+                input: is_input,
+                index,
+            })
+        },
+        |index| {
+            PluginFailure::PortWithoutChannels(AudioPort {
+                input: is_input,
+                index,
+            })
+        },
+    )
 }
 
 fn publish_stopped(handoff: &ProcessorHandoff, stopped: StoppedProcessor, realtime: bool) {

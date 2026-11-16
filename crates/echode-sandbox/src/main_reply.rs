@@ -11,6 +11,7 @@ pub enum MainReplyKind {
     Parsed = 4,
     Window = 5,
     AudioConfigs = 6,
+    Applicable = 7,
 }
 
 impl MainReplyKind {
@@ -23,6 +24,7 @@ impl MainReplyKind {
             4 => Self::Parsed,
             5 => Self::Window,
             6 => Self::AudioConfigs,
+            7 => Self::Applicable,
             _ => return None,
         })
     }
@@ -34,6 +36,7 @@ impl MainReplyKind {
             Self::Values => "unexpected main-thread reply to parameter values",
             Self::Parsed => "unexpected main-thread reply to parameter text",
             Self::AudioConfigs => "unexpected main-thread reply to audio configurations",
+            Self::Applicable => "unexpected main-thread reply to configurable audio ports",
         }
     }
 }
