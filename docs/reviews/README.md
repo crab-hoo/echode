@@ -66,7 +66,7 @@
   監査時の計測は [規模の計測](../evidence/2026-11-03-scale-measurements.md) に置く。
   時間換算の重複とテンポ境界ごとの再探索（FCA-13）は [ADR 0275](../decisions/0275-shared-integer-tempo-index.md) で共通の不変索引へ集めた。
   遅延の取得・通知・表示（FCA-07）の先行分は [ADR 0246](../decisions/0246-plugin-latency-reporting.md)、
-  PDC は [ADR 0339](../decisions/0339-plugin-delay-compensation.md) と [ADR 0340](../decisions/0340-latency-graph.md)（遅延グラフと検証）。
+  PDC は [ADR 0339](../decisions/0339-plugin-delay-compensation.md) と [ADR 0340](../decisions/0340-latency-graph.md)（遅延グラフと検証）、合流の経路は [ADR 0390](../decisions/0390-routes-in-the-latency-graph.md)。
   `thread-check`・`log`・`timer-support` は [ADR 0347](../decisions/0347-clap-thread-check.md)・[ADR 0349](../decisions/0349-clap-log-relay.md)・[ADR 0351](../decisions/0351-clap-main-thread-timers.md)。
   `tail` の変更と書出しの確定前の読直しは [ADR 0352](../decisions/0352-live-clap-tails-and-export-fence.md)。
   ノート形式と終了処理は [ADR 0356](../decisions/0356-clap-note-port-capabilities-and-lifecycle.md)、MIDI 1.0 だけのノート入力は [ADR 0375](../decisions/0375-midi-1-notes-for-midi-only-clap-ports.md)。

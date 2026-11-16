@@ -1,7 +1,9 @@
 # ADR 0340: PDC を遅延グラフで計算し、公開の前に不変条件で検証する
 
 - 日付: 2026-11-14
-- 状態: 現行。[ADR 0339](0339-plugin-delay-compensation.md) の計算（`compensate` の式）と報告値の読み方を置き換える。遅延線・合流点・引継ぎは ADR 0339 のまま
+- 状態: 一部置換（[ADR 0390](0390-routes-in-the-latency-graph.md)）
+- 補足: [ADR 0339](0339-plugin-delay-compensation.md) の計算（`compensate` の式）と報告値の読み方を置き換える。遅延線・合流点・引継ぎは ADR 0339 のまま。
+  バイパスの遅延を使う場所と、センド・サイドチェイン・ドラムの MIDI 配布の写し方は ADR 0390 が決めた
 - 領域: 音声エンジン・書き出し
 - 関連: [ADR 0276](0276-priority-order-and-delegated-decisions.md)、[ADR 0246](0246-plugin-latency-reporting.md)、[ADR 0282](0282-plugin-nan-and-master-auto-mute.md)、
   [PCA-01・05](../reviews/2026-11-13-professional-cross-audit.md)、[NFA-07](../reviews/2026-11-13-finite-overflow-audit.md)、[P2-03](../phase2.md#p2-03-ルーティングフォルダバスpdc)

@@ -623,7 +623,9 @@ f64 の和を f32 の面へ狭めた所（フォルダバス・マスター）�
 プラグインの遅延の補正（PDC）は、遅延グラフの計算と検証（`Graph`・`Solution`）、エンジンの経路をグラフへ写す `compensate` を `compensation.rs`、遅延線と記憶域の予算を `delay.rs` に置く。
 制御側の `playback.rs::compensate_plan` が報告値を 1 回読んで（`HostGraph::latencies`）線を用意し、最初の音源の線は `plugins.rs` のヘルパーのグラフが持つ。
 合流を足す機能（センド、サイドチェイン、クリップ FX）は、`compensate` に節と辺を足し、その辺の遅延で線を作る。式を別の場所に書かない。
-足したら `compensation_tests.rs` の `arrivals`（コールバックが線を置く順の模型）にも同じ経路を足し、乱数の回帰に通す。
+センド・サイドチェイン・ドラムの MIDI 配布は `Routes` の一覧として写してある。製品へつなぐ時は `compensate_plan` で一覧を埋め、返る線（`sends`・`sidechains`・`stage_lines`）を置く。
+線の予算は `Compensation::lines` だけを数える。実行の依存（`playback_bus.rs`）も同じ一覧から作る（[ADR 0390](decisions/0390-routes-in-the-latency-graph.md)）。
+足したら `compensation_tests.rs` の `arrivals`（コールバックが線を置く順の模型）と `RandomRouting` にも同じ経路を足し、乱数の回帰に通す。
 回帰は `compensation_tests.rs`・`delay_tests.rs`・`hosted_playback/compensation.rs`・CLI の `a_compensated_export_starts_every_track_at_the_projects_start` と `audit_pca01_*`。
 遅延はヘルパーにしかないので、ブロック長の比較は `block_size.rs` ではなく実ヘルパーの回帰で行う
 （[ADR 0339](decisions/0339-plugin-delay-compensation.md)、[ADR 0340](decisions/0340-latency-graph.md)）。

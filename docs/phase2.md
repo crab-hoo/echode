@@ -212,7 +212,8 @@ PDC は、トラックとフォルダの合流点の遅延線で揃え、書出�
 バイパスした装置は遅延を保ち、実行中の遅延の変化は計画を作り直して追う。
 再生ヘッドは処理の時計から分け、マスターの遅れを補正して表示する（[ADR 0373](decisions/0373-pdc-playhead-position.md)）。
 計算は遅延グラフの最長経路で、計画ごとに検証してから公開し、循環と持てない遅延は断る（[ADR 0340](decisions/0340-latency-graph.md)）。
-センド・サイドチェイン・ドラム用の MIDI 配布は未接続で、合流はこのグラフの辺として足す。
+センド・サイドチェイン・ドラム用の MIDI 配布は、遅延グラフへ写す経路（`Routes`）と線の計画まで作った。バイパスの遅延は次の合流で使う（[ADR 0390](decisions/0390-routes-in-the-latency-graph.md)）。
+モデル・保存・操作、コールバックの和・鍵の入力ポート・ノートの振り分け・実行の依存、ミュート・ソロとの関係、画面は未接続である。
 CLAP の遅延の取得とデバイス列の表示は [ADR 0246](decisions/0246-plugin-latency-reporting.md) で接続した。
 `clap.thread-check` と `clap.log` は [ADR 0347](decisions/0347-clap-thread-check.md)・[ADR 0349](decisions/0349-clap-log-relay.md) で接続した。
 `clap.timer-support` は停止中・窓なしでも主スレッドから通知し、callback 中の登録・解除を扱う（[ADR 0351](decisions/0351-clap-main-thread-timers.md)）。

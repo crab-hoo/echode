@@ -17,6 +17,8 @@
 //! against the graph with rules that do not depend on the order the solver
 //! worked in, and no plan is published without passing it.
 
+use std::collections::{HashMap, HashSet};
+
 use crate::PlaybackError;
 
 /// A point where audio meets and is then processed.
@@ -274,12 +276,42 @@ pub(crate) struct DeviceLatency {
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct TrackFlow<'a> {
     /// Position of the parent whose input this track's output joins. Master
-    /// otherwise. Every parent precedes its children.
+    /// otherwise. Positions may come in any order; a loop is refused.
     pub(crate) parent: Option<usize>,
     /// The track plays placed audio of its own.
     pub(crate) clips: bool,
     /// Its hosted devices in chain order.
     pub(crate) devices: &'a [DeviceLatency],
+    /// Position of the track whose notes its first instrument plays, as a
+    /// drum rack's pad plays its folder's notes (ADR 0116). Its own otherwise.
+    pub(crate) notes_from: Option<usize>,
+}
+
+/// One track's chain output, after its devices and before its output line
+/// and fader (post-FX, pre-fader: a new send's default), joining another
+/// track's input as a send joins its return.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SendFlow {
+    pub(crate) from: usize,
+    pub(crate) to: usize,
+}
+
+/// One track's chain output, tapped where a send is, entering a device's
+/// sidechain input. `device` indexes the target track's `devices`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SidechainFlow {
+    pub(crate) from: usize,
+    pub(crate) track: usize,
+    pub(crate) device: usize,
+}
+
+/// Everything that plays and every merge between tracks: the folder bus
+/// through [`TrackFlow::parent`], sends, sidechains and handed-out notes.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Routes<'a> {
+    pub(crate) tracks: &'a [TrackFlow<'a>],
+    pub(crate) sends: &'a [SendFlow],
+    pub(crate) sidechains: &'a [SidechainFlow],
 }
 
 /// Delays for one track's lines, in device frames.
@@ -295,12 +327,31 @@ pub(crate) struct TrackDelays {
     pub(crate) output: u64,
 }
 
+/// The line before a device whose main audio meets a sidechain there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct StageLine {
+    pub(crate) track: usize,
+    /// Index into the track's `devices`.
+    pub(crate) device: usize,
+    /// Frames to hold the chain's audio before the device.
+    pub(crate) main: u64,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Compensation {
     /// In the order of the tracks given.
     pub(crate) tracks: Vec<TrackDelays>,
     /// Each active device's input lag, from the same solved graph as the audio.
     pub(crate) stage_inputs: Vec<(u128, u64)>,
+    /// Per send, in the order given: frames to hold the source's chain
+    /// output before it joins the target's input.
+    pub(crate) sends: Vec<u64>,
+    /// Per sidechain, in the order given: frames to hold the source's chain
+    /// output before the device hears it.
+    pub(crate) sidechains: Vec<u64>,
+    /// The main line of every device that hears a sidechain, in track and
+    /// chain order. Every other device hears the chain's audio at once.
+    pub(crate) stage_lines: Vec<StageLine>,
     /// The metronome's clicks, to meet the music at master.
     pub(crate) clicks: u64,
     /// How far master lags the timeline.
@@ -309,29 +360,76 @@ pub(crate) struct Compensation {
     pub(crate) tail: u32,
 }
 
-/// Describes the tracks as a [`Graph`], solves it and checks the result.
+impl Compensation {
+    /// Every line the plan holds, so the memory budget counts each one.
+    pub(crate) fn lines(&self) -> impl Iterator<Item = u64> + '_ {
+        self.tracks
+            .iter()
+            .flat_map(|delays| [delays.source, delays.instrument, delays.output])
+            .chain(self.sends.iter().copied())
+            .chain(self.sidechains.iter().copied())
+            .chain(self.stage_lines.iter().map(|line| line.main))
+            .chain([self.clicks])
+    }
+}
+
+/// Describes what plays as a [`Graph`], solves it and checks the result.
 ///
-/// A track's placed audio, its first instrument and its children's outputs
-/// meet at its input. Its later devices follow in order, and its output
-/// joins its parent's input, or master with the metronome.
+/// A track's placed audio, its first instrument, its children's outputs and
+/// the sends into it meet at its input. Its later devices follow in order,
+/// and its output joins its parent's input, or master with the metronome.
+/// Sends and sidechains leave a track where its output line does, after the
+/// chain and before the fader. A sidechain joins its device's input, so the
+/// chain's own audio gets a line there too.
+///
+/// The first instrument plays the notes of its track, or of the track that
+/// hands them out. Notes leave the timeline at once, so a folder's notes into
+/// a pad and the pad's audio back into the folder are no loop (ADR 0116).
 ///
 /// A bypassed device passes its audio at once but keeps its place in time:
-/// the frames it would take are spent at the end of the track's chain, in the
-/// same line as the output's delay. Bypassing a device therefore moves no
-/// other track, and the devices after it hear the dry audio that much early.
-pub(crate) fn compensate(tracks: &[TrackFlow<'_>]) -> Result<Compensation, PlaybackError> {
+/// the frames it would take are spent in the next line where other audio
+/// joins the chain, a sidechained device's or the output's. Bypassing a
+/// device therefore moves no other track, and the devices after it hear the
+/// dry audio that much early until that line.
+pub(crate) fn compensate(routes: Routes<'_>) -> Result<Compensation, PlaybackError> {
     struct Lines {
         source: Option<LinkId>,
         instrument: Option<LinkId>,
-        output: LinkId,
+        /// Where the chain's output leaves: for the output line, sends and
+        /// sidechains alike.
+        tap: NodeId,
+        /// Bypassed frames the node `tap` stands for, which the audio has not
+        /// spent yet. Every line leaving `tap` holds them.
         makeup: u64,
     }
+    let tracks = routes.tracks;
+    let missing = || PlaybackError::BufferTooSmall;
+    let known = |position: usize| {
+        (position < tracks.len())
+            .then_some(position)
+            .ok_or_else(missing)
+    };
+    // Devices where other audio meets the chain.
+    let mut merging = HashSet::with_capacity(routes.sidechains.len());
+    for sidechain in routes.sidechains {
+        known(sidechain.from)?;
+        let devices = tracks.get(sidechain.track).ok_or_else(missing)?.devices;
+        if sidechain.device >= devices.len() {
+            return Err(missing());
+        }
+        merging.insert((sidechain.track, sidechain.device));
+    }
+
     let mut graph = Graph::default();
     let master = graph.node(0, 0);
     let metronome = graph.node(0, 0);
     let clicks = graph.link(metronome, master);
+    // Every track's own nodes first, so a route may point anywhere.
     let mut inputs = Vec::with_capacity(tracks.len());
     let mut lines = Vec::with_capacity(tracks.len());
+    let mut notes: Vec<Option<NodeId>> = vec![None; tracks.len()];
+    let mut merges = HashMap::with_capacity(merging.len());
+    let mut mains = Vec::new();
     let mut stage_inputs = Vec::new();
     for (position, track) in tracks.iter().enumerate() {
         let input = graph.node(0, 0);
@@ -340,55 +438,95 @@ pub(crate) fn compensate(tracks: &[TrackFlow<'_>]) -> Result<Compensation, Playb
             let clips = graph.node(0, 0);
             graph.link(clips, input)
         });
-        let mut devices = track.devices;
+        let player = known(track.notes_from.unwrap_or(position))?;
+        let mut later = track.devices.iter().enumerate().peekable();
         let mut instrument = None;
-        if let Some((first, later)) = devices.split_first()
-            && first.instrument
-        {
-            // It hears the notes on the timeline, not the track's input. A
-            // bypassed one is silent and keeps its place.
+        if let Some((_, first)) = later.next_if(|(_, device)| device.instrument) {
+            // A bypassed one is silent and keeps its place.
             let tail = if first.bypassed { 0 } else { first.tail };
             let node = graph.node(u64::from(first.latency), tail);
             if !first.bypassed {
                 stage_inputs.push((first.device, node));
             }
+            let slot = notes.get_mut(player).ok_or_else(missing)?;
+            let played = *slot.get_or_insert_with(|| graph.node(0, 0));
+            graph.link(played, node);
+            if merging.contains(&(position, 0)) {
+                merges.insert((position, 0), node);
+            }
             instrument = Some(graph.link(node, input));
-            devices = later;
         }
         let mut output = input;
-        let mut makeup = 0u64;
-        for device in devices {
+        let mut pending = 0u64;
+        for (index, device) in later {
             let frames = u64::from(device.latency);
-            if device.bypassed {
-                makeup = makeup
-                    .checked_add(frames)
-                    .ok_or(PlaybackError::Latency(u64::MAX))?;
+            if !merging.contains(&(position, index)) {
+                if device.bypassed {
+                    pending = pending
+                        .checked_add(frames)
+                        .ok_or(PlaybackError::Latency(u64::MAX))?;
+                    continue;
+                }
+                let node = graph.node(frames, device.tail);
+                stage_inputs.push((device.device, node));
+                graph.link(output, node);
+                output = node;
                 continue;
             }
-            let node = graph.node(frames, device.tail);
-            stage_inputs.push((device.device, node));
-            graph.link(output, node);
+            // Other audio meets the chain here. The bypassed frames before
+            // are spent first; a bypassed device here passes its audio at
+            // once and leaves its own frames to the next such line.
+            let from = spend(&mut graph, output, pending);
+            let node = if device.bypassed {
+                graph.node(0, 0)
+            } else {
+                let node = graph.node(frames, device.tail);
+                stage_inputs.push((device.device, node));
+                node
+            };
+            mains.push((position, index, graph.link(from, node), pending));
+            merges.insert((position, index), node);
+            pending = if device.bypassed { frames } else { 0 };
             output = node;
         }
-        if makeup != 0 {
-            let node = graph.node(makeup, 0);
-            graph.link(output, node);
-            output = node;
-        }
-        let target = match track.parent {
-            None => master,
-            Some(parent) if parent < position => {
-                *inputs.get(parent).ok_or(PlaybackError::BufferTooSmall)?
-            }
-            Some(_) => return Err(PlaybackError::BufferTooSmall),
-        };
         lines.push(Lines {
             source,
             instrument,
-            output: graph.link(output, target),
-            makeup,
+            tap: spend(&mut graph, output, pending),
+            makeup: pending,
         });
     }
+
+    let tap = |position: usize| {
+        lines
+            .get(position)
+            .map(|lines| (lines.tap, lines.makeup))
+            .ok_or_else(missing)
+    };
+    let mut outputs = Vec::with_capacity(tracks.len());
+    for (position, track) in tracks.iter().enumerate() {
+        let target = match track.parent {
+            None => master,
+            Some(parent) => *inputs.get(parent).ok_or_else(missing)?,
+        };
+        let (from, makeup) = tap(position)?;
+        outputs.push((graph.link(from, target), makeup));
+    }
+    let mut sends = Vec::with_capacity(routes.sends.len());
+    for send in routes.sends {
+        let (from, makeup) = tap(send.from)?;
+        let to = *inputs.get(send.to).ok_or_else(missing)?;
+        sends.push((graph.link(from, to), makeup));
+    }
+    let mut sidechains = Vec::with_capacity(routes.sidechains.len());
+    for sidechain in routes.sidechains {
+        let (from, makeup) = tap(sidechain.from)?;
+        let to = *merges
+            .get(&(sidechain.track, sidechain.device))
+            .ok_or_else(missing)?;
+        sidechains.push((graph.link(from, to), makeup));
+    }
+
     let solution = graph.solve(master)?;
     solution.verify(&graph, master)?;
     let stage_inputs = stage_inputs
@@ -403,26 +541,55 @@ pub(crate) fn compensate(tracks: &[TrackFlow<'_>]) -> Result<Compensation, Playb
         })
         .collect::<Result<Vec<_>, _>>()?;
     let delay = |link: Option<LinkId>| link.map_or(Ok(0), |link| solution.delay(link));
+    // A line out of a tap also holds the bypassed frames the audio skipped.
+    let held = |(link, makeup): (LinkId, u64)| {
+        solution
+            .delay(link)?
+            .checked_add(makeup)
+            .ok_or(PlaybackError::Latency(u64::MAX))
+    };
     let tracks = lines
         .iter()
-        .map(|lines| {
+        .zip(outputs)
+        .map(|(lines, output)| {
             Ok(TrackDelays {
                 source: delay(lines.source)?,
                 instrument: delay(lines.instrument)?,
-                output: solution
-                    .delay(lines.output)?
-                    .checked_add(lines.makeup)
-                    .ok_or(PlaybackError::Latency(u64::MAX))?,
+                output: held(output)?,
+            })
+        })
+        .collect::<Result<Vec<_>, PlaybackError>>()?;
+    let stage_lines = mains
+        .into_iter()
+        .map(|(track, device, link, makeup)| {
+            Ok(StageLine {
+                track,
+                device,
+                main: held((link, makeup))?,
             })
         })
         .collect::<Result<Vec<_>, PlaybackError>>()?;
     Ok(Compensation {
         tracks,
         stage_inputs,
+        sends: sends.into_iter().map(held).collect::<Result<_, _>>()?,
+        sidechains: sidechains.into_iter().map(held).collect::<Result<_, _>>()?,
+        stage_lines,
         clicks: solution.delay(clicks)?,
         latency: solution.latency(),
         tail: solution.tail(),
     })
+}
+
+/// The node after `from` that stands for `pending` bypassed frames, or
+/// `from` when there are none.
+fn spend(graph: &mut Graph, from: NodeId, pending: u64) -> NodeId {
+    if pending == 0 {
+        return from;
+    }
+    let node = graph.node(pending, 0);
+    graph.link(from, node);
+    node
 }
 
 #[cfg(test)]

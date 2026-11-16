@@ -39,7 +39,7 @@ mod faders;
 use faders::{Routing, track_routing};
 #[path = "playback_bus.rs"]
 mod bus;
-use crate::compensation::{TrackFlow, compensate};
+use crate::compensation::{Routes, TrackFlow, compensate};
 use crate::delay::Delay;
 use bus::Bus;
 #[path = "playback_transport.rs"]
@@ -1376,20 +1376,21 @@ fn compensate_plan(
             // A cached track reads its finished audio and runs no device.
             clips: track.cache.is_none() && !track.clips.is_empty(),
             devices: reported.of(track.key),
+            notes_from: None,
         })
         .collect();
     if flows.len() != prepared.tracks.len() {
         return Err(PlaybackError::BufferTooSmall);
     }
-    let plan = compensate(&flows)?;
+    // The folder bus is the only merge between tracks the product plays yet;
+    // sends, sidechains and handed-out notes join through the same routes.
+    let plan = compensate(Routes {
+        tracks: &flows,
+        ..Routes::default()
+    })?;
     // Refused before anything is reserved: a helper may report any number.
-    let lines = plan
-        .tracks
-        .iter()
-        .flat_map(|delays| [delays.source, delays.instrument, delays.output])
-        .chain([plan.clicks]);
     let mut footprint = 0u64;
-    for delay in lines {
+    for delay in plan.lines() {
         footprint = footprint
             .checked_add(Delay::footprint(delay, frames)?)
             .ok_or(PlaybackError::Latency(plan.latency))?;
