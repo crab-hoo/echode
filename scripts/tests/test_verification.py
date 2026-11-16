@@ -912,6 +912,25 @@ class PolicyTests(unittest.TestCase):
                 {"check", "check-product-contracts", "rtsan"} <= self.selected(f"crates/echode-plugin-host/src/{file}")
             )
 
+    def test_audio_config_controls_keep_explicit_reads_and_the_state_capture_boundary(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        state = contracts["device-audio-config-state"]
+        self.assertEqual((state["package"], state["target"]), ("echode-document", ["--lib"]))
+        self.assertEqual(state["negative_control"]["file"], "crates/echode-document/src/device.rs")
+        ui = contracts["device-audio-config-ui"]
+        self.assertEqual(ui["suite"], "DeviceAudioConfigTests")
+        self.assertEqual(
+            ui["negative_control"]["file"], "swift/EchodeApp/Sources/EchodeAppCore/DeviceAudioConfigView.swift"
+        )
+        for path in (
+            "crates/echode-document/src/device.rs",
+            "swift/EchodeApp/Sources/EchodeAppCore/DeviceAudioConfigs.swift",
+            "swift/EchodeApp/Sources/EchodeAppCore/DeviceAudioConfigView.swift",
+        ):
+            self.assertTrue({"check", "check-product-contracts", "check-swift"} <= self.selected(path))
+        groups = self.policy["product_contract_inputs"]
+        self.assertIn("echode-test-plugin", groups["rust:echode-document"]["packages"])
+
     def test_audio_port_contracts_cover_dynamic_routing_and_mapping_guard(self):
         contracts = {item["id"]: item for item in self.policy["product_contracts"]}
         for name, target, file in (
@@ -2804,6 +2823,8 @@ class PolicyTests(unittest.TestCase):
                 "plugin-mpe-expression",
                 "plugin-audio-port-routing",
                 "plugin-audio-port-mapping",
+                "device-audio-config-state",
+                "device-audio-config-ui",
                 "plugin-audio-config-selection",
                 "plugin-audio-config-routing",
                 "plugin-configurable-audio-ports",

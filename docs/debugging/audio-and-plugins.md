@@ -295,12 +295,17 @@ cargo test -q -p echode-plugin-host --test hosted_playback audio_ports::
 ### CLAP の音声構成の一覧・選択・任意変更に失敗する
 
 `PluginControl::audio_port_configs`・`select_audio_port_config`・`can_apply_audio_port_configuration`・`apply_audio_port_configuration` は無効化中の主スレッドで実行する（[ADR 0384](../decisions/0384-clap-audio-port-config-selection.md)、[ADR 0385](../decisions/0385-clap-configurable-audio-ports-and-config-info.md)）。
-一覧や変更可否の取得だけでも再有効化するため音声を中断する。周期的な呼出しにせず、構成メニューはまだ接続しない。
+一覧や変更可否の取得だけでも再有効化するため音声を中断する。周期的には呼ばず、デバイス列の「音声構成を読み込む」で明示して読む。
 拡張（`/1` と互換 draft を含む）・各 callback の欠落、記述の拒否、未知の現在構成 ID、重複・主ポートの矛盾、`apply` の拒否は `PluginFailure` で区別する（`can_apply` が `false` の時は `Ok(false)`）。
 `rescan` の通知から再入せず、一覧も保持しない。次の明示要求で最新の記述を読む。
 選択や変更の応答より前に `PortsChanged` が届く。成功なのに古い構成なら、`follow_ports` またはエンジンの計画交換を調べる。
 連続した要求が停止する時は `MainRequests::take(false)` が無効化専用の要求を取っていないか、完了済みの再起動世代を制御側が再び待っていないか調べる。
 時間切れは結果不明で自動再送しない。所有中の要求が完了するまでは後続が busy となる。
+デバイス列は文書の publication ごとに一覧を破棄する。編集・Undo/Redo の後に一覧が消えることは再走査の失敗ではない。
+読込み・選択の失敗は構成欄へ出し、再クリックだけで再試行する。現在 ID のないプラグインでは選択中を推測しない。
+画面からの選択は `device.audio_config.select` で選択と取得を実行し、ワーカーの `commit` で記録する（[ADR 0386](../decisions/0386-device-audio-configuration-controls.md)）。
+Undo が増えない時は選択・取得・記録のどこが失敗したかと、状態バイトが以前と同じかを区別する。
+実ヘルパーの状態と再オープンは `device-audio-config-state`、実ボタンと ID・古い応答は `device-audio-config-ui` を使う。
 回帰は上の `audio_ports::` の 2 つの入口と `audio_configs_tests.rs`、第三者の保存・聴感は UC-97・UC-98 を使う。
 
 ### CLAP がテンポ・再生位置を取得できない

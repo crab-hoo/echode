@@ -20,6 +20,7 @@ uuid = "1"
 [dev-dependencies]
 echode-audio-io = { path = "../echode-audio-io", features = ["headless-output"] }
 echode-log = { path = "../echode-log" }
+echode-sandbox = { path = "../echode-sandbox" }
 
 [lints]
 workspace = true

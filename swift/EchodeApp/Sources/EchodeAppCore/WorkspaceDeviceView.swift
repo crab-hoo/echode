@@ -53,12 +53,18 @@ private struct DeviceListChange: Equatable {
     let loading: Bool
     let error: String?
     let query: String
+    let audioConfigs: DeviceAudioConfigs?
+    let audioConfigBusy: Bool
+    let audioConfigError: String?
     @MainActor init(_ state: DeviceParameterState) {
         layout = state.layout
         revision = state.revision
         loading = state.loading
         error = state.error
         query = state.query
+        audioConfigs = state.audioConfiguration.list
+        audioConfigBusy = state.audioConfiguration.busy
+        audioConfigError = state.audioConfiguration.error
     }
 }
 
@@ -118,6 +124,10 @@ private struct DeviceStripCanvas: NSViewRepresentable {
             Task { await controller.setPinned(id, device: device, pinned: pinned, documentID: document) }
         }
         strip.onRetry = { device in controller.retryParameters(device, documentID: document) }
+        strip.onReadAudioConfigs = { device in controller.loadAudioConfigs(device, documentID: document) }
+        strip.onSelectAudioConfig = { device, id in
+            Task { await controller.selectAudioConfig(id, device: device, documentID: document) }
+        }
         strip.configure(
             devices: devices, track: track, document: document, busy: busy, locked: locked, states: states,
             outputOpening: outputOpening, outputUpdating: outputUpdating, collapsed: collapsed)
@@ -167,6 +177,8 @@ final class DeviceStripView: NSView {
     var onEnter: ((UUID, UInt32, String) async -> Bool)?
     var onPin: ((UUID, UInt32, Bool) -> Void)?
     var onRetry: ((UUID) -> Void)?
+    var onReadAudioConfigs: ((UUID) -> Void)?
+    var onSelectAudioConfig: ((UUID, UInt32) -> Void)?
     var contentWidth: Double { columns.reduce(Self.trailingWidth) { $0 + $1.preferredWidth } }
     override var isFlipped: Bool { true }
 
@@ -233,6 +245,8 @@ final class DeviceStripView: NSView {
             column.list.onStep = { [weak self] id, value in self?.onStep?(device.id, id, value) }
             column.list.onPin = { [weak self] id, pinned in self?.onPin?(device.id, id, pinned) }
             column.onRetry = { [weak self] in self?.onRetry?(device.id) }
+            column.audioConfigs.onRead = { [weak self] in self?.onReadAudioConfigs?(device.id) }
+            column.audioConfigs.onSelect = { [weak self] id in self?.onSelectAudioConfig?(device.id, id) }
             column.configure(
                 device: device, first: index == 0, last: index + 1 == devices.count,
                 busy: busy, locked: locked, outputOpening: outputOpening, outputUpdating: outputUpdating,
@@ -318,6 +332,7 @@ final class DeviceColumnView: NSView, NSDraggingSource {
     let message = NSTextField(wrappingLabelWithString: "")
     let latency = NSTextField(labelWithString: "")
     let retry = NSButton(title: text("Retry parameters"), target: nil, action: nil)
+    let audioConfigs = DeviceAudioConfigView(frame: .zero)
     private let payload: FXDrag
     private var origin: CGPoint?
     private var state: DeviceParameterState?
@@ -392,6 +407,7 @@ final class DeviceColumnView: NSView, NSDraggingSource {
         retry.target = self
         retry.action = #selector(retryList)
         addSubview(retry)
+        addSubview(audioConfigs)
         for view in [
             disclosure, title, windowIndicator, offline, bypass, left, right, copy, remove, search, list, message,
         ] { addSubview(view) }
@@ -415,6 +431,7 @@ final class DeviceColumnView: NSView, NSDraggingSource {
         if collapsed, let window, let responder = window.firstResponder as? NSView,
             responder.isDescendant(of: list) || responder.isDescendant(of: search)
                 || responder === search.currentEditor() || responder === retry
+                || responder.isDescendant(of: audioConfigs)
         {
             // Hidden parameter controls must not keep consuming workspace keys.
             window.makeFirstResponder(nil)
@@ -485,11 +502,14 @@ final class DeviceColumnView: NSView, NSDraggingSource {
         retry.isHidden = isCollapsed || device.offline || state?.error == nil || state?.loading == true
         retry.isEnabled = !busy && !retry.isHidden
         retry.setAccessibilityLabel(text("Retry parameters") + " " + device.title)
+        audioConfigs.isHidden = isCollapsed || device.offline
+        audioConfigs.configure(
+            state?.audioConfiguration, title: device.title, enabled: !busy && !locked && !device.offline)
         search.isHidden = isCollapsed
         message.isHidden = isCollapsed || note == nil
         list.isHidden = isCollapsed || note != nil
         if let state, note == nil, !isCollapsed {
-            list.configure(state: state, pinned: Set(device.pinned), locked: locked)
+            list.configure(state: state, pinned: Set(device.pinned), locked: locked || state.audioConfiguration.busy)
         }
         needsLayout = true
     }
@@ -510,10 +530,12 @@ final class DeviceColumnView: NSView, NSDraggingSource {
         }
         let latencyHeight = latency.isHidden ? 0.0 : 22.0
         latency.frame = CGRect(x: 8, y: isCollapsed ? 96 : 64, width: max(0, width), height: 20)
-        search.frame = CGRect(x: 8, y: 64 + latencyHeight, width: max(0, width), height: 24)
+        let configHeight = audioConfigs.isHidden ? 0.0 : 52.0
+        audioConfigs.frame = CGRect(x: 8, y: 64 + latencyHeight, width: max(0, width), height: configHeight)
+        search.frame = CGRect(x: 8, y: 64 + latencyHeight + configHeight, width: max(0, width), height: 24)
         let body = CGRect(
-            x: 4, y: 94 + latencyHeight, width: max(0, bounds.width - 8),
-            height: max(0, bounds.height - 98 - latencyHeight))
+            x: 4, y: 94 + latencyHeight + configHeight, width: max(0, bounds.width - 8),
+            height: max(0, bounds.height - 98 - latencyHeight - configHeight))
         list.frame = body
         message.frame = body.insetBy(dx: 8, dy: 8)
         if !retry.isHidden {

@@ -224,7 +224,8 @@ CLAP・MIDI 1.0 を受けず MIDI 2.0 を受けるポートへは、グループ
 MPE だけを受けるポートへは、下位ゾーンを設定してからメンバーチャンネルで曲のノートを送る（[ADR 0380](decisions/0380-mpe-member-channels-for-clap-ports.md)）。
 MPE の表情の受信・変換は単独所有中のノート ID だけに送り、各発音前に中立値を送る（[ADR 0381](decisions/0381-mpe-note-expression.md)）。
 `clap.audio-ports-config`（[ADR 0384](decisions/0384-clap-audio-port-config-selection.md)）と `audio-ports-config-info`・`configurable-audio-ports`（[ADR 0385](decisions/0385-clap-configurable-audio-ports-and-config-info.md)）は制御 API まで接続し、適用後は同じポート交換を使う。
-一覧の読取りや構成の試行でも再有効化で音声を中断する。構成メニュー・選択保存・非標準の `port_details`・曲からの表情生成と編集は残る（UC-97・UC-98）。
+構成一覧はデバイス列の明示ボタンで読み、ID で選ぶ。選択と状態取得を同じ文書要求で実行し、既存の状態編集・Undo/Redo・保存へ流す（[ADR 0386](decisions/0386-device-audio-configuration-controls.md)）。
+一覧の読取りでも音声を中断し、文書の publication 後は再読込みが必要である。任意変更の UI・非標準 `port_details`・曲からの表情生成と編集は残る（UC-97〜99）。
 曲のテンポ・拍位置・秒・拍子・小節・ループの生成と全段への配布、CLAP の `process.transport` へ接続した。
 ブロック内のテンポ境界・折返しと停止の状態も渡す（[ADR 0358](decisions/0358-product-musical-transport.md)）。
 各段の曲時刻は入力音声の PDC へ補正する（[ADR 0378](decisions/0378-pdc-stage-transport.md)）。

@@ -22,6 +22,8 @@ public final class DeviceParameterState {
     public let device: UUID
     /// Parameters the plugin does not hide, in the plugin's order.
     public private(set) var parameters: [DeviceParameter] = []
+    /// Explicitly requested presets, independent of the ordinary parameter list.
+    public let audioConfiguration = DeviceAudioConfigState()
     /// True while an empty or failed list is waiting for its first result.
     public private(set) var loading = true
     public private(set) var error: String?
@@ -205,7 +207,8 @@ extension ProjectController {
     @discardableResult
     public func beginParameter(_ id: UInt32, device: UUID, documentID: DocumentID) -> Bool {
         guard let session = session(for: documentID), session.parameterGesture == nil, !session.historyBusy,
-            let parameter = session.parameterStates[device]?.parameter(id), !parameter.readOnly
+            let parameter = session.parameterStates[device]?.parameter(id), !parameter.readOnly,
+            session.parameterStates[device]?.audioConfiguration.busy == false
         else { return false }
         session.parameterGesture = ParameterGesture(
             device: device, parameter: id, original: parameter.value, latest: parameter.value)

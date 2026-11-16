@@ -1,6 +1,60 @@
 use super::*;
 
 #[test]
+fn audio_config_commands_resolve_on_the_device_lane_and_selection_captures() {
+    let dir = std::env::temp_dir().join(format!("echode-document-config-{}", Id::generate()));
+    let (project, track) = echode_model::Project::new().add_track("fx");
+    let device = Id::generate();
+    let project = project
+        .add_clap_device(track, device, "org.example.fx")
+        .unwrap();
+    echode_history::write_package(&dir, &project).unwrap();
+    let host = DocumentHost::open(&dir).unwrap();
+    let mut audio = Session::new(host.snapshot());
+    let mut editing = BTreeSet::new();
+    for (kind, extra, changes) in [
+        ("device.audio_configs", "", false),
+        ("device.audio_config.select", ",\"id\":303", true),
+    ] {
+        let bytes = format!(r#"{{"type":"{kind}","device":"{device}"{extra}}}"#);
+        let result = dispatch(&host, &mut audio, &mut editing, bytes.as_bytes(), true);
+        assert!(
+            result.is_ok(),
+            "audio config command must reach the device lane: {:?}",
+            result.err()
+        );
+        let Resolution::Waiting(waiting) = result.unwrap() else {
+            panic!("must wait behind opening");
+        };
+        // Resolve without a helper to inspect ownership, without opening hardware.
+        let dispatched = waiting.ready(None, &mut editing);
+        assert_eq!(editing.contains(&device.raw()), changes);
+        editing.clear();
+        drop(dispatched);
+    }
+    for extra in [
+        "",
+        ",\"id\":-1",
+        ",\"id\":4294967296",
+        ",\"id\":206,\"extra\":true",
+    ] {
+        let bytes =
+            format!(r#"{{"type":"device.audio_config.select","device":"{device}"{extra}}}"#);
+        assert!(matches!(
+            dispatch(&host, &mut audio, &mut editing, bytes.as_bytes(), true),
+            Err(DocumentError::Malformed(_))
+        ));
+        assert!(editing.is_empty());
+    }
+    assert!(
+        !audio.opening(),
+        "checking a queued command must not open hardware"
+    );
+    drop(host);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn recording_the_same_bytes_twice_adds_one_undo_step() {
     let dir = std::env::temp_dir().join(format!("echode-document-device-{}", Id::generate()));
     let (project, track) = echode_model::Project::new().add_track("fx");

@@ -523,6 +523,36 @@
         "ja": { "stringUnit": { "state": "translated", "value": "パラメーターを読み込み中…" } }
       }
     },
+    "Read audio configurations": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Read Audio Configurations" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "音声構成を読み込む" } }
+      }
+    },
+    "Reading audio configurations": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Reading Audio Configurations…" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "音声構成を読み込み中…" } }
+      }
+    },
+    "Choose audio configuration": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Choose Audio Configuration" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "音声構成を選択" } }
+      }
+    },
+    "No audio configurations": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "This plugin reports no audio configurations." } },
+        "ja": { "stringUnit": { "state": "translated", "value": "このプラグインには選択できる音声構成がありません。" } }
+      }
+    },
+    "Audio configuration interruption help": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Reading or selecting an audio configuration interrupts plugin processing. Selection is saved in the plugin's state and can be undone." } },
+        "ja": { "stringUnit": { "state": "translated", "value": "一覧の読込みと選択で音声処理を中断します。選択はプラグイン自身の状態に保存し、取り消せます。" } }
+      }
+    },
     "Retry parameters": {
       "localizations": {
         "en": { "stringUnit": { "state": "translated", "value": "Retry Parameters" } },

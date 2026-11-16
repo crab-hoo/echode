@@ -490,7 +490,7 @@ impl<P: Presenter> Worker<P> {
             control,
             request,
         } = dispatch;
-        let capture = matches!(request, Request::Capture);
+        let capture = matches!(request, Request::Capture | Request::SelectAudioConfig(_));
         let round_trip: RoundTrip =
             Box::new(move || device::round_trip(control.as_ref(), &request));
         if capture {

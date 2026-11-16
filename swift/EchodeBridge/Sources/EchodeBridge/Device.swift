@@ -91,8 +91,36 @@ public struct DeviceWindowReport: Decodable, Sendable, Equatable {
     }
 }
 
+/// A plugin-owned audio-port preset. IDs are not enumeration indices.
+public struct DeviceAudioConfig: Decodable, Sendable, Equatable, Identifiable {
+    public let id: UInt32
+    public let name: String
+    public let inputPorts: UInt32
+    public let outputPorts: UInt32
+    public let mainInputChannels: UInt32
+    public let mainOutputChannels: UInt32
+
+    enum CodingKeys: String, CodingKey {
+        case id, name
+        case inputPorts = "input_ports"
+        case outputPorts = "output_ports"
+        case mainInputChannels = "main_input_channels"
+        case mainOutputChannels = "main_output_channels"
+    }
+}
+
+public struct DeviceAudioConfigs: Decodable, Sendable, Equatable {
+    public let currentID: UInt32?
+    public let configs: [DeviceAudioConfig]
+    enum CodingKeys: String, CodingKey {
+        case currentID = "current_id"
+        case configs
+    }
+}
+
 /// What a device command returned. Only the field for that command is set.
 public struct DeviceReport: Decodable, Sendable, Equatable {
+    public let audioConfigs: DeviceAudioConfigs?
     public let parameters: [DeviceParameter]?
     public let values: [DeviceParameterValue]?
     /// A commit recorded new plugin bytes as one Undo step.
@@ -106,7 +134,7 @@ public struct DeviceReport: Decodable, Sendable, Equatable {
     public init(
         parameters: [DeviceParameter]? = nil, values: [DeviceParameterValue]? = nil, changed: Bool? = nil,
         window: DeviceWindowReport? = nil, closed: Bool? = nil, parsed: DeviceParameterParse? = nil,
-        latencySamples: UInt32? = nil
+        latencySamples: UInt32? = nil, audioConfigs: DeviceAudioConfigs? = nil
     ) {
         self.parameters = parameters
         self.values = values
@@ -115,10 +143,12 @@ public struct DeviceReport: Decodable, Sendable, Equatable {
         self.closed = closed
         self.parsed = parsed
         self.latencySamples = latencySamples
+        self.audioConfigs = audioConfigs
     }
     enum CodingKeys: String, CodingKey {
         case parameters, values, changed, window, closed, parsed
         case latencySamples = "latency_samples"
+        case audioConfigs = "audio_configs"
     }
 }
 
@@ -135,12 +165,23 @@ public enum DeviceCommand: Encodable, Sendable, Equatable {
     case showWindow(device: UUID, title: String)
     /// Closes the plugin's own window. Never starts a helper to do it.
     case closeWindow(device: UUID)
+    /// Explicitly reads presets; this interrupts plugin processing.
+    case audioConfigs(device: UUID)
+    /// Selects a preset and records its state as one Undo step.
+    case selectAudioConfig(device: UUID, id: UInt32)
 
     enum CodingKeys: String, CodingKey { case type, device, changes, title, id, text }
 
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
+        case .audioConfigs(let device):
+            try container.encode("device.audio_configs", forKey: .type)
+            try container.encode(device, forKey: .device)
+        case .selectAudioConfig(let device, let id):
+            try container.encode("device.audio_config.select", forKey: .type)
+            try container.encode(device, forKey: .device)
+            try container.encode(id, forKey: .id)
         case .parameters(let device):
             try container.encode("device.parameters", forKey: .type)
             try container.encode(device, forKey: .device)

@@ -211,6 +211,9 @@ final class DocumentSession {
     }
 
     func publish(_ snapshot: Snapshot) {
+        // A publication may restore plugin state (Undo, edits or background saves).
+        // Discard transient presets conservatively rather than keeping a stale menu.
+        for state in parameterStates.values { state.audioConfiguration.invalidate() }
         self.snapshot = snapshot
         tracks = (0..<snapshot.trackCount).compactMap { index in
             guard let id = snapshot.trackID(at: index), let name = snapshot.trackName(at: index) else { return nil }

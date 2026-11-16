@@ -408,6 +408,8 @@ CLAP の音声ポートの対応フラグと `read_port_channels` は `echode-pl
 有効化で構成が変われば `PortsChanged` で親の改訂を進め、`PluginHost::prepare_mapping_for` / `follow_ports` と `echode-engine/src/plugins.rs` が共有領域とルーティングを同じ計画で交換する。
 CLAP の構成一覧・`audio-ports-config-info`・ID 選択・`configurable-audio-ports` は `echode-plugin-host/src/audio_configs.rs`、互換表探索は `extension.rs::table_with_compat`、制御 API と本文の読書きは `echode-sandbox/src/session_operations.rs`・`audio_configs.rs` に置く。
 `MainRequests` の無効化専用の要求は既存の再起動世代で処理器を返してから実行する（[ADR 0384](decisions/0384-clap-audio-port-config-selection.md)、[ADR 0385](decisions/0385-clap-configurable-audio-ports-and-config-info.md)）。
+デバイス列からの明示読込みと ID 選択は `DeviceAudioConfigs.swift`・`DeviceAudioConfigView.swift`、文書コマンドの選択・取得と編集の保留は `echode-document/src/device.rs` に置く。
+画面の回帰は `DeviceAudioConfigTests.swift`、実ヘルパーのバイト・Undo/Redo・再オープンは `device_config_tests.rs` を使う（[ADR 0386](decisions/0386-device-audio-configuration-controls.md)）。
 回帰は上の `audio_ports.rs` と各 `audio_configs_tests.rs` を使う。一覧や変更可否の取得も再有効化で音声を中断するため、周期的に問い合わせない。
 実ヘルパーの通知・再マップは `tests/isolation/audio_ports.rs`、再生中の切替と書出し再開・拒否は `tests/hosted_playback/audio_ports.rs` を使う（[ADR 0374](decisions/0374-dimension-preserving-audio-port-rescans.md)、[ADR 0382](decisions/0382-audio-port-changes-exchange-mapping-and-routing.md)）。
 CLAP のノート形式の対応の公開とポートごとの規則（`NoteInputs`）は `echode-plugin-host/src/note_ports.rs`、有効化前の読直しは `threads.rs::activate` に置く。

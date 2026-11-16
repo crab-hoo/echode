@@ -47,6 +47,12 @@ enum DeviceCommand {
     /// Closes the plugin's own window. A device with no running helper has none.
     #[serde(rename = "device.gui.close")]
     CloseGui { device: Id },
+    /// Explicit, potentially interrupting preset enumeration.
+    #[serde(rename = "device.audio_configs")]
+    AudioConfigs { device: Id },
+    /// Selects a preset and captures its plugin-owned state as one edit.
+    #[serde(rename = "device.audio_config.select")]
+    SelectAudioConfig { device: Id, id: u32 },
 }
 
 #[derive(Deserialize)]
@@ -85,6 +91,8 @@ pub(crate) enum Request {
     Parse(u32, String),
     ShowGui(String),
     CloseGui,
+    AudioConfigs,
+    SelectAudioConfig(u32),
 }
 
 /// A checked command and the helper that answers it. Only closing a window
@@ -143,6 +151,8 @@ pub(crate) fn dispatch(
         DeviceCommand::Parse { device, id, text } => (device, Request::Parse(id, text)),
         DeviceCommand::ShowGui { device, title } => (device, Request::ShowGui(title)),
         DeviceCommand::CloseGui { device } => (device, Request::CloseGui),
+        DeviceCommand::AudioConfigs { device } => (device, Request::AudioConfigs),
+        DeviceCommand::SelectAudioConfig { device, id } => (device, Request::SelectAudioConfig(id)),
     };
     let waiting = Waiting { device, request };
     if !matches!(waiting.request, Request::CloseGui) {
@@ -182,7 +192,10 @@ impl Waiting {
     }
 
     fn ready(self, control: Option<PluginControl>, editing: &mut BTreeSet<u128>) -> Dispatch {
-        if matches!(self.request, Request::Set(_)) {
+        if matches!(
+            self.request,
+            Request::Set(_) | Request::SelectAudioConfig(_)
+        ) {
             editing.insert(self.device.raw());
         }
         Dispatch {
@@ -216,6 +229,28 @@ pub(crate) fn round_trip(
             serde_json::json!({ "values": values.iter().map(value).collect::<Vec<_>>() })
         }
         Request::Capture => return Ok(control.capture_state()?),
+        Request::SelectAudioConfig(id) => {
+            control.select_audio_port_config(*id)?;
+            return Ok(control.capture_state()?);
+        }
+        Request::AudioConfigs => {
+            let list = control.audio_port_configs()?;
+            let configs: Vec<_> = list
+                .configs
+                .iter()
+                .map(|config| {
+                    serde_json::json!({
+                        "id": config.id,
+                        "name": config.name,
+                        "input_ports": config.input_ports,
+                        "output_ports": config.output_ports,
+                        "main_input_channels": config.main_input_channels,
+                        "main_output_channels": config.main_output_channels,
+                    })
+                })
+                .collect();
+            serde_json::json!({ "audio_configs": { "current_id": list.current_id, "configs": configs } })
+        }
         Request::Parse(id, text) => {
             // `converts` is false when the plugin has no `text_to_value`;
             // the host then reads a plain number in the plugin's units.
@@ -342,3 +377,7 @@ fn value(value: &ParamValue) -> Value<'_> {
 #[cfg(test)]
 #[path = "device_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "device_config_tests.rs"]
+mod config_tests;

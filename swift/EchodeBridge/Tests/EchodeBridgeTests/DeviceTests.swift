@@ -4,6 +4,28 @@ import Testing
 @testable import EchodeBridge
 
 struct DeviceTests {
+    @Test func audioConfigCommandsAndReportsUsePluginIDs() throws {
+        let device = UUID()
+        for (command, kind, id) in [
+            (DeviceCommand.audioConfigs(device: device), "device.audio_configs", nil as UInt32?),
+            (DeviceCommand.selectAudioConfig(device: device, id: 206), "device.audio_config.select", 206),
+        ] {
+            let data = try JSONEncoder().encode(command)
+            let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            #expect(object["type"] as? String == kind)
+            #expect(object["device"] as? String == device.uuidString)
+            #expect((object["id"] as? NSNumber)?.uint32Value == id)
+        }
+        let report = try JSONDecoder().decode(
+            DeviceReport.self,
+            from: Data(
+                #"{"audio_configs":{"current_id":206,"configs":[{"id":206,"name":"Mono","input_ports":1,"output_ports":1,"main_input_channels":2,"main_output_channels":1}]}}"#
+                    .utf8))
+        #expect(report.audioConfigs?.currentID == 206)
+        #expect(report.audioConfigs?.configs.first?.mainOutputChannels == 1)
+        #expect(try JSONDecoder().decode(DeviceReport.self, from: Data("{}".utf8)).audioConfigs == nil)
+    }
+
     @Test func latencyMetadataDecodesWithoutBreakingOlderReports() throws {
         let decoder = JSONDecoder()
         #expect(try decoder.decode(DeviceReport.self, from: Data(#"{"parameters":[]}"#.utf8)).latencySamples == nil)
@@ -90,6 +112,8 @@ struct DeviceTests {
         for (command, reason) in [
             (DeviceCommand.parameters(device: mixer), "mixer"),
             (DeviceCommand.commit(device: device), "no longer"),
+            (DeviceCommand.audioConfigs(device: mixer), "mixer"),
+            (DeviceCommand.selectAudioConfig(device: mixer, id: 206), "mixer"),
         ] {
             do {
                 _ = try await document.device(command)

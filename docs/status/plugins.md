@@ -9,7 +9,8 @@
   遅延のある前段と後段・フォルダ FX のテンポ同期の聴感は UC-91（[ADR 0378](../decisions/0378-pdc-stage-transport.md)）。
   遅延のある前段の後ろとフォルダ FX のノート応答・プリロール時の聴感は UC-96（[ADR 0383](../decisions/0383-pdc-stage-notes.md)）。
   音声ポートのリスト・チャンネル数の変更中は新しい計画の採用まで無音となる。主ポート以外の接続は未対応（UC-95）。
-  `audio-ports-config`・`audio-ports-config-info`・`configurable-audio-ports` は制御 API までで、構成メニュー・保存への選択保持・非標準の `port_details` 指定は未接続。
+  構成選択はプラグイン自身の状態保存に依存する。任意のポート変更の UI と非標準の `port_details` 指定は未接続。
+  明示した一覧取得でも音声を中断し、文書の編集・復元後は一覧の再読込みが必要である。デバイス列の構成操作の実画面・VO は UC-99。
   一覧・適用前確認だけでも再有効化で音声を中断する。第三者の選択・状態復元・聴感は UC-97（[ADR 0384](../decisions/0384-clap-audio-port-config-selection.md)）、互換構成・任意変更と聴感は UC-98（[ADR 0385](../decisions/0385-clap-configurable-audio-ports-and-config-info.md)）。
   MIDI 1.0・2.0 ではノート ID・一部の表情は未対応で、同じ音高の重なりを別 ID で扱えない。
   MPE だけを受けるポートは 16 音目から共有のチャンネルになる。共有開始時は所有ノートも表情が中立へ戻り、共有中は表情を送らない。

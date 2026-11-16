@@ -755,6 +755,7 @@ dependencies = [
  "echode-history",
  "echode-log",
  "echode-model",
+ "echode-sandbox",
  "log",
  "serde",
  "serde_json",
